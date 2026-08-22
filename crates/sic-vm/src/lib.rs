@@ -15,6 +15,7 @@ pub mod value;
 
 use sic_bytecode::inst::Op;
 use sic_bytecode::program::{Const, Program};
+use sic_core::{CapError, CapRequest, CapValue};
 
 pub use value::{Arena, Handle, Value};
 
@@ -23,17 +24,14 @@ pub use value::{Arena, Handle, Value};
 pub enum Status {
     Finished(Value),
     Failed(FailInfo),
-    /// Phase 5. A capability call or an approval will park a run here, and the
-    /// state needed to resume it is exactly what `Vm` holds.
-    Suspended(SuspendReason),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SuspendReason {
-    /// Waiting for a capability call to come back.
-    Capability { cap: String },
-    /// Waiting for a human.
-    Approval { request: String },
+    /// The VM stopped because it needs an effect it cannot perform. The driver
+    /// asks the broker and calls `resume`.
+    ///
+    /// Suspending, rather than calling out through a trait, is what keeps this
+    /// crate unable to reach the outside world at all. It is also exactly the
+    /// point phase 5 has to checkpoint: everything needed to continue is in
+    /// `Vm`.
+    Suspended(CapRequest),
 }
 
 #[derive(Debug, Clone)]
@@ -43,6 +41,8 @@ pub struct FailInfo {
     pub pc: u32,
     /// The value passed to `FAIL`, when that is what ended the run.
     pub value: Option<Value>,
+    /// Extra text, such as why a capability call failed.
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +52,8 @@ pub enum FailKind {
     DivisionByZero,
     /// The program executed `FAIL`.
     Explicit,
+    /// A capability call did not succeed. The reason is in `FailInfo::detail`.
+    Capability,
     /// The instruction budget ran out.
     OutOfFuel,
     CallStackTooDeep,
@@ -66,6 +68,7 @@ impl FailKind {
             FailKind::Overflow => "integer overflow",
             FailKind::DivisionByZero => "division by zero",
             FailKind::Explicit => "the program failed",
+            FailKind::Capability => "a capability call failed",
             FailKind::OutOfFuel => "ran out of fuel",
             FailKind::CallStackTooDeep => "call stack too deep",
             FailKind::Internal(what) => what,
@@ -99,6 +102,9 @@ pub struct Vm<'a> {
     /// Handles for the string constants, allocated once at startup rather than
     /// on every load.
     str_consts: Vec<Option<Handle>>,
+    /// Where the result of a suspended capability call goes. `Some` exactly
+    /// while the VM is suspended.
+    pending: Option<usize>,
     fuel: u64,
 }
 
@@ -129,6 +135,7 @@ impl<'a> Vm<'a> {
             frames: Vec::new(),
             arena,
             str_consts,
+            pending: None,
             fuel,
         }
     }
@@ -145,6 +152,30 @@ impl<'a> Vm<'a> {
     /// Renders a value for a human.
     pub fn display(&self, value: &Value) -> String {
         value.display(&self.arena)
+    }
+
+    /// Continues a suspended run with the value the capability produced.
+    pub fn resume(&mut self, value: CapValue) -> Status {
+        let Some(reg) = self.pending.take() else {
+            return self.fail_now(FailKind::Internal("resumed while not suspended"));
+        };
+        let value = self.intern_cap_value(value);
+        self.set(reg, value);
+        self.execute()
+    }
+
+    /// Ends a suspended run because the capability call did not succeed.
+    ///
+    /// Retrying is a workflow decision, and the IR already has the slot for it,
+    /// so nothing here tries to be clever about recovery.
+    pub fn resume_failed(&mut self, error: &CapError) -> Status {
+        self.pending = None;
+        self.fail_with(FailKind::Capability, None, Some(error.message.clone()))
+    }
+
+    /// Whether the VM is waiting for a capability result.
+    pub fn is_suspended(&self) -> bool {
+        self.pending.is_some()
     }
 
     /// Calls a function and runs until it returns, fails, or runs out of fuel.
@@ -282,6 +313,34 @@ impl<'a> Vm<'a> {
                         return status;
                     }
                 }
+                Op::CallCap => {
+                    let Some(decl) = self.program.caps.get(b) else {
+                        return self
+                            .fail(FailKind::Internal("capability index out of range"), None);
+                    };
+                    let (name, argc) = (decl.name.clone(), decl.params.len());
+                    let mut args = Vec::with_capacity(argc);
+                    for i in 0..argc {
+                        match self.to_cap_value(&self.get(base + c + i)) {
+                            Some(v) => args.push(v),
+                            None => {
+                                return self.fail(
+                                    FailKind::Internal(
+                                        "a capability argument is not a value the broker can take",
+                                    ),
+                                    None,
+                                );
+                            }
+                        }
+                    }
+                    // The result lands here once the driver comes back.
+                    self.pending = Some(base + a);
+                    return Status::Suspended(CapRequest {
+                        index: b as u32,
+                        name,
+                        args,
+                    });
+                }
                 Op::Return => {
                     let value = self.get(base + a);
                     let frame = self.frames.pop().expect("a frame was running");
@@ -337,6 +396,32 @@ impl<'a> Vm<'a> {
         None
     }
 
+    /// Copies a value out of the VM so it can cross the broker boundary.
+    ///
+    /// Handles are meaningless outside this arena, so a string is copied rather
+    /// than referenced. Lists and objects have no representation yet.
+    fn to_cap_value(&self, value: &Value) -> Option<CapValue> {
+        Some(match value {
+            Value::Unit => CapValue::Unit,
+            Value::Bool(v) => CapValue::Bool(*v),
+            Value::I64(v) => CapValue::I64(*v),
+            Value::F64(v) => CapValue::F64(*v),
+            Value::Str(h) => CapValue::Str(self.arena.str(*h).to_string()),
+            Value::List(_) | Value::Object(_) => return None,
+        })
+    }
+
+    /// Brings a value in from the broker, allocating any string in the arena.
+    fn intern_cap_value(&mut self, value: CapValue) -> Value {
+        match value {
+            CapValue::Unit => Value::Unit,
+            CapValue::Bool(v) => Value::Bool(v),
+            CapValue::I64(v) => Value::I64(v),
+            CapValue::F64(v) => Value::F64(v),
+            CapValue::Str(s) => Value::Str(self.arena.alloc_str(s)),
+        }
+    }
+
     fn jump(&mut self, offset: i16) {
         let frame = self.frames.last_mut().expect("a frame was running");
         frame.pc = (frame.pc as i64 + offset as i64) as u32;
@@ -362,6 +447,10 @@ impl<'a> Vm<'a> {
     }
 
     fn fail(&self, kind: FailKind, value: Option<Value>) -> Status {
+        self.fail_with(kind, value, None)
+    }
+
+    fn fail_with(&self, kind: FailKind, value: Option<Value>, detail: Option<String>) -> Status {
         let (func, pc) = match self.frames.last() {
             Some(frame) => (
                 self.program
@@ -379,6 +468,7 @@ impl<'a> Vm<'a> {
             func,
             pc,
             value,
+            detail,
         })
     }
 
@@ -388,6 +478,7 @@ impl<'a> Vm<'a> {
             func: String::new(),
             pc: 0,
             value: None,
+            detail: None,
         })
     }
 }

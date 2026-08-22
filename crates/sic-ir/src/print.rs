@@ -6,6 +6,12 @@ use crate::hir::*;
 
 pub fn dump(hir: &Hir) -> String {
     let mut out = String::new();
+    if !hir.caps.is_empty() {
+        out.push_str("capabilities:\n");
+        for (i, c) in hir.caps.iter().enumerate() {
+            out.push_str(&format!("  c{i} = {} {:?}\n", c.name, c.constraint));
+        }
+    }
     if !hir.consts.is_empty() {
         out.push_str("consts:\n");
         for (i, c) in hir.consts.iter().enumerate() {

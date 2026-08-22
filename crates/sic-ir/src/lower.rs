@@ -19,13 +19,16 @@ pub fn lower(module: &Module, typed: &Typed) -> Hir {
         .fns
         .iter()
         .map(|info| {
-            let Item::Fn(decl) = &module.items[info.item_index];
+            let Item::Fn(decl) = &module.items[info.item_index] else {
+                unreachable!("a function's item index must name a function");
+            };
             FnLower::new(typed, &mut consts, info.local_types.clone(), info.ret).run(decl)
         })
         .collect();
     Hir {
         funcs,
         consts: consts.values,
+        caps: typed.caps.clone(),
     }
 }
 
@@ -258,14 +261,26 @@ impl<'a> FnLower<'a> {
                 dst
             }
             ExprKind::Call { callee, args } => {
-                let Some(Res::Fn(func)) = self.typed.res_of(callee.id) else {
-                    unreachable!("a call must resolve to a function");
-                };
                 // Arguments are evaluated into locals first; the bytecode
                 // compiler is what moves them into consecutive registers.
                 let args: Vec<LocalId> = args.iter().map(|a| self.expr(a)).collect();
                 let dst = self.temp(ty);
-                self.emit(InstKind::Call { dst, func, args }, e.span);
+                match self.typed.res_of(callee.id) {
+                    Some(Res::Fn(func)) => self.emit(InstKind::Call { dst, func, args }, e.span),
+                    Some(Res::Cap(cap)) => self.emit(
+                        InstKind::CallCap {
+                            dst,
+                            cap,
+                            args,
+                            // Retry, timeout and budget arrive in phase 6. The
+                            // slot is here so they attach to the call rather
+                            // than to something reconstructed later.
+                            policy: CallPolicy::default(),
+                        },
+                        e.span,
+                    ),
+                    _ => unreachable!("a call must resolve to a function or a capability"),
+                }
                 dst
             }
             ExprKind::Null | ExprKind::Field { .. } | ExprKind::Error => {

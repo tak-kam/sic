@@ -3,8 +3,15 @@
 use std::process::Command;
 
 fn sic(args: &[&str]) -> (String, String, i32) {
+    sic_in(repo_root(), args)
+}
+
+/// Runs the binary with a working directory, for programs whose capability
+/// grants name relative paths.
+fn sic_in(dir: std::path::PathBuf, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_sic"))
         .args(args)
+        .current_dir(dir)
         .output()
         .expect("failed to run sic");
     (
@@ -12,6 +19,10 @@ fn sic(args: &[&str]) -> (String, String, i32) {
         String::from_utf8_lossy(&out.stderr).into_owned(),
         out.status.code().unwrap_or(-1),
     )
+}
+
+fn repo_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
 }
 
 /// Writes a source file to a temporary path (no tempfile crate).
@@ -181,6 +192,110 @@ fn hir_prints_the_intermediate_representation() {
     assert_eq!(code, 0, "stderr: {stderr}");
     assert!(stdout.contains("fn main/0:"), "{stdout}");
     assert!(stdout.contains("bb0:"), "{stdout}");
+}
+
+// ---- capabilities ----
+
+#[test]
+fn a_granted_capability_is_performed_by_the_broker() {
+    let data = write_temp("cap-data.txt", "hello from a file");
+    let data = data.to_str().unwrap().to_string();
+    let src = write_temp(
+        "cap-read.sic",
+        &format!(
+            "allow {{ fs.read {data:?}; }}\nfn main() -> String {{ return fs.read({data:?}); }}\n"
+        ),
+    );
+
+    let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "\"hello from a file\"\n");
+
+    std::fs::remove_file(&data).ok();
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn calling_a_capability_without_a_grant_does_not_compile() {
+    let src = write_temp(
+        "cap-nogrant.sic",
+        "fn main() -> String { return fs.read(\"./x.txt\"); }\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0320"), "{stderr}");
+    // The fix is in the message.
+    assert!(stderr.contains("allow {"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn the_broker_refuses_a_path_the_grant_does_not_cover() {
+    // The argument is a runtime value, so this compiles: the grant is what
+    // stops it, and the broker is where that decision is made.
+    let allowed = write_temp("cap-allowed.txt", "allowed");
+    let other = write_temp("cap-other.txt", "other");
+    let (allowed, other) = (
+        allowed.to_str().unwrap().to_string(),
+        other.to_str().unwrap().to_string(),
+    );
+    let src = write_temp(
+        "cap-wrongpath.sic",
+        &format!(
+            "allow {{ fs.read {allowed:?}; }}\nfn main() -> String {{ return fs.read({other:?}); }}\n"
+        ),
+    );
+
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1, "stderr: {stderr}");
+    assert!(stderr.contains("a capability call failed"), "{stderr}");
+    assert!(stderr.contains("may only be used with"), "{stderr}");
+
+    std::fs::remove_file(&allowed).ok();
+    std::fs::remove_file(&other).ok();
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn verify_reports_the_manifest_without_running_anything() {
+    let src = write_temp(
+        "cap-manifest.sic",
+        "allow { process.exec \"/usr/bin/true\"; }\nfn main() -> Int { return process.exec(\"/usr/bin/true\"); }\n",
+    );
+    let out = src.with_extension("sicb");
+    let out_str = out.to_str().unwrap().to_string();
+    let (_, stderr, code) = sic(&["compile", src.to_str().unwrap(), "-o", &out_str]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic(&["verify", &out_str]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("process.exec [exec] \"/usr/bin/true\""),
+        "{stdout}"
+    );
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(out).ok();
+}
+
+#[test]
+fn an_unused_grant_is_reported_as_a_warning() {
+    let src = write_temp(
+        "cap-unused.sic",
+        "allow { fs.read \"./x.txt\"; }\nfn main() -> Int { return 1; }\n",
+    );
+    let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "1\n");
+    assert!(stderr.contains("never called"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn the_capability_example_runs_from_the_repository_root() {
+    let (stdout, stderr, code) = sic_in(repo_root(), &["run", "examples/read-file.sic"]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("hello from a file"), "{stdout}");
 }
 
 #[test]

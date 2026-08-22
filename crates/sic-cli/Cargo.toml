@@ -17,6 +17,7 @@ sic-bytecode = { path = "../sic-bytecode" }
 sic-compile = { path = "../sic-compile" }
 sic-verify = { path = "../sic-verify" }
 sic-vm = { path = "../sic-vm" }
+sic-broker = { path = "../sic-broker" }
 
 [lints]
 workspace = true

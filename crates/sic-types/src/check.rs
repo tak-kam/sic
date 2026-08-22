@@ -7,16 +7,19 @@
 
 use std::collections::HashMap;
 
-use sic_core::{Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
+use sic_core::{CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
 use sic_syntax::ast::*;
 
+use crate::cap::{self, CapEntry};
 use crate::ty::{Type, Types};
 
-/// What a `Path` expression refers to.
+/// What a name in an expression refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Res {
     Local(LocalId),
     Fn(FuncId),
+    /// A capability, resolved to its index in the module's manifest.
+    Cap(CapId),
 }
 
 #[derive(Debug, Clone)]
@@ -39,8 +42,10 @@ pub struct Typed {
     pub fns: Vec<FnInfo>,
     /// The type of every expression, keyed by its `NodeId`.
     pub node_types: HashMap<NodeId, TypeId>,
-    /// What each `Path` expression resolved to.
+    /// What each name expression resolved to.
     pub res: HashMap<NodeId, Res>,
+    /// The capabilities the module granted itself, in manifest order.
+    pub caps: Vec<CapEntry>,
     /// The `main` function, if the module has one.
     pub entry: Option<FuncId>,
 }
@@ -58,6 +63,7 @@ impl Typed {
 /// Checks a module. Diagnostics are collected rather than raised.
 pub fn check(module: &Module) -> (Typed, Vec<Diagnostic>) {
     let mut c = Checker::new();
+    c.collect_capabilities(module);
     c.collect_signatures(module);
     c.check_bodies(module);
     c.finish()
@@ -82,6 +88,8 @@ struct Checker {
     fn_ids: HashMap<String, FuncId>,
     node_types: HashMap<NodeId, TypeId>,
     res: HashMap<NodeId, Res>,
+    caps: Vec<CapEntry>,
+    cap_ids: HashMap<String, CapId>,
 
     // State for the function currently being checked.
     scopes: Vec<Vec<(String, LocalId)>>,
@@ -99,6 +107,8 @@ impl Checker {
             fn_ids: HashMap::new(),
             node_types: HashMap::new(),
             res: HashMap::new(),
+            caps: Vec::new(),
+            cap_ids: HashMap::new(),
             scopes: Vec::new(),
             locals: Vec::new(),
             ret_ty: None,
@@ -123,11 +133,75 @@ impl Checker {
         }
     }
 
+    // ---- pass 0: capability grants ----
+
+    /// Builds the module's manifest from its `allow` blocks.
+    ///
+    /// This runs before anything else, so that a call can be checked against
+    /// the manifest no matter where the grant appears in the file.
+    fn collect_capabilities(&mut self, module: &Module) {
+        for item in &module.items {
+            let Item::Allow(decl) = item else {
+                continue;
+            };
+            for grant in &decl.grants {
+                let full = grant.path.full_name();
+                let Some(sig) = cap::builtin(&full) else {
+                    self.error(
+                        "E0321",
+                        format!("unknown capability `{full}`"),
+                        grant.path.span,
+                        "no such capability",
+                    );
+                    self.note(format!("v0.1 has {}", cap::all_names().join(", ")));
+                    continue;
+                };
+                if self.cap_ids.contains_key(&full) {
+                    self.error(
+                        "E0323",
+                        format!("`{full}` is granted more than once"),
+                        grant.span,
+                        "already granted",
+                    );
+                    self.note("a capability has one grant, so its manifest entry is unambiguous");
+                    continue;
+                }
+                let constraint = match &grant.constraint {
+                    Some(c) => c.clone(),
+                    None if sig.requires_constraint => {
+                        self.error(
+                            "E0322",
+                            format!("`{full}` must say what it is limited to"),
+                            grant.span,
+                            "add the path this grant covers",
+                        );
+                        self.note(format!(
+                            "for example: allow {{ {full} \"/usr/bin/true\"; }}"
+                        ));
+                        continue;
+                    }
+                    None => String::new(),
+                };
+                let id = CapId(self.caps.len() as u32);
+                self.cap_ids.insert(full.clone(), id);
+                self.caps.push(CapEntry {
+                    name: full,
+                    kind: sig.kind,
+                    constraint,
+                    params: sig.params.to_vec(),
+                    ret: sig.ret,
+                });
+            }
+        }
+    }
+
     // ---- pass 1: signatures ----
 
     fn collect_signatures(&mut self, module: &Module) {
         for (item_index, item) in module.items.iter().enumerate() {
-            let Item::Fn(f) = item;
+            let Item::Fn(f) = item else {
+                continue;
+            };
             if let Some(prev) = self.fn_ids.get(&f.name.name) {
                 let prev_span = self.fns[prev.index()].span;
                 self.error(
@@ -190,7 +264,9 @@ impl Checker {
     fn check_bodies(&mut self, module: &Module) {
         for idx in 0..self.fns.len() {
             let item_index = self.fns[idx].item_index;
-            let Item::Fn(decl) = &module.items[item_index];
+            let Item::Fn(decl) = &module.items[item_index] else {
+                unreachable!("a function's item index must name a function");
+            };
             self.check_fn(FuncId(idx as u32), decl);
         }
     }
@@ -358,14 +434,23 @@ impl Checker {
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
             ExprKind::Call { callee, args } => self.check_call(callee, args, e.span),
-            ExprKind::Field { base, .. } => {
-                self.check_expr(base);
-                self.error(
-                    "E0308",
-                    "field access is not supported in v0.1",
-                    e.span,
-                    "there are no object types yet",
-                );
+            ExprKind::Field { base, name } => {
+                if let Some(full) = self.capability_name(base, name) {
+                    self.error(
+                        "E0325",
+                        format!("`{full}` is a capability and must be called"),
+                        e.span,
+                        "a capability is not a value",
+                    );
+                } else {
+                    self.check_expr(base);
+                    self.error(
+                        "E0308",
+                        "field access is not supported in v0.1",
+                        e.span,
+                        "there are no object types yet",
+                    );
+                }
                 Types::ERROR
             }
             ExprKind::Error => Types::ERROR,
@@ -468,6 +553,12 @@ impl Checker {
     }
 
     fn check_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> TypeId {
+        // `fs.read(..)` parses as a call whose callee is a field access. That
+        // shape is a capability call and nothing else, because there are no
+        // object types to take a method from.
+        if let ExprKind::Field { base, name } = &callee.kind {
+            return self.check_cap_call(callee, base, name, args, span);
+        }
         let ExprKind::Path(name) = &callee.kind else {
             for a in args {
                 self.check_expr(a);
@@ -553,6 +644,99 @@ impl Checker {
         }
     }
 
+    /// The capability a `base.name` expression could name, if `base` is a plain
+    /// identifier that no local binding shadows.
+    fn capability_name(&self, base: &Expr, name: &Ident) -> Option<String> {
+        let ExprKind::Path(ns) = &base.kind else {
+            return None;
+        };
+        if self.lookup(&ns.name).is_some() {
+            return None;
+        }
+        let full = format!("{}.{}", ns.name, name.name);
+        cap::builtin(&full).map(|_| full)
+    }
+
+    fn check_cap_call(
+        &mut self,
+        callee: &Expr,
+        base: &Expr,
+        name: &Ident,
+        args: &[Expr],
+        span: Span,
+    ) -> TypeId {
+        let Some(full) = self.capability_name(base, name) else {
+            for a in args {
+                self.check_expr(a);
+            }
+            // Either the namespace is a local binding, or there is no such
+            // capability; both mean this cannot be a capability call.
+            if let ExprKind::Path(ns) = &base.kind {
+                let attempted = format!("{}.{}", ns.name, name.name);
+                if self.lookup(&ns.name).is_none() {
+                    self.error(
+                        "E0324",
+                        format!("unknown capability `{attempted}`"),
+                        span,
+                        "no such capability",
+                    );
+                    self.note(format!("v0.1 has {}", cap::all_names().join(", ")));
+                    return Types::ERROR;
+                }
+            }
+            self.check_expr(base);
+            self.error(
+                "E0308",
+                "field access is not supported in v0.1",
+                callee.span,
+                "there are no object types yet",
+            );
+            return Types::ERROR;
+        };
+
+        let Some(id) = self.cap_ids.get(&full).copied() else {
+            for a in args {
+                self.check_expr(a);
+            }
+            // The capability exists but the module never granted it. Declaring
+            // it is the fix, which is why this is an error at compile time
+            // rather than a refusal at run time.
+            self.error(
+                "E0320",
+                format!("`{full}` is not allowed by this module"),
+                span,
+                "no grant covers this call",
+            );
+            self.note(format!("declare it: allow {{ {full} \"...\"; }}"));
+            return Types::ERROR;
+        };
+        self.res.insert(callee.id, Res::Cap(id));
+
+        let entry = &self.caps[id.index()];
+        let (params, ret) = (entry.params.clone(), entry.ret);
+        if args.len() != params.len() {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!(
+                    "`{full}` takes {} argument(s) but {} were given",
+                    params.len(),
+                    args.len()
+                ),
+                span,
+                "wrong number of arguments",
+            );
+            return ret;
+        }
+        for (arg, want) in args.iter().zip(params) {
+            let found = self.check_expr(arg);
+            self.expect_type(want, found, arg.span, "this argument");
+        }
+        ret
+    }
+
     fn finish(self) -> (Typed, Vec<Diagnostic>) {
         let entry = self.fn_ids.get("main").copied();
         let fns = self
@@ -573,6 +757,7 @@ impl Checker {
                 fns,
                 node_types: self.node_types,
                 res: self.res,
+                caps: self.caps,
                 entry,
             },
             self.diags,

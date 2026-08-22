@@ -349,3 +349,101 @@ fn unverified_bytecode_fails_instead_of_panicking() {
     );
     assert!(matches!(fail_kind(&p, &[]), FailKind::Internal(_)));
 }
+
+// ---- capabilities ----
+
+/// The same program in each capability test: `process.exec("/usr/bin/true")`,
+/// whose result is returned.
+fn exec_program() -> Program {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeTag::Int,
+            2,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0),
+                Inst::abc(Op::CallCap, 0, 0, 1),
+                Inst::abc(Op::Return, 0, 0, 0),
+            ],
+        )],
+        vec![Const::Str("/usr/bin/true".into())],
+    );
+    p.caps.push(sic_bytecode::CapDecl {
+        name: "process.exec".into(),
+        kind: sic_core::CapKind::Exec,
+        constraints: "/usr/bin/true".into(),
+        params: vec![TypeTag::Str as u32],
+        ret_type: TypeTag::Int as u32,
+    });
+    p
+}
+
+#[test]
+fn a_capability_call_suspends_instead_of_performing_the_effect() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("the VM should have suspended");
+    };
+    assert_eq!(request.index, 0);
+    assert_eq!(request.name, "process.exec");
+    // Arguments cross the boundary as owned values, not handles into the arena.
+    assert_eq!(
+        request.args,
+        vec![sic_core::CapValue::Str("/usr/bin/true".into())]
+    );
+    assert!(vm.is_suspended());
+}
+
+#[test]
+fn resuming_writes_the_result_and_continues() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    match vm.resume(sic_core::CapValue::I64(0)) {
+        Status::Finished(v) => assert_eq!(v, Value::I64(0)),
+        other => panic!("expected a result, got {other:?}"),
+    }
+    assert!(!vm.is_suspended());
+}
+
+#[test]
+fn a_returned_string_is_interned_in_the_arena() {
+    let mut p = exec_program();
+    // Make the capability return a String instead.
+    p.caps[0].ret_type = TypeTag::Str as u32;
+    p.funcs[0].ret_type = TypeTag::Str as u32;
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    match vm.resume(sic_core::CapValue::Str("contents".into())) {
+        Status::Finished(v) => assert_eq!(vm.display(&v), "\"contents\""),
+        other => panic!("expected a result, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_failed_capability_ends_the_run() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    match vm.resume_failed(&sic_core::CapError::new("permission denied")) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::Capability);
+            assert_eq!(info.detail.as_deref(), Some("permission denied"));
+            assert_eq!(info.pc, 1);
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn resuming_a_running_vm_is_an_internal_error() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.resume(sic_core::CapValue::I64(0)) {
+        Status::Failed(info) => assert!(matches!(info.kind, FailKind::Internal(_))),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}

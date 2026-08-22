@@ -72,3 +72,19 @@ fn a_function_without_return_ends_in_return_unit() {
     let out = hir("fn f() { let x = 1; }");
     assert!(out.trim_end().ends_with("return"), "{out}");
 }
+
+#[test]
+fn a_capability_call_lowers_to_call_cap() {
+    let out =
+        hir("allow { fs.read \"./a.txt\"; }\nfn main() -> String { return fs.read(\"./a.txt\"); }");
+    assert!(out.contains("capabilities:\n  c0 = fs.read"), "{out}");
+    assert!(out.contains("call_cap c0(%0)"), "{out}");
+}
+
+#[test]
+fn the_manifest_survives_lowering_even_when_unused() {
+    // `sic plan` and the verifier both read the manifest, so lowering must not
+    // drop a grant just because no instruction mentions it.
+    let out = hir("allow { fs.read \"./a.txt\"; }\nfn main() -> Int { return 1; }");
+    assert!(out.contains("c0 = fs.read"), "{out}");
+}

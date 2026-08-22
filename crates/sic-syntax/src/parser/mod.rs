@@ -172,12 +172,13 @@ impl Parser {
             let before = self.pos;
             match self.peek() {
                 TokenKind::Kw(Keyword::Fn) => items.push(Item::Fn(self.parse_fn())),
+                TokenKind::Kw(Keyword::Allow) => items.push(Item::Allow(self.parse_allow())),
                 other => {
                     let span = self.span();
                     let found = other.describe();
                     self.error(
                         "E0202",
-                        "only function definitions are allowed at the top level",
+                        "the top level holds function definitions and `allow` blocks",
                         span,
                         format!("found {found}"),
                     );
@@ -196,10 +197,91 @@ impl Parser {
         }
     }
 
-    /// Skips ahead to the next `fn`.
+    /// Skips ahead to the next item.
     fn recover_to_item(&mut self) {
-        while !self.at_eof() && !matches!(self.peek(), TokenKind::Kw(Keyword::Fn)) {
+        while !self.at_eof() && !matches!(self.peek(), TokenKind::Kw(Keyword::Fn | Keyword::Allow))
+        {
             self.bump();
+        }
+    }
+
+    /// ```text
+    /// allow { fs.read "./input.txt"; process.exec "/usr/bin/true"; }
+    /// ```
+    fn parse_allow(&mut self) -> AllowDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `allow`
+        let mut grants = Vec::new();
+        if self.expect(&TokenKind::LBrace, "to open an `allow` block") {
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let before = self.pos;
+                grants.push(self.parse_grant());
+                if self.pos == before {
+                    self.bump();
+                }
+            }
+            self.expect(&TokenKind::RBrace, "to close the `allow` block");
+        }
+        AllowDecl {
+            id,
+            grants,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    fn parse_grant(&mut self) -> CapGrant {
+        let id = self.id();
+        let start = self.span().lo;
+        let namespace = self.expect_ident("a capability namespace");
+        self.expect(
+            &TokenKind::Dot,
+            "between a capability namespace and its name",
+        );
+        let name = self.expect_ident("a capability name");
+        let path = CapPath {
+            namespace,
+            name,
+            span: Span::new(start, self.prev_end()),
+        };
+
+        // The constraint is optional in the grammar; whether a capability can
+        // be granted without one is for the checker to decide.
+        let constraint = match self.peek().clone() {
+            TokenKind::Str(text) => {
+                self.bump();
+                Some(text)
+            }
+            _ => None,
+        };
+        if !self.expect(&TokenKind::Semi, "after a capability grant") {
+            self.recover_to_grant_end();
+        }
+        CapGrant {
+            id,
+            path,
+            constraint,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// Inside an `allow` block, a grant starts with an identifier and nothing
+    /// else does, so an identifier is a synchronization point as well as `;`
+    /// and the closing brace.
+    fn recover_to_grant_end(&mut self) {
+        while !self.at_eof() {
+            match self.peek() {
+                TokenKind::Semi => {
+                    self.bump();
+                    return;
+                }
+                TokenKind::Ident(_)
+                | TokenKind::RBrace
+                | TokenKind::Kw(Keyword::Fn | Keyword::Allow) => return,
+                _ => {
+                    self.bump();
+                }
+            }
         }
     }
 

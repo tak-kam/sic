@@ -106,3 +106,40 @@ fn the_constant_pool_holds_unit_and_zero_once() {
         .count();
     assert_eq!(zeros, 1);
 }
+
+#[test]
+fn a_capability_call_compiles_to_call_cap_with_a_manifest() {
+    let src =
+        "allow { fs.read \"./a.txt\"; }\nfn main() -> String { return fs.read(\"./a.txt\"); }";
+    let hir = sic_ir::lower::compile_to_hir(src).unwrap();
+    let file = SourceFile::new("t.sic", src);
+    let program = compile(&hir, &file).unwrap();
+
+    assert_eq!(program.caps.len(), 1);
+    assert_eq!(program.caps[0].name, "fs.read");
+    assert_eq!(program.caps[0].constraints, "./a.txt");
+    // The signature travels with the manifest so the verifier can use it.
+    assert_eq!(
+        program.caps[0].params,
+        vec![sic_bytecode::TypeTag::Str as u32]
+    );
+    assert_eq!(program.caps[0].ret_type, sic_bytecode::TypeTag::Str as u32);
+
+    let asm = disassemble(&program);
+    assert!(asm.contains("CALL_CAP    r1, c0, r2"), "{asm}");
+    assert!(
+        asm.contains("c0 = fs.read(String) -> String  read"),
+        "{asm}"
+    );
+}
+
+#[test]
+fn capability_arguments_go_into_consecutive_registers() {
+    let src = "allow { fs.write \"./a.txt\"; }\nfn main() { fs.write(\"./a.txt\", \"data\"); }";
+    let hir = sic_ir::lower::compile_to_hir(src).unwrap();
+    let file = SourceFile::new("t.sic", src);
+    let asm = disassemble(&compile(&hir, &file).unwrap());
+    // Two arguments, so two moves into the scratch area, then the call.
+    assert_eq!(asm.matches("MOVE").count(), 2, "{asm}");
+    assert!(asm.contains("CALL_CAP"), "{asm}");
+}

@@ -357,30 +357,6 @@ fn call_arguments_must_fit_in_the_frame() {
 }
 
 #[test]
-fn capabilities_cannot_be_declared_yet() {
-    let mut p = program(
-        &[],
-        TypeTag::Unit,
-        1,
-        vec![Const::Unit],
-        vec![
-            Inst::abx(Op::LoadConst, 0, 0),
-            Inst::abc(Op::Return, 0, 0, 0),
-        ],
-    );
-    p.caps.push(CapDecl {
-        name: "process.exec".into(),
-        kind: CapKind::Exec,
-        constraints: String::new(),
-    });
-    assert!(
-        errors(&p).iter().any(|m| m.contains("capabilities")),
-        "{:?}",
-        errors(&p)
-    );
-}
-
-#[test]
 fn comparing_two_different_types_is_rejected() {
     let p = program(
         &[],
@@ -416,4 +392,94 @@ fn a_loop_converges() {
         ],
     );
     assert_ok(&p);
+}
+
+// ---- capabilities ----
+
+/// A program with one capability: `process.exec(String) -> Int`.
+fn with_exec_capability(reg_count: u8, consts: Vec<Const>, code: Vec<Inst>) -> Program {
+    let mut p = program(&[], TypeTag::Int, reg_count, consts, code);
+    p.caps.push(CapDecl {
+        name: "process.exec".into(),
+        kind: CapKind::Exec,
+        constraints: "/usr/bin/true".into(),
+        params: vec![TypeTag::Str as u32],
+        ret_type: TypeTag::Int as u32,
+    });
+    p
+}
+
+#[test]
+fn a_capability_call_is_checked_against_the_manifest() {
+    let p = with_exec_capability(
+        2,
+        vec![Const::Str("/usr/bin/true".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    assert_ok(&p);
+}
+
+#[test]
+fn a_capability_call_must_name_a_declared_capability() {
+    let p = with_exec_capability(
+        2,
+        vec![Const::Str("x".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 0, 7, 1), // no such entry
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p).iter().any(|m| m.contains("not in the manifest")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn capability_arguments_are_type_checked() {
+    let p = with_exec_capability(
+        2,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0), // an Int where a String is required
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("holds Int where String is required")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn a_granted_but_uncalled_capability_is_a_warning() {
+    // Authority the module does not use should never pass unnoticed.
+    let p = with_exec_capability(
+        1,
+        vec![Const::I64(0)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    let report = verify(&p);
+    assert!(report.ok(), "{:#?}", report.errors);
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|w| w.message.contains("never called")),
+        "{:#?}",
+        report.warnings
+    );
 }

@@ -13,10 +13,18 @@ fn expr(src: &str) -> String {
     let wrapped = format!("fn f() {{ return {src}; }}");
     let (m, diags) = parse(&wrapped);
     assert!(diags.is_empty(), "unexpected diagnostics: {:#?}", diags);
-    let crate::ast::Item::Fn(f) = &m.items[0];
+    let f = only_fn(&m);
     match &f.body.stmts[0] {
         crate::ast::Stmt::Return { value: Some(e), .. } => expr_str(e),
         other => panic!("not a return statement: {other:?}"),
+    }
+}
+
+/// The single function a test module is expected to hold.
+fn only_fn(m: &crate::ast::Module) -> &crate::ast::FnDecl {
+    match &m.items[0] {
+        crate::ast::Item::Fn(f) => f,
+        other => panic!("expected a function, found {other:?}"),
     }
 }
 
@@ -126,6 +134,52 @@ fn return_without_value() {
     assert!(out.contains("(return)"), "{out}");
 }
 
+// ---- capability grants ----
+
+#[test]
+fn allow_block() {
+    let src = "allow {\n    fs.read \"./input.txt\";\n    process.exec \"/usr/bin/true\";\n}\nfn main() { }\n";
+    assert_eq!(
+        ok(src),
+        "\
+(module
+  (allow
+    (fs.read \"./input.txt\")
+    (process.exec \"/usr/bin/true\"))
+  (fn main
+    (block)))
+"
+    );
+}
+
+#[test]
+fn a_grant_may_omit_its_constraint() {
+    let out = ok("allow { fs.read; }\nfn main() { }");
+    assert!(out.contains("(fs.read)"), "{out}");
+}
+
+#[test]
+fn an_empty_allow_block_is_legal() {
+    let out = ok("allow { }\nfn main() { }");
+    assert!(out.contains("(allow)"), "{out}");
+}
+
+#[test]
+fn a_broken_grant_does_not_swallow_the_next_one() {
+    let (m, diags) = parse("allow {\n  fs.read \"a\"\n  fs.write \"b\";\n}\n");
+    assert!(!diags.is_empty());
+    let crate::ast::Item::Allow(a) = &m.items[0] else {
+        panic!("expected an allow block");
+    };
+    assert_eq!(a.grants.len(), 2);
+}
+
+#[test]
+fn process_is_an_identifier_not_a_reserved_word() {
+    // `process` is the namespace of `process.exec`, so it has to lex as a name.
+    ok("fn main() { let process = 1; return process; }");
+}
+
 // ---- errors and recovery ----
 
 #[test]
@@ -139,8 +193,7 @@ fn recovers_and_reports_multiple_errors() {
     let src = "fn f() {\n let a = ;\n let b = 1\n let c = 2;\n}\n";
     let (m, diags) = parse(src);
     assert!(diags.len() >= 2, "{diags:#?}");
-    let crate::ast::Item::Fn(f) = &m.items[0];
-    assert_eq!(f.body.stmts.len(), 3);
+    assert_eq!(only_fn(&m).body.stmts.len(), 3);
 }
 
 #[test]

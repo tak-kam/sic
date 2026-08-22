@@ -116,14 +116,17 @@ pub enum Keyword {
     True,
     False,
     Null,
+    Allow,
     /// Reserved only. Using one produces a diagnostic.
     Reserved(&'static str),
 }
 
 /// Words planned for later phases. They cannot be used as identifiers today.
+///
+/// `process` is deliberately absent: it is the namespace of the `process.exec`
+/// capability, so it has to lex as an ordinary identifier.
 const RESERVED: &[&str] = &[
     "agent",
-    "allow",
     "approval",
     "as",
     "await",
@@ -138,7 +141,6 @@ const RESERVED: &[&str] = &[
     "match",
     "mut",
     "parallel",
-    "process",
     "retry",
     "secret",
     "spawn",
@@ -163,6 +165,7 @@ impl Keyword {
             "true" => Keyword::True,
             "false" => Keyword::False,
             "null" => Keyword::Null,
+            "allow" => Keyword::Allow,
             other => {
                 let found = RESERVED.iter().find(|r| **r == other)?;
                 Keyword::Reserved(found)
@@ -180,6 +183,7 @@ impl Keyword {
             Keyword::True => "true",
             Keyword::False => "false",
             Keyword::Null => "null",
+            Keyword::Allow => "allow",
             Keyword::Reserved(s) => s,
         }
     }

@@ -15,6 +15,7 @@ pub fn dump(m: &Module) -> String {
     for item in &m.items {
         match item {
             Item::Fn(f) => p.fn_decl(f),
+            Item::Allow(a) => p.allow_decl(a),
         }
     }
     p.depth -= 1;
@@ -57,6 +58,23 @@ impl Printer {
             self.line(&format!("(params {})", ps.join(" ")));
         }
         self.block(&f.body);
+        self.depth -= 1;
+        self.push_close();
+    }
+
+    fn allow_decl(&mut self, a: &AllowDecl) {
+        if a.grants.is_empty() {
+            self.line("(allow)");
+            return;
+        }
+        self.line("(allow");
+        self.depth += 1;
+        for g in &a.grants {
+            match &g.constraint {
+                Some(c) => self.line(&format!("({} {c:?})", g.path.full_name())),
+                None => self.line(&format!("({})", g.path.full_name())),
+            }
+        }
         self.depth -= 1;
         self.push_close();
     }

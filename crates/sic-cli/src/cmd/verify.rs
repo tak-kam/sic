@@ -36,7 +36,7 @@ pub fn report(program: &Program) -> ExitCode {
         println!("  (none)");
     }
     for cap in &program.caps {
-        println!("  {} ({:?})", cap.name, cap.kind);
+        println!("  {} [{}] {:?}", cap.name, cap.kind.name(), cap.constraints);
     }
     ExitCode::SUCCESS
 }

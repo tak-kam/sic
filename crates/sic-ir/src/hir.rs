@@ -10,6 +10,9 @@ pub use sic_syntax::ast::{BinOp, UnOp};
 pub struct Hir {
     pub funcs: Vec<HirFunc>,
     pub consts: Vec<Const>,
+    /// The capabilities the module granted itself, in manifest order. A
+    /// `CallCap` indexes into this.
+    pub caps: Vec<sic_types::CapEntry>,
 }
 
 #[derive(Debug, Clone)]

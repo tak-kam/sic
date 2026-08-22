@@ -132,6 +132,77 @@ fn unsupported_v01_features() {
     assert!(codes("fn f() { }\nfn main() { let x = f(); }").contains(&"E0311"));
 }
 
+// ---- capabilities ----
+
+const ALLOW_ALL: &str = "allow {\n  fs.read \"./in.txt\";\n  fs.write \"./out.txt\";\n  process.exec \"/usr/bin/true\";\n}\n";
+
+#[test]
+fn a_granted_capability_can_be_called() {
+    let typed = ok(&format!(
+        "{ALLOW_ALL}fn main() {{\n  let text = fs.read(\"./in.txt\");\n  fs.write(\"./out.txt\", text);\n  return process.exec(\"/usr/bin/true\");\n}}\n"
+    ));
+    assert_eq!(typed.caps.len(), 3);
+    assert_eq!(typed.caps[0].name, "fs.read");
+    assert_eq!(typed.caps[0].kind, sic_core::CapKind::Read);
+    assert_eq!(typed.caps[0].constraint, "./in.txt");
+    // The result types come from the capability signatures.
+    assert_eq!(typed.fns[0].ret, Types::INT);
+}
+
+#[test]
+fn calling_an_ungranted_capability_is_a_compile_error() {
+    // The manifest of a compiled module is complete by construction, so this
+    // has to fail before anything runs.
+    assert!(codes("fn main() { let t = fs.read(\"x\"); }").contains(&"E0320"));
+}
+
+#[test]
+fn a_grant_must_name_a_real_capability() {
+    assert!(codes("allow { fs.delete \"x\"; }\nfn main() { }").contains(&"E0321"));
+    assert!(codes("fn main() { return fs.delete(\"x\"); }").contains(&"E0324"));
+}
+
+#[test]
+fn a_grant_must_be_constrained() {
+    assert!(codes("allow { fs.read; }\nfn main() { }").contains(&"E0322"));
+}
+
+#[test]
+fn a_capability_is_granted_once() {
+    assert!(codes("allow { fs.read \"a\"; fs.read \"b\"; }\nfn main() { }").contains(&"E0323"));
+}
+
+#[test]
+fn capability_arguments_are_checked() {
+    assert!(codes(&format!("{ALLOW_ALL}fn main() {{ let t = fs.read(1); }}")).contains(&"E0301"));
+    assert!(codes(&format!("{ALLOW_ALL}fn main() {{ let t = fs.read(); }}")).contains(&"E0302"));
+}
+
+#[test]
+fn a_capability_is_not_a_value() {
+    assert!(codes(&format!("{ALLOW_ALL}fn main() {{ let f = fs.read; }}")).contains(&"E0325"));
+}
+
+#[test]
+fn a_local_binding_shadows_a_capability_namespace() {
+    // With `fs` bound, `fs.read(..)` is a field access on a value, not a
+    // capability call, and field access does not exist yet.
+    let cs = codes(&format!(
+        "{ALLOW_ALL}fn main() {{ let fs = 1; let t = fs.read(\"x\"); }}"
+    ));
+    assert!(cs.contains(&"E0308"), "{cs:?}");
+}
+
+#[test]
+fn a_capability_returning_unit_cannot_be_bound() {
+    assert!(
+        codes(&format!(
+            "{ALLOW_ALL}fn main() {{ let x = fs.write(\"a\", \"b\"); }}"
+        ))
+        .contains(&"E0311")
+    );
+}
+
 #[test]
 fn one_error_does_not_cascade() {
     // `nope` is unknown; using its result must not add more diagnostics.

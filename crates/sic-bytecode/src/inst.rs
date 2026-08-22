@@ -38,9 +38,11 @@ pub enum Op {
     JumpIfNot = 16,
 
     Call = 17,
-    Return = 18,
-    Fail = 19,
-    Halt = 20,
+    /// The only instruction that reaches outside the VM.
+    CallCap = 18,
+    Return = 19,
+    Fail = 20,
+    Halt = 21,
 }
 
 impl Op {
@@ -68,9 +70,10 @@ impl Op {
             15 => JumpIf,
             16 => JumpIfNot,
             17 => Call,
-            18 => Return,
-            19 => Fail,
-            20 => Halt,
+            18 => CallCap,
+            19 => Return,
+            20 => Fail,
+            21 => Halt,
             _ => return None,
         })
     }
@@ -96,6 +99,7 @@ impl Op {
             JumpIf => "JUMP_IF",
             JumpIfNot => "JUMP_IF_NOT",
             Call => "CALL",
+            CallCap => "CALL_CAP",
             Return => "RETURN",
             Fail => "FAIL",
             Halt => "HALT",

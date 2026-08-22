@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "sic-broker"
+version = "0.1.0"
+dependencies = [
+ "sic-core",
+]
+
+[[package]]
 name = "sic-bytecode"
 version = "0.1.0"
 dependencies = [
@@ -13,6 +20,7 @@ dependencies = [
 name = "sic-cli"
 version = "0.1.0"
 dependencies = [
+ "sic-broker",
  "sic-bytecode",
  "sic-compile",
  "sic-core",

@@ -15,13 +15,48 @@ pub struct Module {
 #[derive(Debug, Clone)]
 pub enum Item {
     Fn(FnDecl),
+    /// A block of capability grants. Declaring a capability is what makes
+    /// calling it legal, so this is part of the program, not configuration.
+    Allow(AllowDecl),
 }
 
 impl Item {
     pub fn span(&self) -> Span {
         match self {
             Item::Fn(f) => f.span,
+            Item::Allow(a) => a.span,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AllowDecl {
+    pub id: NodeId,
+    pub grants: Vec<CapGrant>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct CapGrant {
+    pub id: NodeId,
+    pub path: CapPath,
+    /// What the grant is limited to: a file path, an executable path. Its
+    /// meaning belongs to the capability, not to the grammar.
+    pub constraint: Option<String>,
+    pub span: Span,
+}
+
+/// A capability name, always `namespace.name`.
+#[derive(Debug, Clone)]
+pub struct CapPath {
+    pub namespace: Ident,
+    pub name: Ident,
+    pub span: Span,
+}
+
+impl CapPath {
+    pub fn full_name(&self) -> String {
+        format!("{}.{}", self.namespace.name, self.name.name)
     }
 }
 

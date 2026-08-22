@@ -1,0 +1,13 @@
+// Reading a file is an effect, so the module has to grant itself the capability
+// first, naming exactly the path it may read. Run this from the repository root:
+//
+//     sic run examples/read-file.sic
+//
+// `sic verify` reports the same grant without running anything.
+allow {
+    fs.read "./examples/greeting.txt";
+}
+
+fn main() -> String {
+    return fs.read("./examples/greeting.txt");
+}

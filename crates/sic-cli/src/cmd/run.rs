@@ -7,8 +7,9 @@
 
 use std::process::ExitCode;
 
+use sic_broker::Broker;
 use sic_bytecode::Program;
-use sic_core::SourceFile;
+use sic_core::{CapGrant, SourceFile};
 use sic_vm::{DEFAULT_FUEL, FailInfo, Status, Value, Vm};
 
 use super::{EXIT_FAILURE, compile_source};
@@ -43,7 +44,8 @@ pub fn run(path: &str) -> ExitCode {
     }
 
     let mut vm = Vm::new(&program, DEFAULT_FUEL);
-    match vm.run(entry, &[]) {
+    let mut broker = Broker::new(manifest(&program));
+    match drive(&mut vm, &mut broker, entry) {
         Status::Finished(Value::Unit) => ExitCode::SUCCESS,
         Status::Finished(value) => {
             println!("{}", vm.display(&value));
@@ -53,13 +55,49 @@ pub fn run(path: &str) -> ExitCode {
             report_failure(&vm, &program, &file, &info);
             ExitCode::from(EXIT_FAILURE)
         }
-        Status::Suspended(reason) => {
-            // Phase 5 turns this into a checkpoint; until then nothing can
-            // suspend a run.
-            eprintln!("internal error: the run suspended unexpectedly: {reason:?}");
+        Status::Suspended(request) => {
+            // `drive` only returns once nothing is pending, so reaching this
+            // would mean the loop below stopped answering.
+            eprintln!(
+                "internal error: the run is still waiting for `{}`",
+                request.name
+            );
             ExitCode::from(EXIT_FAILURE)
         }
     }
+}
+
+/// Runs the program, answering each capability request from the broker.
+///
+/// This loop is the whole of the VM's access to the outside world. Phase 5
+/// replaces it with something that can also write the suspended state to disk
+/// and pick it up later; the shape does not have to change for that.
+fn drive(vm: &mut Vm, broker: &mut Broker, entry: u32) -> Status {
+    let mut status = vm.run(entry, &[]);
+    loop {
+        match status {
+            Status::Suspended(request) => {
+                status = match broker.call(&request) {
+                    Ok(value) => vm.resume(value),
+                    Err(error) => vm.resume_failed(&error),
+                };
+            }
+            other => return other,
+        }
+    }
+}
+
+/// The manifest the broker enforces, taken from the bytecode.
+fn manifest(program: &Program) -> Vec<CapGrant> {
+    program
+        .caps
+        .iter()
+        .map(|c| CapGrant {
+            name: c.name.clone(),
+            kind: c.kind,
+            constraint: c.constraints.clone(),
+        })
+        .collect()
 }
 
 /// Reports a runtime failure, naming the source line through the debug section.
@@ -67,6 +105,9 @@ fn report_failure(vm: &Vm, program: &Program, file: &SourceFile, info: &FailInfo
     eprint!("error: {}", info.kind.message());
     if let Some(value) = &info.value {
         eprint!(": {}", vm.display(value));
+    }
+    if let Some(detail) = &info.detail {
+        eprint!(": {detail}");
     }
     eprintln!();
 

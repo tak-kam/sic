@@ -99,6 +99,11 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.str(&c.name);
         w.u8(c.kind as u8);
         w.str(&c.constraints);
+        w.u8(c.params.len() as u8);
+        for t in &c.params {
+            w.u32(*t);
+        }
+        w.u32(c.ret_type);
     }
     sections.push((section::CAPABILITIES, w.done()));
 
@@ -310,10 +315,18 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
         let raw = r.u8()?;
         let kind = CapKind::from_u8(raw)
             .ok_or_else(|| DecodeError::new(format!("unknown capability kind {raw}")))?;
+        let constraints = r.str()?;
+        let param_count = r.u8()? as usize;
+        let mut params = Vec::with_capacity(param_count);
+        for _ in 0..param_count {
+            params.push(r.u32()?);
+        }
         out.push(CapDecl {
             name,
             kind,
-            constraints: r.str()?,
+            constraints,
+            params,
+            ret_type: r.u32()?,
         });
     }
     r.expect_end("capabilities")?;
@@ -445,6 +458,8 @@ mod tests {
                 name: "process.exec".into(),
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
+                params: vec![TypeTag::Str as u32],
+                ret_type: TypeTag::Int as u32,
             }],
             code: vec![
                 Inst::abx(Op::LoadConst, 0, 2),

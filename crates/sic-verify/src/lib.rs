@@ -119,13 +119,18 @@ impl<'a> Verifier<'a> {
                 ),
             );
         }
-        if !p.caps.is_empty() {
-            self.error(
-                None,
-                None,
-                "capabilities are declared but v0.1 cannot call one",
-            );
+        for (i, c) in p.caps.iter().enumerate() {
+            for t in c.params.iter().chain(std::iter::once(&c.ret_type)) {
+                if *t as usize >= p.types.len() {
+                    self.error(
+                        None,
+                        None,
+                        format!("capability c{i} names type index {t}, which is out of range"),
+                    );
+                }
+            }
         }
+        self.check_manifest_is_minimal();
 
         let mut seen: HashMap<&str, usize> = HashMap::new();
         for (i, f) in p.funcs.iter().enumerate() {
@@ -146,6 +151,27 @@ impl<'a> Verifier<'a> {
                     format!("the debug table names pc {pc}, which is past the code"),
                 );
                 break;
+            }
+        }
+    }
+
+    /// A capability that is granted but never called is authority the module
+    /// does not need. That is a warning rather than an error, because removing
+    /// it is the author's decision, but it should never pass unnoticed.
+    fn check_manifest_is_minimal(&mut self) {
+        let p = self.program;
+        let mut used = vec![false; p.caps.len()];
+        for inst in &p.code {
+            if inst.op() == Some(Op::CallCap) {
+                if let Some(slot) = used.get_mut(inst.b() as usize) {
+                    *slot = true;
+                }
+            }
+        }
+        for (i, granted) in used.iter().enumerate() {
+            if !granted {
+                let name = p.caps[i].name.clone();
+                self.warn(None, None, format!("`{name}` is granted but never called"));
             }
         }
     }
@@ -292,6 +318,34 @@ impl<'a> Verifier<'a> {
                         ok = false;
                     }
                 }
+                Op::CallCap => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    let Some(cap) = p.caps.get(inst.b() as usize) else {
+                        // A capability the manifest does not declare cannot be
+                        // called: the manifest is the contract with the broker.
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!("capability index c{} is not in the manifest", inst.b()),
+                        );
+                        ok = false;
+                        continue;
+                    };
+                    let last = inst.c() as usize + cap.params.len();
+                    if last > func.reg_count as usize {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!(
+                                "arguments r{}..r{} do not fit in reg_count {}",
+                                inst.c(),
+                                last,
+                                func.reg_count
+                            ),
+                        );
+                        ok = false;
+                    }
+                }
                 Op::Return | Op::Fail => ok &= check_reg(self, inst.a(), "operand"),
                 Op::Halt => {}
             }
@@ -409,6 +463,15 @@ impl<'a> Verifier<'a> {
                         self.read(&name, pc, &state, reg, Some(p.types[*want as usize]));
                     }
                     next[inst.a() as usize] = Abst::Val(p.types[callee.ret_type as usize]);
+                    successors.push(index + 1);
+                }
+                Op::CallCap => {
+                    let cap = &p.caps[inst.b() as usize];
+                    for (i, want) in cap.params.iter().enumerate() {
+                        let reg = inst.c() + i as u8;
+                        self.read(&name, pc, &state, reg, Some(p.types[*want as usize]));
+                    }
+                    next[inst.a() as usize] = Abst::Val(p.types[cap.ret_type as usize]);
                     successors.push(index + 1);
                 }
                 Op::Return => {

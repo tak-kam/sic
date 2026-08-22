@@ -26,9 +26,22 @@ pub fn disassemble(p: &Program) -> String {
         out.push_str("  (none)\n");
     }
     for (i, c) in p.caps.iter().enumerate() {
+        let params: Vec<&str> = c
+            .params
+            .iter()
+            .map(|t| p.types.get(*t as usize).map(|t| t.name()).unwrap_or("?"))
+            .collect();
+        let ret = p
+            .types
+            .get(c.ret_type as usize)
+            .map(|t| t.name())
+            .unwrap_or("?");
         out.push_str(&format!(
-            "  c{i} = {} {:?} {:?}\n",
-            c.name, c.kind, c.constraints
+            "  c{i} = {}({}) -> {ret}  {} {:?}\n",
+            c.name,
+            params.join(", "),
+            c.kind.name(),
+            c.constraints
         ));
     }
 
@@ -88,6 +101,7 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             Op::Halt => String::new(),
             Op::Move | Op::Not => format!("r{}, r{}", inst.a(), inst.b()),
             Op::Call => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
+            Op::CallCap => format!("r{}, c{}, r{}", inst.a(), inst.b(), inst.c()),
             _ => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
         },
     };
@@ -101,6 +115,11 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
     if op == Op::Call {
         if let Some(f) = p.funcs.get(inst.b() as usize) {
             line.push_str(&format!("  ; {}/{}", f.name, f.param_count()));
+        }
+    }
+    if op == Op::CallCap {
+        if let Some(c) = p.caps.get(inst.b() as usize) {
+            line.push_str(&format!("  ; {}", c.name));
         }
     }
     if let Some((line_no, col)) = p.debug.position(pc) {

@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 2 (the whole pipeline runs)
+## Status: phase 3 (capabilities)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -44,9 +44,42 @@ $ sic disasm factorial.sicb
   0002  JUMP_IF_NOT r2, +2  ; -> 0005  ; 5:8
 ```
 
-`sic verify` reports what a module is allowed to do before anything runs, which
-is the foundation the capability model of phase 3 builds on. Nothing can declare
-a capability yet, so the answer is always `(none)`.
+### Effects are capabilities
+
+Reaching outside the program takes a grant, and the grant is part of the
+program:
+
+```text
+allow {
+    fs.read "./examples/greeting.txt";
+}
+
+fn main() -> String {
+    return fs.read("./examples/greeting.txt");
+}
+```
+
+Calling a capability the module did not declare is a compile error, so the
+manifest of a compiled module is complete by construction. `sic verify` reports
+it without running anything:
+
+```console
+$ sic verify read-file.sicb
+ok: 1 function(s) verified
+required capabilities:
+  fs.read [read] "./examples/greeting.txt"
+```
+
+The VM never performs the effect itself. It suspends, the driver asks the
+broker, and the broker decides again - the manifest is the contract between
+them, not a formality the compiler already handled:
+
+```text
+CALL_CAP -> Suspended(request) -> broker -> resume(value) -> next instruction
+```
+
+`sic-broker` is the only crate that touches the outside world. See
+[docs/design/capabilities.md](docs/design/capabilities.md).
 
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode
@@ -86,12 +119,13 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 | `sic-compile` | HIR to bytecode |
 | `sic-verify` | the bytecode verifier |
 | `sic-vm` | the register VM |
+| `sic-broker` | performs capability calls; the only crate with external effects |
 | `sic-cli` | the `sic` command |
 
-`sic-journal` and `sic-broker` arrive in phases 3 and 4. `sic-vm` performs no
-external effects and does not depend on `sic-broker`; that boundary is where the
-VM and the capability broker will later split into separate processes, and it is
-checked by a test rather than left as an intention.
+`sic-journal` arrives in phase 4. `sic-vm` performs no external effects and does
+not depend on `sic-broker`; that boundary is where the VM and the capability
+broker will later split into separate processes, and it is checked by a test
+rather than left as an intention.
 
 ## Adding a dependency
 

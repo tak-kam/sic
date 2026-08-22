@@ -67,6 +67,18 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
         ..Program::default()
     };
 
+    program.caps = hir
+        .caps
+        .iter()
+        .map(|c| CapDecl {
+            name: c.name.clone(),
+            kind: c.kind,
+            constraints: c.constraint.clone(),
+            params: c.params.iter().map(|t| type_tag_of(*t) as u32).collect(),
+            ret_type: type_tag_of(c.ret) as u32,
+        })
+        .collect();
+
     for func in &hir.funcs {
         match FnCompile::new(func, &mut consts).run() {
             Ok(compiled) => {
@@ -355,12 +367,25 @@ impl<'a> FnCompile<'a> {
                         .push(CompileError::new("a function index does not fit in a byte")),
                 }
             }
-            InstKind::CallCap { .. }
-            | InstKind::Spawn { .. }
-            | InstKind::Await { .. }
-            | InstKind::Log { .. } => {
+            InstKind::CallCap { dst, cap, args, .. } => {
+                // Same calling convention as CALL: the arguments go into
+                // consecutive scratch registers.
+                let base = self.scratch(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    let src = self.reg(*arg);
+                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
+                }
+                let dst = self.reg(*dst);
+                match u8::try_from(cap.0) {
+                    Ok(c) => self.emit(Inst::abc(Op::CallCap, dst, c, base), span),
+                    Err(_) => self.errors.push(CompileError::new(
+                        "a capability index does not fit in a byte",
+                    )),
+                }
+            }
+            InstKind::Spawn { .. } | InstKind::Await { .. } | InstKind::Log { .. } => {
                 self.errors.push(CompileError::new(
-                    "capabilities, tasks and logging arrive in a later phase".to_string(),
+                    "tasks and logging arrive in a later phase".to_string(),
                 ));
             }
         }

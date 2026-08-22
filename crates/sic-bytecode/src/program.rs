@@ -2,6 +2,10 @@
 
 use crate::inst::Inst;
 
+// The kind of an effect means the same thing to the compiler, the verifier, the
+// VM and the broker, so it is defined once in sic-core.
+pub use sic_core::CapKind;
+
 /// A decoded module. Producing one says nothing about whether it is safe to
 /// run; that is what `sic-verify` decides.
 #[derive(Debug, Clone, Default)]
@@ -127,35 +131,21 @@ impl FuncDef {
     }
 }
 
-/// A capability the module needs. Phase 3 fills this in; `sic plan` reads it
-/// without running any code.
+/// A capability the module needs, with the signature of the call.
+///
+/// The signature is in the file so that the verifier can check a `CALL_CAP`
+/// without trusting whoever produced the bytecode, and so that `sic verify` can
+/// report what a module may do with nothing executed.
 #[derive(Debug, Clone)]
 pub struct CapDecl {
     pub name: String,
     pub kind: CapKind,
     /// Constraints such as an absolute path or a sha256 pin.
     pub constraints: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum CapKind {
-    Read = 0,
-    Write = 1,
-    Exec = 2,
-    Invoke = 3,
-}
-
-impl CapKind {
-    pub fn from_u8(v: u8) -> Option<CapKind> {
-        Some(match v {
-            0 => CapKind::Read,
-            1 => CapKind::Write,
-            2 => CapKind::Exec,
-            3 => CapKind::Invoke,
-            _ => return None,
-        })
-    }
+    /// Parameter types, as indices into `Program::types`.
+    pub params: Vec<u32>,
+    /// Result type, as an index into `Program::types`.
+    pub ret_type: u32,
 }
 
 /// Source mapping, so a runtime error or a trace can name a line of source.
