@@ -447,3 +447,194 @@ fn resuming_a_running_vm_is_an_internal_error() {
         other => panic!("expected a failure, got {other:?}"),
     }
 }
+
+// ---- the execution journal ----
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use sic_journal::{Event, EventKind, Journal, RunId, Sink};
+
+/// A sink that stays readable after the journal takes ownership of it.
+#[derive(Debug, Clone, Default)]
+struct SharedSink(Rc<RefCell<Vec<Event>>>);
+
+impl Sink for SharedSink {
+    fn emit(&mut self, event: &Event) {
+        self.0.borrow_mut().push(event.clone());
+    }
+}
+
+fn journal_for(sink: &SharedSink) -> Journal {
+    Journal::new(RunId(42), Box::new(sink.clone()))
+}
+
+fn names(sink: &SharedSink) -> Vec<&'static str> {
+    sink.0.borrow().iter().map(|e| e.kind.name()).collect()
+}
+
+#[test]
+fn a_run_records_its_shape() {
+    // main() { return add(2, 3) } over two functions, so the journal has to
+    // show one call nested inside the other.
+    let p = program(
+        vec![
+            (
+                "main",
+                &[],
+                TypeTag::Int,
+                4,
+                vec![
+                    Inst::abx(Op::LoadConst, 2, 0),
+                    Inst::abx(Op::LoadConst, 3, 1),
+                    Inst::abc(Op::Call, 0, 1, 2),
+                    Inst::abc(Op::Return, 0, 0, 0),
+                ],
+            ),
+            (
+                "add",
+                &[TypeTag::Int, TypeTag::Int],
+                TypeTag::Int,
+                3,
+                vec![
+                    Inst::abc(Op::AddI64, 2, 0, 1),
+                    Inst::abc(Op::Return, 2, 0, 0),
+                ],
+            ),
+        ],
+        vec![Const::I64(2), Const::I64(3)],
+    );
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Finished(_)));
+
+    assert_eq!(
+        names(&sink),
+        vec![
+            "run_started",
+            "function_entered", // main
+            "function_entered", // add
+            "function_exited",  // add
+            "function_exited",  // main
+            "run_completed",
+        ]
+    );
+
+    let events = sink.0.borrow();
+    // The trace shape is recorded as it happens: add sits inside main, which
+    // sits inside the run.
+    let run_span = events[0].span;
+    let main_span = events[1].span;
+    let add_span = events[2].span;
+    assert_eq!(events[0].parent, None);
+    assert_eq!(events[1].parent, Some(run_span));
+    assert_eq!(events[2].parent, Some(main_span));
+    assert_ne!(add_span, main_span);
+
+    // Sequence numbers are the order, and they are dense.
+    let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
+    assert_eq!(seqs, vec![0, 1, 2, 3, 4, 5]);
+    assert!(events.iter().all(|e| e.run == RunId(42)));
+}
+
+#[test]
+fn a_failure_is_recorded_with_its_reason() {
+    let p = program(
+        vec![(
+            "f",
+            &[TypeTag::Int, TypeTag::Int],
+            TypeTag::Int,
+            3,
+            vec![
+                Inst::abc(Op::DivI64, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![],
+    );
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(
+        vm.run(0, &[Value::I64(1), Value::I64(0)]),
+        Status::Failed(_)
+    ));
+
+    assert_eq!(names(&sink).last(), Some(&"run_failed"));
+    let events = sink.0.borrow();
+    let EventKind::RunFailed { error } = &events.last().unwrap().kind else {
+        panic!("expected a failure");
+    };
+    assert!(error.contains("division by zero"), "{error}");
+}
+
+#[test]
+fn a_capability_call_is_recorded_at_both_ends() {
+    let p = exec_program();
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    assert_eq!(names(&sink).last(), Some(&"capability_requested"));
+
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::I64(0)),
+        Status::Finished(_)
+    ));
+    assert_eq!(
+        names(&sink),
+        vec![
+            "run_started",
+            "function_entered",
+            "capability_requested",
+            "capability_completed",
+            "function_exited",
+            "run_completed",
+        ]
+    );
+
+    let events = sink.0.borrow();
+    // The capability span sits inside the function that called it, and the
+    // request and its completion share that span.
+    assert_eq!(events[2].parent, Some(events[1].span));
+    assert_eq!(events[3].span, events[2].span);
+}
+
+#[test]
+fn a_failed_capability_is_recorded_before_the_run_fails() {
+    let p = exec_program();
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    assert!(matches!(
+        vm.resume_failed(&sic_core::CapError::new("permission denied")),
+        Status::Failed(_)
+    ));
+    assert_eq!(
+        names(&sink),
+        vec![
+            "run_started",
+            "function_entered",
+            "capability_requested",
+            "capability_failed",
+            "run_failed",
+        ]
+    );
+}
+
+#[test]
+fn arguments_are_recorded_as_digests_not_values() {
+    // A capability argument is exactly the kind of value that must not reach
+    // telemetry by default.
+    let p = exec_program();
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+
+    let events = sink.0.borrow();
+    let rendered: Vec<String> = events
+        .iter()
+        .map(sic_journal::json::event_to_json)
+        .collect();
+    let all = rendered.join("\n");
+    assert!(!all.contains("/usr/bin/true"), "{all}");
+    assert!(all.contains("sha256:"), "{all}");
+}

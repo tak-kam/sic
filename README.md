@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 3 (capabilities)
+## Status: phase 4 (the execution journal)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -81,6 +81,37 @@ CALL_CAP -> Suspended(request) -> broker -> resume(value) -> next instruction
 `sic-broker` is the only crate that touches the outside world. See
 [docs/design/capabilities.md](docs/design/capabilities.md).
 
+### Runs account for themselves
+
+Observability is not an SDK bolted on afterwards: the runtime produces the
+events, so a program needs no instrumentation to be observable.
+
+```console
+$ sic run examples/read-file.sic --journal run.jsonl
+run 64ddb0176b1919f74b4b8812783de41b -> run.jsonl
+"hello from a file\n"
+
+$ cat run.jsonl
+{"ts":...,"seq":0,...,"span":0,"parent":null,"event":"run_started","workflow":"main","args":"sha256:af5570f5..."}
+{"ts":...,"seq":1,...,"span":1,"parent":0,"event":"function_entered","func":"main"}
+{"ts":...,"seq":2,...,"span":2,"parent":1,"event":"capability_requested","cap":"fs.read","args":"sha256:88d243d0..."}
+{"ts":...,"seq":3,...,"span":2,"parent":1,"event":"capability_completed","cap":"fs.read","result":"sha256:31ddb35c..."}
+{"ts":...,"seq":4,...,"span":1,"parent":0,"event":"function_exited","func":"main"}
+{"ts":...,"seq":5,...,"span":0,"parent":null,"event":"run_completed","result":"sha256:31ddb35c..."}
+```
+
+Events carry **digests, not values**: neither the path read nor the contents
+that came back appear anywhere in that file. Telemetry is an exfiltration path
+like any other, and a default that copies values into it is a default that leaks
+secrets.
+
+`seq` is the order. The timestamp is added by the sink as it writes, so the
+journal itself reads no clock and a run stays reproducible - checked by a test
+that fails if `sic-journal` ever mentions `std::time`.
+
+This one stream is meant to be the single source for durability, tracing,
+metrics, audit and replay, rather than separate mechanisms that have to agree.
+
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode
 this process just produced.
@@ -119,11 +150,11 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 | `sic-compile` | HIR to bytecode |
 | `sic-verify` | the bytecode verifier |
 | `sic-vm` | the register VM |
+| `sic-journal` | the execution journal: events, digests, JSONL |
 | `sic-broker` | performs capability calls; the only crate with external effects |
 | `sic-cli` | the `sic` command |
 
-`sic-journal` arrives in phase 4. `sic-vm` performs no external effects and does
-not depend on `sic-broker`; that boundary is where the VM and the capability
+`sic-vm` performs no external effects and does not depend on `sic-broker`; that boundary is where the VM and the capability
 broker will later split into separate processes, and it is checked by a test
 rather than left as an intention.
 

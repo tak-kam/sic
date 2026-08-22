@@ -16,6 +16,7 @@ pub mod value;
 use sic_bytecode::inst::Op;
 use sic_bytecode::program::{Const, Program};
 use sic_core::{CapError, CapRequest, CapValue};
+use sic_journal::{EventKind, Journal, SpanId, digest_values};
 
 pub use value::{Arena, Handle, Value};
 
@@ -85,6 +86,21 @@ struct Frame {
     reg_base: usize,
     /// Absolute register in the caller that receives the return value.
     ret_reg: usize,
+    /// The span this activation is, and the span it happened inside. Recording
+    /// both as the frame is pushed is what gives the journal a trace shape
+    /// without reconstructing one afterwards.
+    span: SpanId,
+    parent: Option<SpanId>,
+}
+
+/// A capability call the VM is waiting on.
+#[derive(Debug, Clone)]
+struct PendingCap {
+    /// Absolute register the result goes into.
+    reg: usize,
+    name: String,
+    span: SpanId,
+    parent: Option<SpanId>,
 }
 
 /// Limits that keep a runaway program from exhausting the host.
@@ -102,9 +118,15 @@ pub struct Vm<'a> {
     /// Handles for the string constants, allocated once at startup rather than
     /// on every load.
     str_consts: Vec<Option<Handle>>,
-    /// Where the result of a suspended capability call goes. `Some` exactly
-    /// while the VM is suspended.
-    pending: Option<usize>,
+    /// The capability call the VM is waiting on. `Some` exactly while the VM
+    /// is suspended.
+    pending: Option<PendingCap>,
+    /// Every run produces events, whether or not anything is listening: the
+    /// journal is the runtime's own account of what happened, not
+    /// instrumentation a program has to add.
+    journal: Journal,
+    /// The span of the run itself, which every function span sits inside.
+    root_span: SpanId,
     fuel: u64,
 }
 
@@ -119,7 +141,12 @@ impl std::fmt::Debug for Vm<'_> {
 }
 
 impl<'a> Vm<'a> {
+    /// A VM that records nothing.
     pub fn new(program: &'a Program, fuel: u64) -> Self {
+        Self::with_journal(program, fuel, Journal::discard())
+    }
+
+    pub fn with_journal(program: &'a Program, fuel: u64, journal: Journal) -> Self {
         let mut arena = Arena::default();
         let str_consts = program
             .consts
@@ -136,8 +163,14 @@ impl<'a> Vm<'a> {
             arena,
             str_consts,
             pending: None,
+            journal,
+            root_span: SpanId(0),
             fuel,
         }
+    }
+
+    pub fn journal(&self) -> &Journal {
+        &self.journal
     }
 
     pub fn arena(&self) -> &Arena {
@@ -156,12 +189,22 @@ impl<'a> Vm<'a> {
 
     /// Continues a suspended run with the value the capability produced.
     pub fn resume(&mut self, value: CapValue) -> Status {
-        let Some(reg) = self.pending.take() else {
+        let Some(pending) = self.pending.take() else {
             return self.fail_now(FailKind::Internal("resumed while not suspended"));
         };
+        self.journal.emit(
+            pending.span,
+            pending.parent,
+            EventKind::CapabilityCompleted {
+                cap: pending.name,
+                result: digest_values(std::slice::from_ref(&value)),
+            },
+        );
         let value = self.intern_cap_value(value);
-        self.set(reg, value);
-        self.execute()
+        self.set(pending.reg, value);
+        let status = self.execute();
+        self.record_end(&status);
+        status
     }
 
     /// Ends a suspended run because the capability call did not succeed.
@@ -169,8 +212,19 @@ impl<'a> Vm<'a> {
     /// Retrying is a workflow decision, and the IR already has the slot for it,
     /// so nothing here tries to be clever about recovery.
     pub fn resume_failed(&mut self, error: &CapError) -> Status {
-        self.pending = None;
-        self.fail_with(FailKind::Capability, None, Some(error.message.clone()))
+        if let Some(pending) = self.pending.take() {
+            self.journal.emit(
+                pending.span,
+                pending.parent,
+                EventKind::CapabilityFailed {
+                    cap: pending.name,
+                    error: error.message.clone(),
+                },
+            );
+        }
+        let status = self.fail_with(FailKind::Capability, None, Some(error.message.clone()));
+        self.record_end(&status);
+        status
     }
 
     /// Whether the VM is waiting for a capability result.
@@ -187,19 +241,76 @@ impl<'a> Vm<'a> {
             return self.fail_now(FailKind::Internal("wrong number of arguments"));
         }
 
+        let name = def.name.clone();
+        let (reg_count, code_off) = (def.reg_count as usize, def.code_off);
+
         // Register 0 of the outermost frame receives the final result.
-        self.regs = vec![Value::Unit; def.reg_count as usize + 1];
+        self.regs = vec![Value::Unit; reg_count + 1];
         for (i, arg) in args.iter().enumerate() {
             self.regs[1 + i] = arg.clone();
         }
+
+        self.root_span = self.journal.new_span();
+        let arg_digest = digest_values(
+            &args
+                .iter()
+                .map(|a| self.to_cap_value(a).unwrap_or(CapValue::Unit))
+                .collect::<Vec<_>>(),
+        );
+        self.journal.emit(
+            self.root_span,
+            None,
+            EventKind::RunStarted {
+                workflow: name.clone(),
+                args: arg_digest,
+            },
+        );
+
+        let span = self.journal.new_span();
+        self.journal.emit(
+            span,
+            Some(self.root_span),
+            EventKind::FunctionEntered { func: name },
+        );
         self.frames.push(Frame {
             func,
-            pc: def.code_off,
+            pc: code_off,
             reg_base: 1,
             ret_reg: 0,
+            span,
+            parent: Some(self.root_span),
         });
 
-        self.execute()
+        let status = self.execute();
+        self.record_end(&status);
+        status
+    }
+
+    /// Records how a run ended. A suspension is not an ending.
+    fn record_end(&mut self, status: &Status) {
+        let root = self.root_span;
+        match status {
+            Status::Finished(value) => {
+                let result = self.to_cap_value(value).unwrap_or(CapValue::Unit);
+                self.journal.emit(
+                    root,
+                    None,
+                    EventKind::RunCompleted {
+                        result: digest_values(&[result]),
+                    },
+                );
+            }
+            Status::Failed(info) => {
+                let mut error = info.kind.message().to_string();
+                if let Some(detail) = &info.detail {
+                    error.push_str(": ");
+                    error.push_str(detail);
+                }
+                self.journal
+                    .emit(root, None, EventKind::RunFailed { error });
+            }
+            Status::Suspended(_) => {}
+        }
     }
 
     fn execute(&mut self) -> Status {
@@ -333,8 +444,23 @@ impl<'a> Vm<'a> {
                             }
                         }
                     }
+                    let frame_span = self.frames.last().map(|f| f.span);
+                    let span = self.journal.new_span();
+                    self.journal.emit(
+                        span,
+                        frame_span,
+                        EventKind::CapabilityRequested {
+                            cap: name.clone(),
+                            args: digest_values(&args),
+                        },
+                    );
                     // The result lands here once the driver comes back.
-                    self.pending = Some(base + a);
+                    self.pending = Some(PendingCap {
+                        reg: base + a,
+                        name: name.clone(),
+                        span,
+                        parent: frame_span,
+                    });
                     return Status::Suspended(CapRequest {
                         index: b as u32,
                         name,
@@ -344,6 +470,17 @@ impl<'a> Vm<'a> {
                 Op::Return => {
                     let value = self.get(base + a);
                     let frame = self.frames.pop().expect("a frame was running");
+                    let func_name = self
+                        .program
+                        .funcs
+                        .get(frame.func as usize)
+                        .map(|f| f.name.clone())
+                        .unwrap_or_default();
+                    self.journal.emit(
+                        frame.span,
+                        frame.parent,
+                        EventKind::FunctionExited { func: func_name },
+                    );
                     self.regs.truncate(frame.reg_base);
                     if self.frames.is_empty() {
                         return Status::Finished(value);
@@ -370,7 +507,12 @@ impl<'a> Vm<'a> {
                 None,
             ));
         };
-        let (argc, reg_count, code_off) = (def.param_count(), def.reg_count as usize, def.code_off);
+        let (argc, reg_count, code_off, name) = (
+            def.param_count(),
+            def.reg_count as usize,
+            def.code_off,
+            def.name.clone(),
+        );
 
         if self.frames.len() >= MAX_FRAMES {
             return Some(self.fail(FailKind::CallStackTooDeep, None));
@@ -387,11 +529,17 @@ impl<'a> Vm<'a> {
             let arg = self.get(arg_base + i);
             self.regs[new_base + i] = arg;
         }
+        let parent = self.frames.last().map(|f| f.span);
+        let span = self.journal.new_span();
+        self.journal
+            .emit(span, parent, EventKind::FunctionEntered { func: name });
         self.frames.push(Frame {
             func,
             pc: code_off,
             reg_base: new_base,
             ret_reg,
+            span,
+            parent,
         });
         None
     }

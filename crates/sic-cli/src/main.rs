@@ -14,7 +14,9 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic>              compile, verify and run a source file
+  sic run <FILE.sic> [--journal PATH]
+                                  compile, verify and run a source file,
+                                  optionally recording its execution journal
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic verify <FILE.sicb>          check that bytecode is safe to run
   sic disasm <FILE.sicb>          print bytecode as instructions
@@ -38,7 +40,10 @@ fn main() -> ExitCode {
     let rest = &args[1..];
 
     match command.as_str() {
-        "run" => with_one_file(rest, "run", cmd::run::run),
+        "run" => match parse_run_args(rest) {
+            Ok((input, journal)) => cmd::run::run_with_journal(&input, journal.as_deref()),
+            Err(msg) => usage_error(msg),
+        },
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
         "hir" => with_one_file(rest, "hir", cmd::hir::run),
         "verify" => with_one_file(rest, "verify", cmd::verify::run),
@@ -65,6 +70,32 @@ fn with_one_file(args: &[String], name: &str, f: fn(&str) -> ExitCode) -> ExitCo
         [] => usage_error(format!("`{name}` needs a file")),
         _ => usage_error(format!("`{name}` takes exactly one file")),
     }
+}
+
+/// `run <input> [--journal <path>]`.
+fn parse_run_args(args: &[String]) -> Result<(String, Option<String>), String> {
+    let mut input = None;
+    let mut journal = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--journal" => {
+                i += 1;
+                let value = args.get(i).ok_or("`--journal` needs a path")?;
+                if journal.replace(value.clone()).is_some() {
+                    return Err("`--journal` was given twice".into());
+                }
+            }
+            other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
+            other => {
+                if input.replace(other.to_string()).is_some() {
+                    return Err("`run` takes exactly one file".into());
+                }
+            }
+        }
+        i += 1;
+    }
+    Ok((input.ok_or("`run` needs a file")?, journal))
 }
 
 /// `compile <input> [-o <output>]`.

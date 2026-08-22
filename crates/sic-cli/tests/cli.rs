@@ -298,6 +298,153 @@ fn the_capability_example_runs_from_the_repository_root() {
     assert!(stdout.contains("hello from a file"), "{stdout}");
 }
 
+// ---- the execution journal ----
+
+/// The events a journal file holds, in order.
+fn journal_events(path: &std::path::Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path).expect("the journal should exist");
+    text.lines()
+        .map(|line| {
+            let key = "\"event\":\"";
+            let start = line.find(key).expect("every line names its event") + key.len();
+            let end = start + line[start..].find('"').unwrap();
+            line[start..end].to_string()
+        })
+        .collect()
+}
+
+#[test]
+fn a_run_writes_its_journal() {
+    let data = write_temp("journal-data.txt", "contents");
+    let data = data.to_str().unwrap().to_string();
+    let src = write_temp(
+        "journal.sic",
+        &format!(
+            "allow {{ fs.read {data:?}; }}\nfn main() -> String {{ return fs.read({data:?}); }}\n"
+        ),
+    );
+    let journal = src.with_extension("jsonl");
+
+    let (_, stderr, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // The run announces its id, so a journal can be tied back to a run.
+    assert!(stderr.starts_with("run "), "{stderr}");
+
+    assert_eq!(
+        journal_events(&journal),
+        vec![
+            "run_started",
+            "function_entered",
+            "capability_requested",
+            "capability_completed",
+            "function_exited",
+            "run_completed",
+        ]
+    );
+
+    std::fs::remove_file(&data).ok();
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn the_journal_records_digests_not_values() {
+    // Telemetry is an exfiltration path, so neither the path read nor the
+    // contents may appear in it.
+    let data = write_temp("journal-secret.txt", "s3cret-contents");
+    let data = data.to_str().unwrap().to_string();
+    let src = write_temp(
+        "journal-secret.sic",
+        &format!(
+            "allow {{ fs.read {data:?}; }}\nfn main() -> String {{ return fs.read({data:?}); }}\n"
+        ),
+    );
+    let journal = src.with_extension("jsonl");
+
+    let (_, stderr, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let text = std::fs::read_to_string(&journal).unwrap();
+    assert!(!text.contains("s3cret-contents"), "{text}");
+    assert!(text.contains("sha256:"), "{text}");
+
+    std::fs::remove_file(&data).ok();
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn a_failing_run_is_recorded_as_failed() {
+    let src = write_temp(
+        "journal-fail.sic",
+        "fn main() -> Int {\n  let n = 0;\n  return 1 / n;\n}\n",
+    );
+    let journal = src.with_extension("jsonl");
+
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1);
+
+    let events = journal_events(&journal);
+    assert_eq!(events.last().map(String::as_str), Some("run_failed"));
+    let text = std::fs::read_to_string(&journal).unwrap();
+    assert!(text.contains("division by zero"), "{text}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn without_the_flag_nothing_is_written() {
+    // Recording is opted into. A run that was not asked to keep a journal
+    // leaves nothing behind.
+    let src = write_temp("journal-none.sic", "fn main() -> Int { return 1; }\n");
+    let journal = src.with_extension("jsonl");
+    let (_, _, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert!(!journal.exists());
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn journal_lines_are_valid_json_objects() {
+    // A hand-written writer earns a check that its output is well formed.
+    let src = write_temp("journal-json.sic", "fn main() -> Int { return 1; }\n");
+    let journal = src.with_extension("jsonl");
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+
+    for line in std::fs::read_to_string(&journal).unwrap().lines() {
+        assert!(line.starts_with('{') && line.ends_with('}'), "{line}");
+        // Quotes come in pairs, which a broken escape would break.
+        assert_eq!(line.matches('"').count() % 2, 0, "{line}");
+        assert!(line.contains("\"seq\":"), "{line}");
+        assert!(line.contains("\"run\":\""), "{line}");
+    }
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

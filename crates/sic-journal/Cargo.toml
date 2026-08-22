@@ -1,12 +1,11 @@
 [package]
-name = "sic-vm"
+name = "sic-journal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 sic-core = { path = "../sic-core" }
-sic-bytecode = { path = "../sic-bytecode" }
-sic-journal = { path = "../sic-journal" }
+
 [lints]
 workspace = true

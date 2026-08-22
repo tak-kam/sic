@@ -10,11 +10,13 @@ use std::process::ExitCode;
 use sic_broker::Broker;
 use sic_bytecode::Program;
 use sic_core::{CapGrant, SourceFile};
+use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Status, Value, Vm};
 
+use super::journal::{FileSink, new_run_id};
 use super::{EXIT_FAILURE, compile_source};
 
-pub fn run(path: &str) -> ExitCode {
+pub fn run_with_journal(path: &str, journal_path: Option<&str>) -> ExitCode {
     let (file, program) = match compile_source(path) {
         Ok(v) => v,
         Err(code) => return code,
@@ -43,7 +45,23 @@ pub fn run(path: &str) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     }
 
-    let mut vm = Vm::new(&program, DEFAULT_FUEL);
+    let journal = match journal_path {
+        Some(path) => {
+            let run_id = new_run_id();
+            let sink = match FileSink::create(path) {
+                Ok(sink) => sink,
+                Err(msg) => {
+                    eprintln!("error: {msg}");
+                    return ExitCode::from(EXIT_FAILURE);
+                }
+            };
+            eprintln!("run {run_id} -> {path}");
+            Journal::new(run_id, Box::new(sink))
+        }
+        None => Journal::discard(),
+    };
+
+    let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let mut broker = Broker::new(manifest(&program));
     match drive(&mut vm, &mut broker, entry) {
         Status::Finished(Value::Unit) => ExitCode::SUCCESS,
