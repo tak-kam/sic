@@ -27,6 +27,7 @@ pub mod section {
     pub const CODE: u32 = 5;
     pub const DEBUG: u32 = 6;
     pub const SIGNATURE: u32 = 7;
+    pub const POLICIES: u32 = 8;
 }
 
 /// An upper bound on the section table, so a corrupt count cannot make the
@@ -61,7 +62,10 @@ pub fn encode(p: &Program) -> Vec<u8> {
     let mut w = Writer::new();
     w.u32(p.types.len() as u32);
     for t in &p.types {
-        w.u8(*t as u8);
+        w.u8(t.tag());
+        if let TypeDesc::Task(inner) = t {
+            w.u32(*inner);
+        }
     }
     sections.push((section::TYPES, w.finish()));
 
@@ -99,6 +103,15 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(inst.0);
     }
     sections.push((section::CODE, w.finish()));
+
+    let mut w = Writer::new();
+    w.u32(p.policies.len() as u32);
+    for policy in &p.policies {
+        w.u32(policy.pc);
+        w.u32(policy.attempts);
+        w.u32(policy.timeout_ms);
+    }
+    sections.push((section::POLICIES, w.finish()));
 
     let mut w = Writer::new();
     w.str(&p.debug.source_name);
@@ -189,6 +202,7 @@ pub fn decode(bytes: &[u8]) -> Result<Program> {
             section::FUNCTIONS => p.funcs = decode_funcs(body)?,
             section::CAPABILITIES => p.caps = decode_caps(body)?,
             section::CODE => p.code = decode_code(body)?,
+            section::POLICIES => p.policies = decode_policies(body)?,
             section::DEBUG => p.debug = decode_debug(body)?,
             section::SIGNATURE => {
                 if !body.is_empty() {
@@ -224,16 +238,21 @@ fn decode_consts(body: &[u8]) -> Result<Vec<Const>> {
     Ok(out)
 }
 
-fn decode_types(body: &[u8]) -> Result<Vec<TypeTag>> {
+fn decode_types(body: &[u8]) -> Result<Vec<TypeDesc>> {
     let mut r = Reader::new(body);
     let n = r.count(1)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let raw = r.u8()?;
-        out.push(
-            TypeTag::from_u8(raw)
-                .ok_or_else(|| DecodeError::new(format!("unknown type tag {raw}")))?,
-        );
+        out.push(match raw {
+            0 => TypeDesc::Unit,
+            1 => TypeDesc::Bool,
+            2 => TypeDesc::Int,
+            3 => TypeDesc::Float,
+            4 => TypeDesc::Str,
+            5 => TypeDesc::Task(r.u32()?),
+            other => return Err(DecodeError::new(format!("unknown type tag {other}"))),
+        });
     }
     r.expect_end("types")?;
     Ok(out)
@@ -304,6 +323,21 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
         .collect())
 }
 
+fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
+    let mut r = Reader::new(body);
+    let n = r.count(12)?;
+    let mut out = Vec::with_capacity(n);
+    for _ in 0..n {
+        out.push(PolicyEntry {
+            pc: r.u32()?,
+            attempts: r.u32()?,
+            timeout_ms: r.u32()?,
+        });
+    }
+    r.expect_end("policies")?;
+    Ok(out)
+}
+
 fn decode_debug(body: &[u8]) -> Result<DebugInfo> {
     let mut r = Reader::new(body);
     let source_name = r.str()?;
@@ -330,7 +364,7 @@ mod tests {
                 Const::F64(1.5),
                 Const::Str("hi".into()),
             ],
-            types: vec![TypeTag::Unit, TypeTag::Int],
+            types: vec![TypeDesc::Unit, TypeDesc::Int],
             funcs: vec![FuncDef {
                 name: "main".into(),
                 params: vec![1],
@@ -343,13 +377,18 @@ mod tests {
                 name: "process.exec".into(),
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
-                params: vec![TypeTag::Str as u32],
-                ret_type: TypeTag::Int as u32,
+                params: vec![4],
+                ret_type: 2,
             }],
             code: vec![
                 Inst::abx(Op::LoadConst, 0, 2),
                 Inst::abc(Op::Return, 0, 0, 0),
             ],
+            policies: vec![PolicyEntry {
+                pc: 0,
+                attempts: 3,
+                timeout_ms: 500,
+            }],
             debug: DebugInfo {
                 source_name: "main.sic".into(),
                 lines: vec![(0, 2, 5), (1, 3, 5)],
@@ -368,6 +407,7 @@ mod tests {
         assert_eq!(back.funcs[0].name, "main");
         assert_eq!(back.funcs[0].reg_count, 2);
         assert_eq!(back.caps[0].name, "process.exec");
+        assert_eq!(back.policies, p.policies);
         assert_eq!(back.debug.lines, p.debug.lines);
         assert_eq!(back.debug.position(1), Some((3, 5)));
         assert_eq!(back.debug.position(0), Some((2, 5)));

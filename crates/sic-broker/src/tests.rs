@@ -15,6 +15,9 @@ fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
         index,
         name: name.into(),
         args: args.iter().map(|a| CapValue::Str((*a).into())).collect(),
+        task: 0,
+        attempt: 1,
+        timeout_ms: 0,
     }
 }
 
@@ -97,6 +100,9 @@ fn refuses_arguments_of_the_wrong_shape() {
         index: 0,
         name: "fs.read".into(),
         args: vec![CapValue::Str("./a.txt".into()), CapValue::I64(1)],
+        task: 0,
+        attempt: 1,
+        timeout_ms: 0,
     };
     assert!(
         broker
@@ -110,6 +116,9 @@ fn refuses_arguments_of_the_wrong_shape() {
         index: 0,
         name: "fs.read".into(),
         args: vec![CapValue::I64(1)],
+        task: 0,
+        attempt: 1,
+        timeout_ms: 0,
     };
     assert!(
         broker
@@ -178,4 +187,68 @@ fn an_approval_defers_rather_than_answering() {
         }
         other => panic!("expected a deferral, got {other:?}"),
     }
+}
+
+/// A script that runs longer than any deadline a test sets.
+///
+/// `process.exec` takes no arguments yet, so a slow child has to be a file
+/// rather than `sleep 5`.
+#[cfg(unix)]
+fn slow_script() -> Option<String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !std::path::Path::new("/bin/sh").exists() {
+        return None;
+    }
+    let path = temp_path("slow.sh");
+    std::fs::write(&path, "#!/bin/sh\nsleep 5\n").ok()?;
+    let mut perms = std::fs::metadata(&path).ok()?.permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).ok()?;
+    Some(path)
+}
+
+#[cfg(unix)]
+#[test]
+fn a_deadline_kills_a_slow_child() {
+    let Some(script) = slow_script() else {
+        return;
+    };
+    let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
+    let mut req = request(0, "process.exec", &[&script]);
+    req.timeout_ms = 100;
+
+    let started = std::time::Instant::now();
+    let err = broker.call(&req).unwrap_err();
+    assert!(err.message.contains("did not finish within"), "{err}");
+    // The child was killed rather than waited out.
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+
+    std::fs::remove_file(&script).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn without_a_deadline_a_slow_child_is_waited_for() {
+    // The same script, with no timeout, runs to completion.
+    let Some(script) = slow_script() else {
+        return;
+    };
+    let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
+    match broker.call(&request(0, "process.exec", &[&script])) {
+        Ok(CapOutcome::Value(CapValue::I64(code))) => assert_eq!(code, 0),
+        other => panic!("expected an exit code, got {other:?}"),
+    }
+    std::fs::remove_file(&script).ok();
+}
+
+#[test]
+fn a_capability_that_cannot_honour_a_deadline_says_so() {
+    // Ignoring a timeout would tell the program the call was bounded when it
+    // was not.
+    let mut broker = Broker::new(vec![grant("fs.read", CapKind::Read, "./a.txt")]);
+    let mut req = request(0, "fs.read", &["./a.txt"]);
+    req.timeout_ms = 100;
+    let err = broker.call(&req).unwrap_err();
+    assert!(err.message.contains("cannot honour a timeout"), "{err}");
 }

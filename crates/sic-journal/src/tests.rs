@@ -95,6 +95,7 @@ fn a_digest_does_not_reveal_the_value() {
         kind: EventKind::CapabilityRequested {
             cap: "fs.write".into(),
             args: digest_values(std::slice::from_ref(&secret)),
+            attempt: 1,
         },
     });
     assert!(!line.contains("hunter2"), "{line}");

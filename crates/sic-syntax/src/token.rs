@@ -117,6 +117,10 @@ pub enum Keyword {
     False,
     Null,
     Allow,
+    Spawn,
+    Await,
+    Retry,
+    Timeout,
     /// Reserved only. Using one produces a diagnostic.
     Reserved(&'static str),
 }
@@ -129,7 +133,6 @@ const RESERVED: &[&str] = &[
     "agent",
     "approval",
     "as",
-    "await",
     "budget",
     "capability",
     "const",
@@ -141,11 +144,8 @@ const RESERVED: &[&str] = &[
     "match",
     "mut",
     "parallel",
-    "retry",
     "secret",
-    "spawn",
     "struct",
-    "timeout",
     "trust",
     "type",
     "use",
@@ -166,6 +166,10 @@ impl Keyword {
             "false" => Keyword::False,
             "null" => Keyword::Null,
             "allow" => Keyword::Allow,
+            "spawn" => Keyword::Spawn,
+            "await" => Keyword::Await,
+            "retry" => Keyword::Retry,
+            "timeout" => Keyword::Timeout,
             other => {
                 let found = RESERVED.iter().find(|r| **r == other)?;
                 Keyword::Reserved(found)
@@ -184,6 +188,10 @@ impl Keyword {
             Keyword::False => "false",
             Keyword::Null => "null",
             Keyword::Allow => "allow",
+            Keyword::Spawn => "spawn",
+            Keyword::Await => "await",
+            Keyword::Retry => "retry",
+            Keyword::Timeout => "timeout",
             Keyword::Reserved(s) => s,
         }
     }

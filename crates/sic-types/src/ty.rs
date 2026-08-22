@@ -22,6 +22,8 @@ pub enum Type {
     Float,
     Str,
     List(TypeId),
+    /// A running computation and, eventually, what it produces.
+    Task(TypeId),
     Fn(FnSigId),
     /// Section 19 of the specification. Never constructed in v0.1; the variant
     /// exists so that adding it later does not reshape every match.
@@ -127,6 +129,7 @@ impl Types {
             Type::Float => "Float".into(),
             Type::Str => "String".into(),
             Type::List(inner) => format!("List<{}>", self.name(*inner)),
+            Type::Task(inner) => format!("Task<{}>", self.name(*inner)),
             Type::Fn(sig) => {
                 let s = self.sig(*sig);
                 let params: Vec<String> = s.params.iter().map(|p| self.name(*p)).collect();
@@ -134,6 +137,19 @@ impl Types {
             }
             Type::Trust(kind, inner) => format!("{kind:?}<{}>", self.name(*inner)),
             Type::Error => "<error>".into(),
+        }
+    }
+
+    /// The type of a task producing `inner`.
+    pub fn task(&mut self, inner: TypeId) -> TypeId {
+        self.intern(Type::Task(inner))
+    }
+
+    /// What a task produces, if this is a task type.
+    pub fn task_output(&self, id: TypeId) -> Option<TypeId> {
+        match self.get(id) {
+            Type::Task(inner) => Some(*inner),
+            _ => None,
         }
     }
 

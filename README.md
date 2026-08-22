@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 5 (durable execution)
+## Status: phase 6 (tasks, retry and timeout)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -137,6 +137,42 @@ processes as one sequence, because a resumed run is the same run.
 The checkpoint records the digest of the bytecode it came from, so a run cannot
 be continued inside a program that has changed since. See
 [docs/design/durable-execution.md](docs/design/durable-execution.md).
+
+### Waiting concurrently
+
+```text
+allow { process.exec "/usr/bin/true"; }
+
+fn check() -> Int {
+    return process.exec("/usr/bin/true") retry 2;
+}
+
+fn main() -> Int {
+    let a = spawn check();
+    let b = spawn check();
+    return await a + await b;
+}
+```
+
+What is made concurrent is **waiting**, not computing. A workflow spends its
+time on capability calls, and the point of two tasks is that one can proceed
+while the other waits. There are no OS threads and no async runtime; the
+scheduler is cooperative and a task yields only where it is already waiting, at
+`CALL_CAP` and at `await`.
+
+```text
+seq= 7 task=1 capability_requested   cap=process.exec
+seq= 8 task=2 capability_requested   cap=process.exec
+seq= 9 task=1 capability_completed   cap=process.exec
+seq=12 task=2 capability_completed   cap=process.exec
+```
+
+`retry` and `timeout` attach to a capability call, and only to one - retrying a
+pure function computes the same answer again. They are enforced in different
+places on purpose: **retry belongs to the VM**, which records every attempt, so
+an audit shows what happened rather than only what worked; **timeout belongs to
+the broker**, the only side with a clock. See
+[docs/design/concurrency.md](docs/design/concurrency.md).
 
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode

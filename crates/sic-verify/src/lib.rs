@@ -119,6 +119,30 @@ impl<'a> Verifier<'a> {
                 ),
             );
         }
+        // Everything below assumes the first five type entries are the
+        // primitives, in order.
+        if p.types.len() < TypeDesc::PRIMITIVES.len()
+            || p.types[..TypeDesc::PRIMITIVES.len()] != TypeDesc::PRIMITIVES
+        {
+            self.error(
+                None,
+                None,
+                "the type section must begin with the primitive types in tag order",
+            );
+        }
+        for (i, desc) in p.types.iter().enumerate() {
+            if let TypeDesc::Task(inner) = desc {
+                if *inner as usize >= p.types.len() {
+                    self.error(
+                        None,
+                        None,
+                        format!("type {i} is a task producing type {inner}, which is out of range"),
+                    );
+                }
+            }
+        }
+        self.check_policies();
+
         for (i, c) in p.caps.iter().enumerate() {
             for t in c.params.iter().chain(std::iter::once(&c.ret_type)) {
                 if *t as usize >= p.types.len() {
@@ -151,6 +175,31 @@ impl<'a> Verifier<'a> {
                     format!("the debug table names pc {pc}, which is past the code"),
                 );
                 break;
+            }
+        }
+    }
+
+    /// A policy names a call site, so the site has to be a capability call.
+    fn check_policies(&mut self) {
+        let p = self.program;
+        for policy in &p.policies {
+            match p.code.get(policy.pc as usize).and_then(|i| i.op()) {
+                Some(Op::CallCap) => {}
+                _ => self.error(
+                    None,
+                    None,
+                    format!(
+                        "a policy names instruction {}, which is not a capability call",
+                        policy.pc
+                    ),
+                ),
+            }
+            if policy.attempts == 0 {
+                self.error(
+                    None,
+                    None,
+                    format!("the policy at {} allows zero attempts", policy.pc),
+                );
             }
         }
     }
@@ -346,6 +395,36 @@ impl<'a> Verifier<'a> {
                         ok = false;
                     }
                 }
+                Op::Spawn => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    let Some(callee) = p.funcs.get(inst.b() as usize) else {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!("function index f{} is out of range", inst.b()),
+                        );
+                        ok = false;
+                        continue;
+                    };
+                    let last = inst.c() as usize + callee.param_count();
+                    if last > func.reg_count as usize {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!(
+                                "arguments r{}..r{} do not fit in reg_count {}",
+                                inst.c(),
+                                last,
+                                func.reg_count
+                            ),
+                        );
+                        ok = false;
+                    }
+                }
+                Op::Await => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    ok &= check_reg(self, inst.b(), "task");
+                }
                 Op::Return | Op::Fail => ok &= check_reg(self, inst.a(), "operand"),
                 Op::Halt => {}
             }
@@ -388,7 +467,7 @@ impl<'a> Verifier<'a> {
 
         let mut entry: State = vec![Abst::Uninit; func.reg_count as usize];
         for (i, t) in func.params.iter().enumerate() {
-            entry[i] = Abst::Val(p.types[*t as usize]);
+            entry[i] = Abst::Val(*t);
         }
 
         let mut states: Vec<Option<State>> = vec![None; len];
@@ -408,7 +487,10 @@ impl<'a> Verifier<'a> {
 
             match op {
                 Op::LoadConst => {
-                    next[inst.a() as usize] = Abst::Val(p.consts[inst.bx() as usize].type_tag());
+                    // A constant is always a primitive, so its tag is its index.
+                    let desc = p.consts[inst.bx() as usize].type_desc();
+                    next[inst.a() as usize] =
+                        Abst::Val(desc.primitive_index().expect("constants are primitive"));
                     successors.push(index + 1);
                 }
                 Op::Move => {
@@ -417,15 +499,15 @@ impl<'a> Verifier<'a> {
                     successors.push(index + 1);
                 }
                 Op::AddI64 | Op::SubI64 | Op::MulI64 | Op::DivI64 | Op::RemI64 => {
-                    self.read(&name, pc, &state, inst.b(), Some(TypeTag::Int));
-                    self.read(&name, pc, &state, inst.c(), Some(TypeTag::Int));
-                    next[inst.a() as usize] = Abst::Val(TypeTag::Int);
+                    self.read(&name, pc, &state, inst.b(), Some(INT));
+                    self.read(&name, pc, &state, inst.c(), Some(INT));
+                    next[inst.a() as usize] = Abst::Val(INT);
                     successors.push(index + 1);
                 }
                 Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    self.read(&name, pc, &state, inst.b(), Some(TypeTag::Int));
-                    self.read(&name, pc, &state, inst.c(), Some(TypeTag::Int));
-                    next[inst.a() as usize] = Abst::Val(TypeTag::Bool);
+                    self.read(&name, pc, &state, inst.b(), Some(INT));
+                    self.read(&name, pc, &state, inst.c(), Some(INT));
+                    next[inst.a() as usize] = Abst::Val(BOOL);
                     successors.push(index + 1);
                 }
                 Op::Eq | Op::Ne => {
@@ -433,26 +515,27 @@ impl<'a> Verifier<'a> {
                     let r = self.read(&name, pc, &state, inst.c(), None);
                     // Equality is one instruction for every type, so the VM can
                     // only be allowed to compare two values of the same one.
-                    if let (Abst::Val(a), Abst::Val(b)) = (&l, &r) {
+                    if let (Abst::Val(a), Abst::Val(b)) = (l, r) {
                         if a != b {
+                            let (a, b) = (p.type_name(a), p.type_name(b));
                             self.error(
                                 Some(&name),
                                 Some(pc),
-                                format!("cannot compare {} with {}", a.name(), b.name()),
+                                format!("cannot compare {a} with {b}"),
                             );
                         }
                     }
-                    next[inst.a() as usize] = Abst::Val(TypeTag::Bool);
+                    next[inst.a() as usize] = Abst::Val(BOOL);
                     successors.push(index + 1);
                 }
                 Op::Not => {
-                    self.read(&name, pc, &state, inst.b(), Some(TypeTag::Bool));
-                    next[inst.a() as usize] = Abst::Val(TypeTag::Bool);
+                    self.read(&name, pc, &state, inst.b(), Some(BOOL));
+                    next[inst.a() as usize] = Abst::Val(BOOL);
                     successors.push(index + 1);
                 }
                 Op::Jump => successors.push(jump_index(func, pc, inst)),
                 Op::JumpIf | Op::JumpIfNot => {
-                    self.read(&name, pc, &state, inst.a(), Some(TypeTag::Bool));
+                    self.read(&name, pc, &state, inst.a(), Some(BOOL));
                     successors.push(index + 1);
                     successors.push(jump_index(func, pc, inst));
                 }
@@ -460,22 +543,73 @@ impl<'a> Verifier<'a> {
                     let callee = &p.funcs[inst.b() as usize];
                     for (i, want) in callee.params.iter().enumerate() {
                         let reg = inst.c() + i as u8;
-                        self.read(&name, pc, &state, reg, Some(p.types[*want as usize]));
+                        self.read(&name, pc, &state, reg, Some(*want));
                     }
-                    next[inst.a() as usize] = Abst::Val(p.types[callee.ret_type as usize]);
+                    next[inst.a() as usize] = Abst::Val(callee.ret_type);
+                    successors.push(index + 1);
+                }
+                Op::Spawn => {
+                    let callee = &p.funcs[inst.b() as usize];
+                    for (i, want) in callee.params.iter().enumerate() {
+                        let reg = inst.c() + i as u8;
+                        self.read(&name, pc, &state, reg, Some(*want));
+                    }
+                    // The task type has to be in the section, or the verifier
+                    // could not say what awaiting it produces.
+                    let wanted = TypeDesc::Task(callee.ret_type);
+                    match p.types.iter().position(|d| *d == wanted) {
+                        Some(i) => next[inst.a() as usize] = Abst::Val(i as u32),
+                        None => {
+                            self.error(
+                                Some(&name),
+                                Some(pc),
+                                format!(
+                                    "the type section has no `Task<{}>`",
+                                    p.type_name(callee.ret_type)
+                                ),
+                            );
+                            next[inst.a() as usize] = Abst::Top;
+                        }
+                    }
+                    successors.push(index + 1);
+                }
+                Op::Await => {
+                    let task = self.read(&name, pc, &state, inst.b(), None);
+                    let produced = match task {
+                        Abst::Val(index) => match p.types.get(index as usize) {
+                            Some(TypeDesc::Task(inner)) => Some(*inner),
+                            _ => {
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!(
+                                        "r{} holds {}, which is not a task",
+                                        inst.b(),
+                                        p.type_name(index)
+                                    ),
+                                );
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
+                    next[inst.a() as usize] = match produced {
+                        Some(inner) => Abst::Val(inner),
+                        None => Abst::Top,
+                    };
                     successors.push(index + 1);
                 }
                 Op::CallCap => {
                     let cap = &p.caps[inst.b() as usize];
                     for (i, want) in cap.params.iter().enumerate() {
                         let reg = inst.c() + i as u8;
-                        self.read(&name, pc, &state, reg, Some(p.types[*want as usize]));
+                        self.read(&name, pc, &state, reg, Some(*want));
                     }
-                    next[inst.a() as usize] = Abst::Val(p.types[cap.ret_type as usize]);
+                    next[inst.a() as usize] = Abst::Val(cap.ret_type);
                     successors.push(index + 1);
                 }
                 Op::Return => {
-                    let want = p.types[func.ret_type as usize];
+                    let want = func.ret_type;
                     self.read(&name, pc, &state, inst.a(), Some(want));
                 }
                 Op::Fail => {
@@ -519,7 +653,7 @@ impl<'a> Verifier<'a> {
 
     /// Reads a register, reporting it if it is uninitialized, ambiguous, or of
     /// the wrong type.
-    fn read(&mut self, func: &str, pc: u32, state: &State, reg: u8, want: Option<TypeTag>) -> Abst {
+    fn read(&mut self, func: &str, pc: u32, state: &State, reg: u8, want: Option<u32>) -> Abst {
         let value = state[reg as usize];
         match (value, want) {
             (Abst::Uninit, _) => {
@@ -528,7 +662,7 @@ impl<'a> Verifier<'a> {
                     Some(pc),
                     format!("r{reg} is read before it is written"),
                 );
-                Abst::Val(want.unwrap_or(TypeTag::Unit))
+                Abst::Val(want.unwrap_or(UNIT))
             }
             (Abst::Top, _) => {
                 self.error(
@@ -536,17 +670,15 @@ impl<'a> Verifier<'a> {
                     Some(pc),
                     format!("r{reg} holds different types depending on the path taken"),
                 );
-                Abst::Val(want.unwrap_or(TypeTag::Unit))
+                Abst::Val(want.unwrap_or(UNIT))
             }
             (Abst::Val(found), Some(want)) if found != want => {
+                let (found, want_name) =
+                    (self.program.type_name(found), self.program.type_name(want));
                 self.error(
                     Some(func),
                     Some(pc),
-                    format!(
-                        "r{reg} holds {} where {} is required",
-                        found.name(),
-                        want.name()
-                    ),
+                    format!("r{reg} holds {found} where {want_name} is required"),
                 );
                 Abst::Val(want)
             }
@@ -556,13 +688,24 @@ impl<'a> Verifier<'a> {
 }
 
 /// What the verifier knows about one register at one point.
+///
+/// A type is an index into the program's type section, so comparing two types
+/// is comparing two numbers. That works because the compiler deduplicates the
+/// section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Abst {
     Uninit,
-    Val(TypeTag),
+    Val(u32),
     /// Reachable with different types, so nothing may be assumed about it.
     Top,
 }
+
+/// The primitives occupy the first five entries of the type section, in tag
+/// order. `check_module` refuses a program where that does not hold, which is
+/// what lets these be constants.
+const UNIT: u32 = 0;
+const BOOL: u32 = 1;
+const INT: u32 = 2;
 
 type State = Vec<Abst>;
 

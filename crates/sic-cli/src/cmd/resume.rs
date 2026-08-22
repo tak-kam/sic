@@ -72,13 +72,16 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         // Without the answer there is nothing to continue with, so say what is
         // being asked and what shape the answer has to take.
         eprintln!("waiting: {question}");
-        eprintln!("error: `resume` needs the answer: --value <{}>", tag.name());
+        eprintln!(
+            "error: `resume` needs the answer: --value <{}>",
+            tag.short_name()
+        );
         return ExitCode::from(EXIT_USAGE);
     };
     let value = match parse_answer(text, tag) {
         Ok(v) => v,
         Err(msg) => {
-            eprintln!("error: {msg}, and `{cap}` returns {}", tag.name());
+            eprintln!("error: {msg}, and `{cap}` returns {}", tag.short_name());
             return ExitCode::from(EXIT_USAGE);
         }
     };

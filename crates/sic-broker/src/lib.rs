@@ -10,12 +10,17 @@
 //! between them, and a check that only runs on the VM's side is not a check.
 
 use std::path::{Component, Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue};
 
 /// The largest file `fs.read` will return. A capability that can exhaust the
 /// host's memory is not much of a boundary.
 pub const MAX_READ_BYTES: u64 = 1 << 20;
+
+/// How often a timed-out child process is checked. Small enough that a deadline
+/// is roughly honoured, large enough that waiting is not a spin.
+const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 #[derive(Debug, Clone)]
 pub struct Broker {
@@ -73,6 +78,7 @@ impl Broker {
 // ---- the capabilities ----
 
 fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
     let path = allowed_path(grant, string_arg(request, 0, 1)?)?;
 
     let size = std::fs::metadata(&path)
@@ -90,6 +96,7 @@ fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapErro
 }
 
 fn fs_write(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
     let path = allowed_path(grant, string_arg(request, 0, 2)?)?;
     let data = string_arg(request, 1, 2)?.to_string();
     std::fs::write(&path, data)
@@ -109,10 +116,15 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
         )));
     }
 
-    let status = std::process::Command::new(&path)
-        .env_clear()
-        .status()
-        .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
+    let mut command = std::process::Command::new(&path);
+    command.env_clear();
+    let status = if request.timeout_ms == 0 {
+        command
+            .status()
+            .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?
+    } else {
+        run_with_deadline(&mut command, &path, request.timeout_ms)?
+    };
 
     // A process killed by a signal has no exit code, and reporting one would
     // say it finished when it did not.
@@ -132,10 +144,63 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
 /// question so that whoever answers - and whoever audits it later - can see
 /// which grant was exercised.
 fn human_approve(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
     let question = string_arg(request, 0, 1)?;
     Ok(CapOutcome::Deferred {
         question: format!("[{}] {question}", grant.constraint),
     })
+}
+
+/// Runs a child and kills it if it outlives its deadline.
+///
+/// The broker is the only side with a clock, which is why the deadline is
+/// enforced here rather than in the VM.
+fn run_with_deadline(
+    command: &mut std::process::Command,
+    path: &Path,
+    timeout_ms: u32,
+) -> Result<std::process::ExitStatus, CapError> {
+    let mut child = command
+        .spawn()
+        .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms as u64);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => {}
+            Err(e) => {
+                return Err(CapError::new(format!(
+                    "cannot wait for `{}`: {e}",
+                    path.display()
+                )));
+            }
+        }
+        if Instant::now() >= deadline {
+            // A process that ignored its deadline is killed and reaped, so it
+            // cannot outlive the run that asked for it.
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(CapError::new(format!(
+                "`{}` did not finish within {timeout_ms}ms",
+                path.display()
+            )));
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+/// Refuses a deadline this capability cannot honour.
+///
+/// Ignoring one would be worse than refusing it: the program would be told the
+/// call was bounded when it was not.
+fn reject_timeout(request: &CapRequest) -> Result<(), CapError> {
+    if request.timeout_ms != 0 {
+        return Err(CapError::new(format!(
+            "`{}` cannot honour a timeout in v0.1",
+            request.name
+        )));
+    }
+    Ok(())
 }
 
 /// Resolves the path an argument names, refusing anything the grant does not

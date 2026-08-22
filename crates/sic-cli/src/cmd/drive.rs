@@ -6,7 +6,7 @@
 //! checkpoint takes over.
 
 use sic_broker::Broker;
-use sic_bytecode::{Program, TypeTag};
+use sic_bytecode::{Program, TypeDesc};
 use sic_core::{CapGrant, CapOutcome, CapValue};
 use sic_vm::{FailInfo, Status, Value, Vm};
 
@@ -52,28 +52,33 @@ pub fn manifest(program: &Program) -> Vec<CapGrant> {
 
 /// Reads a value supplied on the command line, in the type the capability
 /// returns.
-pub fn parse_answer(text: &str, tag: TypeTag) -> Result<CapValue, String> {
+pub fn parse_answer(text: &str, tag: TypeDesc) -> Result<CapValue, String> {
     Ok(match tag {
-        TypeTag::Bool => match text {
+        TypeDesc::Bool => match text {
             "true" => CapValue::Bool(true),
             "false" => CapValue::Bool(false),
             other => return Err(format!("`{other}` is not `true` or `false`")),
         },
-        TypeTag::Int => CapValue::I64(
+        TypeDesc::Int => CapValue::I64(
             text.parse()
                 .map_err(|_| format!("`{text}` is not an integer"))?,
         ),
-        TypeTag::Float => CapValue::F64(
+        TypeDesc::Float => CapValue::F64(
             text.parse()
                 .map_err(|_| format!("`{text}` is not a number"))?,
         ),
-        TypeTag::Str => CapValue::Str(text.to_string()),
-        TypeTag::Unit => CapValue::Unit,
+        TypeDesc::Str => CapValue::Str(text.to_string()),
+        TypeDesc::Unit => CapValue::Unit,
+        // A capability cannot produce a task; the verifier would have refused
+        // the manifest.
+        TypeDesc::Task(_) => {
+            return Err("a capability cannot answer with a task".to_string());
+        }
     })
 }
 
 /// The type a capability returns, for reading an answer.
-pub fn capability_return_type(program: &Program, cap: &str) -> Option<TypeTag> {
+pub fn capability_return_type(program: &Program, cap: &str) -> Option<TypeDesc> {
     let decl = program.caps.iter().find(|c| c.name == cap)?;
     program.types.get(decl.ret_type as usize).copied()
 }

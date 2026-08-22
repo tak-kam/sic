@@ -16,6 +16,9 @@ pub enum Value {
     I64(i64),
     F64(f64),
     Str(Handle),
+    /// A running computation. The number is a task in this run, and means
+    /// nothing outside it.
+    Task(u32),
     /// Phase 2 does not construct these yet; the variants fix the shape.
     List(Handle),
     Object(Handle),
@@ -29,6 +32,7 @@ impl Value {
             Value::I64(_) => "Int",
             Value::F64(_) => "Float",
             Value::Str(_) => "String",
+            Value::Task(_) => "Task",
             Value::List(_) => "List",
             Value::Object(_) => "Object",
         }
@@ -41,6 +45,7 @@ impl Value {
             Value::I64(v) => format!("{v}"),
             Value::F64(v) => format!("{v}"),
             Value::Str(h) => format!("{:?}", arena.str(*h)),
+            Value::Task(id) => format!("<task {id}>"),
             Value::List(h) => format!("<list {}>", h.0),
             Value::Object(h) => format!("<object {}>", h.0),
         }

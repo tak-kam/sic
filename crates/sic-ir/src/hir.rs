@@ -13,6 +13,8 @@ pub struct Hir {
     /// The capabilities the module granted itself, in manifest order. A
     /// `CallCap` indexes into this.
     pub caps: Vec<sic_types::CapEntry>,
+    /// The type table the ids in this module refer to.
+    pub types: sic_types::Types,
 }
 
 #[derive(Debug, Clone)]
@@ -128,39 +130,39 @@ pub enum Term {
     Fail(LocalId),
 }
 
-/// Workflow semantics attached to a capability call. Never lowered into VM
-/// instructions; the runtime reads it for scheduling, and `sic plan` reads it to
-/// describe what a program would do.
-#[derive(Debug, Clone, Default)]
+/// Workflow semantics attached to a capability call.
+///
+/// This never becomes a VM instruction. Retry is carried out by the VM, which
+/// re-issues the request and records every attempt; the timeout travels to the
+/// broker, which is the only side with a clock. `sic plan` reads the same
+/// information without executing anything.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CallPolicy {
-    pub retry: Option<RetrySpec>,
-    pub timeout: Option<std::time::Duration>,
+    /// Total attempts, not extra ones.
+    pub attempts: Option<u32>,
+    pub timeout_ms: Option<u32>,
+    /// Phase 7.
     pub budget: Option<BudgetSpec>,
+    /// Phase 7: what makes a retry safe to repeat.
     pub idempotency_key: Option<LocalId>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RetrySpec {
-    pub attempts: u32,
-    pub backoff: Backoff,
+impl CallPolicy {
+    pub fn is_empty(&self) -> bool {
+        self.attempts.is_none()
+            && self.timeout_ms.is_none()
+            && self.budget.is_none()
+            && self.idempotency_key.is_none()
+    }
 }
 
-#[derive(Debug, Clone)]
-pub enum Backoff {
-    Fixed(std::time::Duration),
-    Exponential {
-        base: std::time::Duration,
-        factor: u32,
-    },
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BudgetSpec {
     pub kind: BudgetKind,
     pub limit: u64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BudgetKind {
     Tokens,
     Cost,

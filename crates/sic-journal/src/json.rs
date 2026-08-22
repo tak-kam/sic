@@ -37,18 +37,35 @@ pub fn event_to_json(event: &Event) -> String {
         EventKind::FunctionEntered { func } | EventKind::FunctionExited { func } => {
             field_str(&mut out, "func", func, false);
         }
-        EventKind::CapabilityRequested { cap, args } => {
+        EventKind::CapabilityRequested { cap, args, attempt } => {
             field_str(&mut out, "cap", cap, false);
             field_str(&mut out, "args", &args.to_string(), false);
+            field_u64(&mut out, "attempt", *attempt as u64, false);
         }
-        EventKind::CapabilityCompleted { cap, result } => {
+        EventKind::CapabilityCompleted {
+            cap,
+            result,
+            attempt,
+        } => {
             field_str(&mut out, "cap", cap, false);
             field_str(&mut out, "result", &result.to_string(), false);
+            field_u64(&mut out, "attempt", *attempt as u64, false);
         }
-        EventKind::CapabilityFailed { cap, error } => {
+        EventKind::CapabilityFailed {
+            cap,
+            error,
+            attempt,
+        } => {
             field_str(&mut out, "cap", cap, false);
             field_str(&mut out, "error", error, false);
+            field_u64(&mut out, "attempt", *attempt as u64, false);
         }
+        EventKind::TaskStarted { func } => field_str(&mut out, "func", func, false),
+        EventKind::TaskCompleted { result } => {
+            field_str(&mut out, "result", &result.to_string(), false)
+        }
+        EventKind::TaskFailed { error } => field_str(&mut out, "error", error, false),
+        EventKind::TaskAbandoned => {}
         EventKind::RunSuspended { cap } | EventKind::RunResumed { cap } => {
             field_str(&mut out, "cap", cap, false);
         }
@@ -117,12 +134,13 @@ mod tests {
         let line = event_to_json(&event(EventKind::CapabilityRequested {
             cap: "fs.read".into(),
             args: Digest::of(b"abc"),
+            attempt: 1,
         }));
         assert_eq!(
             line,
             "{\"seq\":3,\"run\":\"00000000000000000000000000001234\",\"task\":0,\"span\":2,\
              \"parent\":1,\"event\":\"capability_requested\",\"cap\":\"fs.read\",\
-             \"args\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"}"
+             \"args\":\"sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\",\"attempt\":1}"
         );
     }
 

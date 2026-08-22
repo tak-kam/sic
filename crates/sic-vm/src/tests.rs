@@ -1,25 +1,25 @@
 use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::*;
 
+/// The type section holds the primitives in tag order, so a primitive is its
+/// own index.
+fn index_of(desc: TypeDesc) -> u32 {
+    desc.primitive_index().expect("a primitive type")
+}
+
 use super::*;
 
 /// One hand-written function: name, parameter types, return type, register
 /// count, and its instructions.
-type FuncSpec<'a> = (&'a str, &'a [TypeTag], TypeTag, u8, Vec<Inst>);
+type FuncSpec<'a> = (&'a str, &'a [TypeDesc], TypeDesc, u8, Vec<Inst>);
 
 /// Builds a program from hand-written functions.
 ///
-/// The type section lists tags in tag order, so a `TypeTag` is its own index.
+/// The type section lists tags in tag order, so a `TypeDesc` is its own index.
 fn program(funcs: Vec<FuncSpec<'_>>, consts: Vec<Const>) -> Program {
     let mut p = Program {
         consts,
-        types: vec![
-            TypeTag::Unit,
-            TypeTag::Bool,
-            TypeTag::Int,
-            TypeTag::Float,
-            TypeTag::Str,
-        ],
+        types: TypeDesc::PRIMITIVES.to_vec(),
         ..Program::default()
     };
     for (name, params, ret, reg_count, code) in funcs {
@@ -27,9 +27,9 @@ fn program(funcs: Vec<FuncSpec<'_>>, consts: Vec<Const>) -> Program {
         p.code.extend(code);
         p.funcs.push(FuncDef {
             name: name.into(),
-            params: params.iter().map(|t| *t as u32).collect(),
+            params: params.iter().map(|t| index_of(*t)).collect(),
             reg_count,
-            ret_type: ret as u32,
+            ret_type: index_of(ret),
             code_off,
             code_len: p.code.len() as u32 - code_off,
         });
@@ -60,7 +60,7 @@ fn returns_a_constant() {
         vec![(
             "main",
             &[],
-            TypeTag::Int,
+            TypeDesc::Int,
             1,
             vec![
                 Inst::abx(Op::LoadConst, 0, 0),
@@ -78,8 +78,8 @@ fn arithmetic() {
     let p = program(
         vec![(
             "f",
-            &[TypeTag::Int, TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int, TypeDesc::Int],
+            TypeDesc::Int,
             3,
             vec![
                 Inst::abc(Op::AddI64, 2, 0, 1),
@@ -97,8 +97,8 @@ fn overflow_and_division_by_zero_fail_rather_than_wrap() {
     let add = program(
         vec![(
             "f",
-            &[TypeTag::Int, TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int, TypeDesc::Int],
+            TypeDesc::Int,
             3,
             vec![
                 Inst::abc(Op::AddI64, 2, 0, 1),
@@ -115,8 +115,8 @@ fn overflow_and_division_by_zero_fail_rather_than_wrap() {
     let div = program(
         vec![(
             "f",
-            &[TypeTag::Int, TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int, TypeDesc::Int],
+            TypeDesc::Int,
             3,
             vec![
                 Inst::abc(Op::DivI64, 2, 0, 1),
@@ -142,8 +142,8 @@ fn comparison_and_branching() {
     let p = program(
         vec![(
             "f",
-            &[TypeTag::Int, TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int, TypeDesc::Int],
+            TypeDesc::Int,
             3,
             vec![
                 Inst::abc(Op::Lt, 2, 0, 1),
@@ -166,8 +166,8 @@ fn a_backward_jump_loops() {
     let p = program(
         vec![(
             "f",
-            &[TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int],
+            TypeDesc::Int,
             4,
             vec![
                 Inst::abx(Op::LoadConst, 1, 0),  // sum = 0
@@ -196,7 +196,7 @@ fn calls_pass_arguments_and_return_values() {
             (
                 "main",
                 &[],
-                TypeTag::Int,
+                TypeDesc::Int,
                 4,
                 vec![
                     Inst::abx(Op::LoadConst, 2, 0),
@@ -207,8 +207,8 @@ fn calls_pass_arguments_and_return_values() {
             ),
             (
                 "add",
-                &[TypeTag::Int, TypeTag::Int],
-                TypeTag::Int,
+                &[TypeDesc::Int, TypeDesc::Int],
+                TypeDesc::Int,
                 3,
                 vec![
                     Inst::abc(Op::AddI64, 2, 0, 1),
@@ -227,8 +227,8 @@ fn recursion_unwinds_correctly() {
     let p = program(
         vec![(
             "countdown",
-            &[TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int],
+            TypeDesc::Int,
             4,
             vec![
                 Inst::abx(Op::LoadConst, 1, 0), // zero
@@ -257,7 +257,7 @@ fn fuel_runs_out_on_an_endless_loop() {
         vec![(
             "f",
             &[],
-            TypeTag::Unit,
+            TypeDesc::Unit,
             1,
             vec![Inst::asbx(Op::Jump, 0, -1)],
         )],
@@ -277,7 +277,7 @@ fn fail_reports_its_value_and_position() {
         vec![(
             "f",
             &[],
-            TypeTag::Unit,
+            TypeDesc::Unit,
             1,
             vec![Inst::abx(Op::LoadConst, 0, 0), Inst::abc(Op::Fail, 0, 0, 0)],
         )],
@@ -301,7 +301,7 @@ fn strings_compare_by_content() {
         vec![(
             "f",
             &[],
-            TypeTag::Bool,
+            TypeDesc::Bool,
             3,
             vec![
                 Inst::abx(Op::LoadConst, 0, 0),
@@ -322,7 +322,7 @@ fn halt_ends_the_run() {
         vec![(
             "f",
             &[],
-            TypeTag::Unit,
+            TypeDesc::Unit,
             1,
             vec![Inst::abc(Op::Halt, 0, 0, 0)],
         )],
@@ -338,7 +338,7 @@ fn unverified_bytecode_fails_instead_of_panicking() {
         vec![(
             "f",
             &[],
-            TypeTag::Int,
+            TypeDesc::Int,
             1,
             vec![
                 Inst::abx(Op::LoadConst, 0, 99),
@@ -359,7 +359,7 @@ fn exec_program() -> Program {
         vec![(
             "main",
             &[],
-            TypeTag::Int,
+            TypeDesc::Int,
             2,
             vec![
                 Inst::abx(Op::LoadConst, 1, 0),
@@ -373,8 +373,8 @@ fn exec_program() -> Program {
         name: "process.exec".into(),
         kind: sic_core::CapKind::Exec,
         constraints: "/usr/bin/true".into(),
-        params: vec![TypeTag::Str as u32],
-        ret_type: TypeTag::Int as u32,
+        params: vec![4],
+        ret_type: 2,
     });
     p
 }
@@ -412,8 +412,8 @@ fn resuming_writes_the_result_and_continues() {
 fn a_returned_string_is_interned_in_the_arena() {
     let mut p = exec_program();
     // Make the capability return a String instead.
-    p.caps[0].ret_type = TypeTag::Str as u32;
-    p.funcs[0].ret_type = TypeTag::Str as u32;
+    p.caps[0].ret_type = 4;
+    p.funcs[0].ret_type = 4;
 
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
     assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
@@ -482,7 +482,7 @@ fn a_run_records_its_shape() {
             (
                 "main",
                 &[],
-                TypeTag::Int,
+                TypeDesc::Int,
                 4,
                 vec![
                     Inst::abx(Op::LoadConst, 2, 0),
@@ -493,8 +493,8 @@ fn a_run_records_its_shape() {
             ),
             (
                 "add",
-                &[TypeTag::Int, TypeTag::Int],
-                TypeTag::Int,
+                &[TypeDesc::Int, TypeDesc::Int],
+                TypeDesc::Int,
                 3,
                 vec![
                     Inst::abc(Op::AddI64, 2, 0, 1),
@@ -512,28 +512,32 @@ fn a_run_records_its_shape() {
         names(&sink),
         vec![
             "run_started",
+            "task_started",     // the entry task
             "function_entered", // main
             "function_entered", // add
             "function_exited",  // add
             "function_exited",  // main
+            "task_completed",
             "run_completed",
         ]
     );
 
     let events = sink.0.borrow();
     // The trace shape is recorded as it happens: add sits inside main, which
-    // sits inside the run.
+    // sits inside the task, which sits inside the run.
     let run_span = events[0].span;
-    let main_span = events[1].span;
-    let add_span = events[2].span;
+    let task_span = events[1].span;
+    let main_span = events[2].span;
+    let add_span = events[3].span;
     assert_eq!(events[0].parent, None);
     assert_eq!(events[1].parent, Some(run_span));
-    assert_eq!(events[2].parent, Some(main_span));
+    assert_eq!(events[2].parent, Some(task_span));
+    assert_eq!(events[3].parent, Some(main_span));
     assert_ne!(add_span, main_span);
 
     // Sequence numbers are the order, and they are dense.
     let seqs: Vec<u64> = events.iter().map(|e| e.seq).collect();
-    assert_eq!(seqs, vec![0, 1, 2, 3, 4, 5]);
+    assert_eq!(seqs, (0..8).collect::<Vec<u64>>());
     assert!(events.iter().all(|e| e.run == RunId(42)));
 }
 
@@ -542,8 +546,8 @@ fn a_failure_is_recorded_with_its_reason() {
     let p = program(
         vec![(
             "f",
-            &[TypeTag::Int, TypeTag::Int],
-            TypeTag::Int,
+            &[TypeDesc::Int, TypeDesc::Int],
+            TypeDesc::Int,
             3,
             vec![
                 Inst::abc(Op::DivI64, 2, 0, 1),
@@ -583,10 +587,12 @@ fn a_capability_call_is_recorded_at_both_ends() {
         names(&sink),
         vec![
             "run_started",
+            "task_started",
             "function_entered",
             "capability_requested",
             "capability_completed",
             "function_exited",
+            "task_completed",
             "run_completed",
         ]
     );
@@ -594,8 +600,8 @@ fn a_capability_call_is_recorded_at_both_ends() {
     let events = sink.0.borrow();
     // The capability span sits inside the function that called it, and the
     // request and its completion share that span.
-    assert_eq!(events[2].parent, Some(events[1].span));
-    assert_eq!(events[3].span, events[2].span);
+    assert_eq!(events[3].parent, Some(events[2].span));
+    assert_eq!(events[4].span, events[3].span);
 }
 
 #[test]
@@ -612,9 +618,11 @@ fn a_failed_capability_is_recorded_before_the_run_fails() {
         names(&sink),
         vec![
             "run_started",
+            "task_started",
             "function_entered",
             "capability_requested",
             "capability_failed",
+            "task_failed",
             "run_failed",
         ]
     );
@@ -687,6 +695,7 @@ fn the_journal_continues_across_the_checkpoint() {
         names(&sink),
         vec![
             "run_started",
+            "task_started",
             "function_entered",
             "capability_requested",
             "run_suspended",
@@ -694,7 +703,7 @@ fn the_journal_continues_across_the_checkpoint() {
         ]
     );
     let first_seqs: Vec<u64> = sink.0.borrow().iter().map(|e| e.seq).collect();
-    assert_eq!(first_seqs, vec![0, 1, 2, 3, 4]);
+    assert_eq!(first_seqs, (0..6).collect::<Vec<u64>>());
 
     let second = SharedSink::default();
     let (mut vm, _) = Vm::restore(&p, &bytes, program_digest(), Box::new(second.clone())).unwrap();
@@ -709,12 +718,13 @@ fn the_journal_continues_across_the_checkpoint() {
             "run_resumed",
             "capability_completed",
             "function_exited",
+            "task_completed",
             "run_completed",
         ]
     );
     // No sequence number is reused, and the run id is the same.
     let second_seqs: Vec<u64> = second.0.borrow().iter().map(|e| e.seq).collect();
-    assert_eq!(second_seqs, vec![5, 6, 7, 8]);
+    assert_eq!(second_seqs, (6..11).collect::<Vec<u64>>());
     assert!(second.0.borrow().iter().all(|e| e.run == RunId(42)));
 }
 
@@ -723,8 +733,8 @@ fn strings_survive_a_checkpoint() {
     // Handles only mean anything against their arena, so the arena travels with
     // the registers.
     let mut p = exec_program();
-    p.caps[0].ret_type = TypeTag::Str as u32;
-    p.funcs[0].ret_type = TypeTag::Str as u32;
+    p.caps[0].ret_type = 4;
+    p.funcs[0].ret_type = 4;
 
     let sink = SharedSink::default();
     let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
@@ -805,55 +815,85 @@ fn a_corrupt_checkpoint_is_refused_rather_than_restored() {
 
 #[test]
 fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
-    use crate::checkpoint::{Checkpoint, Frame, Pending};
+    use crate::checkpoint::{Checkpoint, Frame, Pending, TaskSnapshot, TaskStateSnapshot};
 
+    let waiting = TaskStateSnapshot::WaitingCap(Pending {
+        reg: 0,
+        index: 0,
+        cap: "process.exec".into(),
+        args: Vec::new(),
+        attempt: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        span: 0,
+        parent: None,
+    });
     let base = Checkpoint {
         program_digest: program_digest(),
         run: 1,
         seq: 0,
         next_span: 0,
+        root_span: 0,
         fuel: 10,
-        pending: Pending {
-            reg: 0,
-            cap: "process.exec".into(),
+        cursor: 0,
+        answering: 0,
+        question: String::new(),
+        tasks: vec![TaskSnapshot {
+            state: waiting.clone(),
             span: 0,
-            parent: None,
-            question: String::new(),
-        },
-        frames: vec![Frame {
-            func: 0,
-            pc: 0,
-            reg_base: 0,
-            ret_reg: 0,
-            span: 0,
-            parent: None,
+            func_name: "main".into(),
+            regs: vec![Value::Unit],
+            frames: vec![Frame {
+                func: 0,
+                pc: 0,
+                reg_base: 0,
+                ret_reg: 0,
+                span: 0,
+                parent: None,
+            }],
         }],
-        regs: vec![Value::Unit],
         str_consts: vec![None],
         strings: Vec::new(),
     };
     // The honest one decodes.
     assert!(Checkpoint::decode(&base.encode()).is_ok());
 
-    // A pending call writing to a register that does not exist.
+    // An answer going into a register that does not exist.
     let mut bad = base.clone();
-    bad.pending.reg = 9;
+    bad.tasks[0].state = TaskStateSnapshot::WaitingCap(Pending {
+        reg: 9,
+        ..match waiting.clone() {
+            TaskStateSnapshot::WaitingCap(p) => p,
+            _ => unreachable!(),
+        }
+    });
     assert!(Checkpoint::decode(&bad.encode()).is_err());
 
     // A value pointing outside the saved arena.
     let mut bad = base.clone();
-    bad.regs = vec![Value::Str(Handle(3))];
+    bad.tasks[0].regs = vec![Value::Str(Handle(3))];
     assert!(Checkpoint::decode(&bad.encode()).is_err());
 
-    // No frames at all.
+    // A task value naming a task that does not exist.
     let mut bad = base.clone();
-    bad.frames.clear();
+    bad.tasks[0].regs = vec![Value::Task(7)];
+    assert!(Checkpoint::decode(&bad.encode()).is_err());
+
+    // No tasks at all.
+    let mut bad = base.clone();
+    bad.tasks.clear();
+    assert!(Checkpoint::decode(&bad.encode()).is_err());
+
+    // Waiting on a task that does not exist.
+    let mut bad = base.clone();
+    bad.tasks[0].state = TaskStateSnapshot::WaitingTask(4);
+    // The answering task must be the waiting one, so this fails on that too.
     assert!(Checkpoint::decode(&bad.encode()).is_err());
 }
 
 #[test]
 fn a_checkpoint_frame_must_point_into_this_program() {
-    use crate::checkpoint::{Checkpoint, Frame, Pending};
+    use crate::checkpoint::{Checkpoint, Frame, Pending, TaskSnapshot, TaskStateSnapshot};
 
     let p = exec_program();
     let checkpoint = Checkpoint {
@@ -861,24 +901,36 @@ fn a_checkpoint_frame_must_point_into_this_program() {
         run: 1,
         seq: 0,
         next_span: 0,
+        root_span: 0,
         fuel: 10,
-        pending: Pending {
-            reg: 0,
-            cap: "process.exec".into(),
+        cursor: 0,
+        answering: 0,
+        question: String::new(),
+        tasks: vec![TaskSnapshot {
+            state: TaskStateSnapshot::WaitingCap(Pending {
+                reg: 0,
+                index: 0,
+                cap: "process.exec".into(),
+                args: Vec::new(),
+                attempt: 1,
+                attempts: 1,
+                timeout_ms: 0,
+                span: 0,
+                parent: None,
+            }),
             span: 0,
-            parent: None,
-            question: String::new(),
-        },
-        frames: vec![Frame {
-            func: 0,
-            // Past the end of main.
-            pc: 900,
-            reg_base: 0,
-            ret_reg: 0,
-            span: 0,
-            parent: None,
+            func_name: "main".into(),
+            regs: vec![Value::Unit],
+            frames: vec![Frame {
+                func: 0,
+                // Past the end of main.
+                pc: 900,
+                reg_base: 0,
+                ret_reg: 0,
+                span: 0,
+                parent: None,
+            }],
         }],
-        regs: vec![Value::Unit],
         str_consts: vec![None],
         strings: Vec::new(),
     };
@@ -890,4 +942,182 @@ fn a_checkpoint_frame_must_point_into_this_program() {
     )
     .unwrap_err();
     assert!(err.message.contains("outside"), "{err}");
+}
+
+// ---- tasks ----
+
+/// `main` spawns `double(2)` and awaits it.
+///
+/// Written by hand because this crate does not depend on the compiler. The
+/// type section needs a `Task<Int>` for the verifier's sake; the VM does not
+/// read it, but a program that would not verify is not worth testing.
+fn task_program(await_twice: bool) -> Program {
+    let mut code = vec![
+        Inst::abx(Op::LoadConst, 1, 0), // r1 = 2
+        Inst::abc(Op::Spawn, 0, 1, 1),  // r0 = spawn double(r1)
+        Inst::abc(Op::Await, 2, 0, 0),  // r2 = await r0
+    ];
+    if await_twice {
+        code.push(Inst::abc(Op::Await, 2, 0, 0));
+    }
+    code.push(Inst::abc(Op::Return, 2, 0, 0));
+
+    let mut p = program(
+        vec![
+            ("main", &[], TypeDesc::Int, 3, code),
+            (
+                "double",
+                &[TypeDesc::Int],
+                TypeDesc::Int,
+                2,
+                vec![
+                    Inst::abc(Op::AddI64, 1, 0, 0),
+                    Inst::abc(Op::Return, 1, 0, 0),
+                ],
+            ),
+        ],
+        vec![Const::I64(2)],
+    );
+    p.types.push(TypeDesc::Task(index_of(TypeDesc::Int)));
+    p
+}
+
+#[test]
+fn a_spawned_task_runs_and_its_result_is_awaited() {
+    let p = task_program(false);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Finished(v) => assert_eq!(v, Value::I64(4)),
+        other => panic!("expected a result, got {other:?}"),
+    }
+    assert_eq!(vm.task_count(), 2);
+}
+
+#[test]
+fn a_task_cannot_be_awaited_twice() {
+    // A result is moved out of the task, not copied.
+    let p = task_program(true);
+    assert_eq!(fail_kind(&p, &[]), FailKind::TaskAlreadyAwaited);
+}
+
+#[test]
+fn a_task_that_fails_fails_the_task_that_awaits_it() {
+    let mut p = task_program(false);
+    // Make `double` divide by zero instead.
+    let code_off = p.funcs[1].code_off as usize;
+    p.code[code_off] = Inst::abc(Op::DivI64, 1, 0, 1);
+    // r1 is uninitialized in the VM's eyes but holds Unit, so use a zero const.
+    p.consts.push(Const::I64(0));
+    p.code[code_off] = Inst::abx(Op::LoadConst, 1, 1);
+    p.code.insert(code_off + 1, Inst::abc(Op::DivI64, 1, 0, 1));
+    // Shifting the code moves everything after it.
+    p.funcs[1].code_len += 1;
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::AwaitedTaskFailed);
+            assert!(
+                info.detail
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("division by zero"),
+                "{info:?}"
+            );
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_task_the_run_never_waited_for_is_recorded_as_abandoned() {
+    // Silently discarding it is how a workflow claims to have succeeded when
+    // part of it did not run.
+    let mut p = task_program(false);
+    // Drop the AWAIT: main spawns and returns a constant instead.
+    let code_off = p.funcs[0].code_off as usize;
+    p.code[code_off + 2] = Inst::abx(Op::LoadConst, 2, 0);
+
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Finished(Value::I64(2))));
+
+    let events = names(&sink);
+    assert!(
+        events.contains(&"task_abandoned") || events.contains(&"task_completed"),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn the_journal_names_the_task_each_event_belongs_to() {
+    let p = task_program(false);
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Finished(_)));
+
+    let events = sink.0.borrow();
+    // The task field stops being zero for everything.
+    let tasks: std::collections::HashSet<u64> = events.iter().map(|e| e.task.0).collect();
+    assert!(tasks.contains(&0) && tasks.contains(&1), "{tasks:?}");
+}
+
+// ---- retry ----
+
+#[test]
+fn a_failed_call_is_retried_up_to_the_policy() {
+    let mut p = exec_program();
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 3,
+        timeout_ms: 0,
+    });
+
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a capability request");
+    };
+    assert_eq!(request.attempt, 1);
+
+    let Status::Suspended(request) = vm.resume_failed(&sic_core::CapError::new("nope")) else {
+        panic!("expected a second attempt");
+    };
+    assert_eq!(request.attempt, 2);
+
+    let Status::Suspended(request) = vm.resume_failed(&sic_core::CapError::new("nope")) else {
+        panic!("expected a third attempt");
+    };
+    assert_eq!(request.attempt, 3);
+
+    // The policy allows three, so the fourth failure ends the run.
+    match vm.resume_failed(&sic_core::CapError::new("nope")) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::Capability),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+
+    // Every attempt is in the journal, not only the last.
+    let attempts = names(&sink)
+        .iter()
+        .filter(|n| **n == "capability_requested")
+        .count();
+    assert_eq!(attempts, 3);
+}
+
+#[test]
+fn the_timeout_travels_with_the_request() {
+    // The VM never reads a clock; the broker is told how long it has.
+    let mut p = exec_program();
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 250,
+    });
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a capability request");
+    };
+    assert_eq!(request.timeout_ms, 250);
+    assert_eq!(request.task, 0);
 }

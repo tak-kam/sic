@@ -11,17 +11,47 @@ pub use sic_core::CapKind;
 #[derive(Debug, Clone, Default)]
 pub struct Program {
     pub consts: Vec<Const>,
-    /// Type descriptors, referenced by index from the function table.
-    pub types: Vec<TypeTag>,
+    /// Type descriptors, referenced by index from the function and capability
+    /// tables.
+    pub types: Vec<TypeDesc>,
     pub funcs: Vec<FuncDef>,
     /// The capability manifest. Empty in v0.1; filled in phase 3.
     pub caps: Vec<CapDecl>,
     /// Every function's instructions, concatenated.
     pub code: Vec<Inst>,
+    /// Retry and timeout, per capability call site. Keyed by pc rather than
+    /// encoded in the instruction, which has no room for it, and readable
+    /// without executing anything.
+    pub policies: Vec<PolicyEntry>,
     pub debug: DebugInfo,
 }
 
+/// The policy attached to one `CALL_CAP` site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PolicyEntry {
+    /// The instruction this applies to.
+    pub pc: u32,
+    /// Total attempts, not extra ones. Always at least 1.
+    pub attempts: u32,
+    /// Milliseconds, or 0 for no deadline.
+    pub timeout_ms: u32,
+}
+
 impl Program {
+    /// How a type is spelled, following task types into the table.
+    pub fn type_name(&self, index: u32) -> String {
+        match self.types.get(index as usize) {
+            Some(TypeDesc::Task(inner)) => format!("Task<{}>", self.type_name(*inner)),
+            Some(other) => other.short_name().to_string(),
+            None => "?".to_string(),
+        }
+    }
+
+    /// The policy for a capability call site, if it has one.
+    pub fn policy_at(&self, pc: u32) -> Option<PolicyEntry> {
+        self.policies.iter().find(|p| p.pc == pc).copied()
+    }
+
     /// Looks up a function by name, which is how the CLI finds `main`.
     pub fn func_by_name(&self, name: &str) -> Option<u32> {
         self.funcs
@@ -52,51 +82,73 @@ impl Const {
     }
 
     /// The type a constant has once loaded, used by the verifier.
-    pub fn type_tag(&self) -> TypeTag {
+    pub fn type_desc(&self) -> TypeDesc {
         match self {
-            Const::Unit => TypeTag::Unit,
-            Const::Bool(_) => TypeTag::Bool,
-            Const::I64(_) => TypeTag::Int,
-            Const::F64(_) => TypeTag::Float,
-            Const::Str(_) => TypeTag::Str,
+            Const::Unit => TypeDesc::Unit,
+            Const::Bool(_) => TypeDesc::Bool,
+            Const::I64(_) => TypeDesc::Int,
+            Const::F64(_) => TypeDesc::Float,
+            Const::Str(_) => TypeDesc::Str,
         }
     }
 }
 
 /// The types the bytecode level distinguishes.
 ///
-/// This is deliberately coarser than the source language: the verifier only has
-/// to keep the VM's assumptions true, so it tracks representations rather than
-/// the full type system.
+/// Coarser than the source language: the verifier only has to keep the VM's
+/// assumptions true, so it tracks representations rather than the full type
+/// system. `Task` is the exception, because the verifier has to know what
+/// `AWAIT` produces, and that is why the type section holds descriptors rather
+/// than single bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TypeTag {
-    Unit = 0,
-    Bool = 1,
-    Int = 2,
-    Float = 3,
-    Str = 4,
+pub enum TypeDesc {
+    Unit,
+    Bool,
+    Int,
+    Float,
+    Str,
+    /// A task, and the index of the type it produces.
+    Task(u32),
 }
 
-impl TypeTag {
-    pub fn from_u8(v: u8) -> Option<TypeTag> {
-        Some(match v {
-            0 => TypeTag::Unit,
-            1 => TypeTag::Bool,
-            2 => TypeTag::Int,
-            3 => TypeTag::Float,
-            4 => TypeTag::Str,
-            _ => return None,
-        })
+impl TypeDesc {
+    /// The first five entries of the type section are the primitives, in tag
+    /// order, so a primitive is its own index.
+    pub const PRIMITIVES: [TypeDesc; 5] = [
+        TypeDesc::Unit,
+        TypeDesc::Bool,
+        TypeDesc::Int,
+        TypeDesc::Float,
+        TypeDesc::Str,
+    ];
+
+    pub fn tag(self) -> u8 {
+        match self {
+            TypeDesc::Unit => 0,
+            TypeDesc::Bool => 1,
+            TypeDesc::Int => 2,
+            TypeDesc::Float => 3,
+            TypeDesc::Str => 4,
+            TypeDesc::Task(_) => 5,
+        }
     }
 
-    pub fn name(self) -> &'static str {
+    /// The index a primitive occupies in the type section.
+    pub fn primitive_index(self) -> Option<u32> {
         match self {
-            TypeTag::Unit => "Unit",
-            TypeTag::Bool => "Bool",
-            TypeTag::Int => "Int",
-            TypeTag::Float => "Float",
-            TypeTag::Str => "String",
+            TypeDesc::Task(_) => None,
+            other => Some(other.tag() as u32),
+        }
+    }
+
+    pub fn short_name(self) -> &'static str {
+        match self {
+            TypeDesc::Unit => "Unit",
+            TypeDesc::Bool => "Bool",
+            TypeDesc::Int => "Int",
+            TypeDesc::Float => "Float",
+            TypeDesc::Str => "String",
+            TypeDesc::Task(_) => "Task",
         }
     }
 }

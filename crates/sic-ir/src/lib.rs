@@ -9,6 +9,8 @@ pub mod hir;
 pub mod lower;
 pub mod print;
 
-pub use hir::{BinOp, Const, Hir, HirBlock, HirFunc, Inst, InstKind, Term, Terminator, UnOp};
+pub use hir::{
+    BinOp, CallPolicy, Const, Hir, HirBlock, HirFunc, Inst, InstKind, Term, Terminator, UnOp,
+};
 pub use lower::lower;
 pub use print::dump;

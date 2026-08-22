@@ -26,16 +26,8 @@ pub fn disassemble(p: &Program) -> String {
         out.push_str("  (none)\n");
     }
     for (i, c) in p.caps.iter().enumerate() {
-        let params: Vec<&str> = c
-            .params
-            .iter()
-            .map(|t| p.types.get(*t as usize).map(|t| t.name()).unwrap_or("?"))
-            .collect();
-        let ret = p
-            .types
-            .get(c.ret_type as usize)
-            .map(|t| t.name())
-            .unwrap_or("?");
+        let params: Vec<String> = c.params.iter().map(|t| p.type_name(*t)).collect();
+        let ret = p.type_name(c.ret_type);
         out.push_str(&format!(
             "  c{i} = {}({}) -> {ret}  {} {:?}\n",
             c.name,
@@ -46,11 +38,7 @@ pub fn disassemble(p: &Program) -> String {
     }
 
     for f in &p.funcs {
-        let ret = p
-            .types
-            .get(f.ret_type as usize)
-            .map(|t| t.name())
-            .unwrap_or("?");
+        let ret = p.type_name(f.ret_type);
         out.push_str(&format!(
             "\nfn {}/{} -> {ret}  regs={}\n",
             f.name,
@@ -102,6 +90,8 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             Op::Move | Op::Not => format!("r{}, r{}", inst.a(), inst.b()),
             Op::Call => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::CallCap => format!("r{}, c{}, r{}", inst.a(), inst.b(), inst.c()),
+            Op::Spawn => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
+            Op::Await => format!("r{}, r{}", inst.a(), inst.b()),
             _ => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
         },
     };
@@ -120,6 +110,19 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
     if op == Op::CallCap {
         if let Some(c) = p.caps.get(inst.b() as usize) {
             line.push_str(&format!("  ; {}", c.name));
+        }
+        if let Some(policy) = p.policy_at(pc) {
+            if policy.attempts > 1 {
+                line.push_str(&format!("  ; retry {}", policy.attempts));
+            }
+            if policy.timeout_ms > 0 {
+                line.push_str(&format!("  ; timeout {}ms", policy.timeout_ms));
+            }
+        }
+    }
+    if op == Op::Spawn {
+        if let Some(f) = p.funcs.get(inst.b() as usize) {
+            line.push_str(&format!("  ; {}/{}", f.name, f.param_count()));
         }
     }
     if let Some((line_no, col)) = p.debug.position(pc) {
@@ -140,7 +143,7 @@ mod tests {
     fn disassembles_a_small_function() {
         let p = Program {
             consts: vec![Const::I64(10)],
-            types: vec![TypeTag::Int],
+            types: vec![TypeDesc::Int],
             funcs: vec![FuncDef {
                 name: "main".into(),
                 params: Vec::new(),
@@ -154,6 +157,7 @@ mod tests {
                 Inst::abx(Op::LoadConst, 0, 0),
                 Inst::abc(Op::Return, 0, 0, 0),
             ],
+            policies: Vec::new(),
             debug: DebugInfo::default(),
         };
         assert_eq!(
@@ -174,7 +178,7 @@ fn main/0 -> Int  regs=1
     #[test]
     fn jumps_show_their_target() {
         let p = Program {
-            types: vec![TypeTag::Unit],
+            types: vec![TypeDesc::Unit],
             funcs: vec![FuncDef {
                 name: "f".into(),
                 params: Vec::new(),

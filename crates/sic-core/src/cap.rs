@@ -89,6 +89,17 @@ pub struct CapRequest {
     pub index: u32,
     pub name: String,
     pub args: Vec<CapValue>,
+    /// The task waiting on this call. With several tasks in flight, an answer
+    /// has to say which one it answers.
+    pub task: u32,
+    /// Which attempt this is, counting from 1. Retrying is the VM's decision,
+    /// so the broker is told rather than asked.
+    pub attempt: u32,
+    /// How long the broker may take, in milliseconds; 0 means no deadline.
+    ///
+    /// The deadline is enforced here because the broker is the only side with
+    /// a clock, and the VM must stay unable to read one.
+    pub timeout_ms: u32,
 }
 
 /// What came back from a capability call.

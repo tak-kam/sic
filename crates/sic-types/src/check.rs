@@ -235,6 +235,21 @@ impl Checker {
     }
 
     fn resolve_type(&mut self, t: &TypeExpr) -> TypeId {
+        // `Task` is the only type with an argument in v0.1. A list type is a
+        // separate piece of work.
+        if t.name.name == "Task" {
+            if t.args.len() != 1 {
+                self.error(
+                    "E0310",
+                    "`Task` takes exactly one type argument",
+                    t.span,
+                    "write `Task<T>`",
+                );
+                return Types::ERROR;
+            }
+            let inner = self.resolve_type(&t.args[0]);
+            return self.types.task(inner);
+        }
         if !t.args.is_empty() {
             self.error(
                 "E0310",
@@ -296,6 +311,19 @@ impl Checker {
                 decl.body.span,
                 "control can reach the end of the body without returning",
             );
+        }
+
+        // A task means nothing outside the run that owns it, so it cannot be
+        // what a run produces.
+        if decl.name.name == "main" && self.types.task_output(ret).is_some() {
+            let name = self.types.name(ret);
+            self.error(
+                "E0331",
+                format!("`main` cannot return {name}"),
+                decl.span,
+                "a task has no meaning outside its run",
+            );
+            self.note("await it before returning");
         }
 
         let locals = std::mem::take(&mut self.locals);
@@ -433,7 +461,13 @@ impl Checker {
             ExprKind::Path(name) => self.check_path(e.id, name),
             ExprKind::Unary { op, operand } => self.check_unary(*op, operand, e.span),
             ExprKind::Binary { op, lhs, rhs } => self.check_binary(*op, lhs, rhs, e.span),
-            ExprKind::Call { callee, args } => self.check_call(callee, args, e.span),
+            ExprKind::Call {
+                callee,
+                args,
+                policy,
+            } => self.check_call(callee, args, policy, e.span),
+            ExprKind::Spawn { callee, args } => self.check_spawn(callee, args, e.span),
+            ExprKind::Await { task } => self.check_await(task, e.span),
             ExprKind::Field { base, name } => {
                 if let Some(full) = self.capability_name(base, name) {
                     self.error(
@@ -552,12 +586,29 @@ impl Checker {
         }
     }
 
-    fn check_call(&mut self, callee: &Expr, args: &[Expr], span: Span) -> TypeId {
+    fn check_call(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+        policy: &CallPolicy,
+        span: Span,
+    ) -> TypeId {
         // `fs.read(..)` parses as a call whose callee is a field access. That
         // shape is a capability call and nothing else, because there are no
         // object types to take a method from.
         if let ExprKind::Field { base, name } = &callee.kind {
             return self.check_cap_call(callee, base, name, args, span);
+        }
+        // Retrying a pure function computes the same answer again, and a
+        // deadline on one measures nothing that can be waited for.
+        if let Some(policy_span) = policy.span {
+            self.error(
+                "E0330",
+                "`retry` and `timeout` apply to capability calls only",
+                policy_span,
+                "this is a function call",
+            );
+            self.note("a function has no effect to retry or to wait for");
         }
         let ExprKind::Path(name) = &callee.kind else {
             for a in args {
@@ -735,6 +786,55 @@ impl Checker {
             self.expect_type(want, found, arg.span, "this argument");
         }
         ret
+    }
+
+    /// `spawn f(args)`: the arguments are checked as for a call, and the result
+    /// is a task producing what `f` returns.
+    fn check_spawn(&mut self, callee: &Expr, args: &[Expr], span: Span) -> TypeId {
+        if let ExprKind::Field { base, name } = &callee.kind {
+            for a in args {
+                self.check_expr(a);
+            }
+            let attempted = match &base.kind {
+                ExprKind::Path(ns) => format!("{}.{}", ns.name, name.name),
+                _ => name.name.clone(),
+            };
+            // Spawning an effect would mean two capability calls in flight at
+            // once, which is a broker change rather than a language one.
+            self.error(
+                "E0332",
+                format!("`{attempted}` is a capability and cannot be spawned"),
+                span,
+                "only a function can be spawned",
+            );
+            return Types::ERROR;
+        }
+
+        let ret = self.check_call(callee, args, &CallPolicy::default(), span);
+        if self.types.is_error(ret) {
+            return Types::ERROR;
+        }
+        self.types.task(ret)
+    }
+
+    fn check_await(&mut self, task: &Expr, span: Span) -> TypeId {
+        let ty = self.check_expr(task);
+        if self.types.is_error(ty) {
+            return Types::ERROR;
+        }
+        match self.types.task_output(ty) {
+            Some(output) => output,
+            None => {
+                let name = self.types.name(ty);
+                self.error(
+                    "E0333",
+                    format!("`await` needs a task, found {name}"),
+                    span,
+                    "only a `Task<T>` can be awaited",
+                );
+                Types::ERROR
+            }
+        }
     }
 
     fn finish(self) -> (Typed, Vec<Diagnostic>) {

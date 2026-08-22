@@ -177,6 +177,18 @@ pub enum ExprKind {
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
+        /// How the call is to be retried and how long it may take. Only a
+        /// capability call may carry one; the checker enforces that.
+        policy: CallPolicy,
+    },
+    /// `spawn f(args)`: starts a task and evaluates to `Task<R>`.
+    Spawn {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+    },
+    /// `await t`: waits for a task and evaluates to its result.
+    Await {
+        task: Box<Expr>,
     },
     Field {
         base: Box<Expr>,
@@ -184,6 +196,25 @@ pub enum ExprKind {
     },
     /// A hole produced by error recovery. Later layers stop analyzing here.
     Error,
+}
+
+/// A retry and timeout policy written after a call.
+///
+/// Both are optional and either may be written first, so that reading a call
+/// site never depends on remembering an order.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CallPolicy {
+    /// Total attempts, not extra ones. `retry 1` is the same as no retry.
+    pub attempts: Option<u32>,
+    pub timeout_ms: Option<u32>,
+    /// The span of the policy itself, for diagnostics about where it may go.
+    pub span: Option<Span>,
+}
+
+impl CallPolicy {
+    pub fn is_empty(&self) -> bool {
+        self.attempts.is_none() && self.timeout_ms.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

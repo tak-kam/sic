@@ -1,0 +1,25 @@
+// Two tasks, each waiting on an effect.
+//
+// What is made concurrent here is waiting, not computing: while one task is
+// stopped at its capability call, the other one runs. The scheduler is
+// cooperative, so a task yields only where it is already waiting - at
+// `CALL_CAP` and at `await`, and nowhere else.
+//
+//     sic run examples/tasks.sic --journal tasks.jsonl
+//
+// The journal names the task each event belongs to, so the interleaving is
+// visible afterwards.
+allow {
+    process.exec "/usr/bin/true";
+}
+
+fn check() -> Int {
+    // `retry 2` is carried out by the VM, which records every attempt.
+    return process.exec("/usr/bin/true") retry 2;
+}
+
+fn main() -> Int {
+    let a = spawn check();
+    let b = spawn check();
+    return await a + await b;
+}

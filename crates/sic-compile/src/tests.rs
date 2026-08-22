@@ -121,9 +121,12 @@ fn a_capability_call_compiles_to_call_cap_with_a_manifest() {
     // The signature travels with the manifest so the verifier can use it.
     assert_eq!(
         program.caps[0].params,
-        vec![sic_bytecode::TypeTag::Str as u32]
+        vec![sic_bytecode::TypeDesc::Str.primitive_index().unwrap()]
     );
-    assert_eq!(program.caps[0].ret_type, sic_bytecode::TypeTag::Str as u32);
+    assert_eq!(
+        program.caps[0].ret_type,
+        sic_bytecode::TypeDesc::Str.primitive_index().unwrap()
+    );
 
     let asm = disassemble(&program);
     assert!(asm.contains("CALL_CAP    r1, c0, r2"), "{asm}");

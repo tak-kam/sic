@@ -1,36 +1,37 @@
 use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::*;
 
+/// The type section holds the primitives in tag order, so a primitive is its
+/// own index.
+fn index_of(desc: TypeDesc) -> u32 {
+    desc.primitive_index().expect("a primitive type")
+}
+
 use super::verify;
 
 /// Builds a single-function program. The type section lists the tags in tag
-/// order, so a `TypeTag` is its own index.
+/// order, so a `TypeDesc` is its own index.
 fn program(
-    params: &[TypeTag],
-    ret: TypeTag,
+    params: &[TypeDesc],
+    ret: TypeDesc,
     reg_count: u8,
     consts: Vec<Const>,
     code: Vec<Inst>,
 ) -> Program {
     Program {
         consts,
-        types: vec![
-            TypeTag::Unit,
-            TypeTag::Bool,
-            TypeTag::Int,
-            TypeTag::Float,
-            TypeTag::Str,
-        ],
+        types: TypeDesc::PRIMITIVES.to_vec(),
         funcs: vec![FuncDef {
             name: "f".into(),
-            params: params.iter().map(|t| *t as u32).collect(),
+            params: params.iter().map(|t| index_of(*t)).collect(),
             reg_count,
-            ret_type: ret as u32,
+            ret_type: index_of(ret),
             code_off: 0,
             code_len: code.len() as u32,
         }],
         caps: Vec::new(),
         code,
+        policies: Vec::new(),
         debug: DebugInfo::default(),
     }
 }
@@ -48,8 +49,8 @@ fn assert_ok(p: &Program) {
 fn accepts_a_valid_function() {
     // f(a: Int) -> Int { return a + 1 }
     let p = program(
-        &[TypeTag::Int],
-        TypeTag::Int,
+        &[TypeDesc::Int],
+        TypeDesc::Int,
         3,
         vec![Const::I64(1)],
         vec![
@@ -65,7 +66,7 @@ fn accepts_a_valid_function() {
 fn rejects_reading_an_uninitialized_register() {
     let p = program(
         &[],
-        TypeTag::Int,
+        TypeDesc::Int,
         2,
         vec![],
         vec![Inst::abc(Op::Return, 1, 0, 0)],
@@ -84,7 +85,7 @@ fn rejects_the_wrong_operand_type() {
     // ADD_I64 on a Bool.
     let p = program(
         &[],
-        TypeTag::Int,
+        TypeDesc::Int,
         2,
         vec![Const::Bool(true)],
         vec![
@@ -106,7 +107,7 @@ fn rejects_the_wrong_operand_type() {
 fn rejects_a_return_of_the_wrong_type() {
     let p = program(
         &[],
-        TypeTag::Int,
+        TypeDesc::Int,
         1,
         vec![Const::Bool(false)],
         vec![
@@ -127,7 +128,7 @@ fn rejects_a_return_of_the_wrong_type() {
 fn rejects_out_of_range_indices() {
     let p = program(
         &[],
-        TypeTag::Int,
+        TypeDesc::Int,
         1,
         vec![],
         vec![
@@ -143,7 +144,7 @@ fn rejects_out_of_range_indices() {
 
     let p = program(
         &[],
-        TypeTag::Unit,
+        TypeDesc::Unit,
         1,
         vec![Const::Unit],
         vec![
@@ -162,7 +163,7 @@ fn rejects_out_of_range_indices() {
 fn rejects_a_jump_out_of_the_function() {
     let p = program(
         &[],
-        TypeTag::Unit,
+        TypeDesc::Unit,
         1,
         vec![Const::Unit],
         vec![Inst::abx(Op::LoadConst, 0, 0), Inst::asbx(Op::Jump, 0, 40)],
@@ -180,7 +181,7 @@ fn rejects_a_jump_out_of_the_function() {
 fn rejects_falling_off_the_end() {
     let p = program(
         &[],
-        TypeTag::Unit,
+        TypeDesc::Unit,
         1,
         vec![Const::Unit],
         vec![Inst::abx(Op::LoadConst, 0, 0)],
@@ -198,7 +199,7 @@ fn rejects_falling_off_the_end() {
 fn rejects_an_unknown_opcode() {
     let p = program(
         &[],
-        TypeTag::Unit,
+        TypeDesc::Unit,
         1,
         vec![Const::Unit],
         vec![Inst(0xFF), Inst::abc(Op::Halt, 0, 0, 0)],
@@ -214,8 +215,8 @@ fn rejects_an_unknown_opcode() {
 fn a_register_written_on_only_one_path_stays_uninitialized() {
     // if c { r1 = 1 }  return r1
     let p = program(
-        &[TypeTag::Bool],
-        TypeTag::Int,
+        &[TypeDesc::Bool],
+        TypeDesc::Int,
         2,
         vec![Const::I64(1)],
         vec![
@@ -237,8 +238,8 @@ fn a_register_written_on_only_one_path_stays_uninitialized() {
 fn a_register_with_two_types_becomes_ambiguous() {
     // if c { r1 = 1 } else { r1 = true }  then use r1
     let p = program(
-        &[TypeTag::Bool],
-        TypeTag::Int,
+        &[TypeDesc::Bool],
+        TypeDesc::Int,
         2,
         vec![Const::I64(1), Const::Bool(true)],
         vec![
@@ -261,8 +262,8 @@ fn a_register_with_two_types_becomes_ambiguous() {
 #[test]
 fn a_register_written_on_both_paths_is_fine() {
     let p = program(
-        &[TypeTag::Bool],
-        TypeTag::Int,
+        &[TypeDesc::Bool],
+        TypeDesc::Int,
         2,
         vec![Const::I64(1), Const::I64(2)],
         vec![
@@ -280,7 +281,7 @@ fn a_register_written_on_both_paths_is_fine() {
 fn unreachable_code_is_a_warning_not_an_error() {
     let p = program(
         &[],
-        TypeTag::Int,
+        TypeDesc::Int,
         1,
         vec![Const::I64(1)],
         vec![
@@ -298,8 +299,8 @@ fn unreachable_code_is_a_warning_not_an_error() {
 #[test]
 fn call_arguments_are_checked() {
     let mut p = program(
-        &[TypeTag::Int],
-        TypeTag::Int,
+        &[TypeDesc::Int],
+        TypeDesc::Int,
         1,
         vec![],
         vec![Inst::abc(Op::Return, 0, 0, 0)],
@@ -309,7 +310,7 @@ fn call_arguments_are_checked() {
         name: "caller".into(),
         params: Vec::new(),
         reg_count: 2,
-        ret_type: TypeTag::Int as u32,
+        ret_type: 2,
         code_off: 1,
         code_len: 3,
     });
@@ -330,8 +331,8 @@ fn call_arguments_are_checked() {
 #[test]
 fn call_arguments_must_fit_in_the_frame() {
     let mut p = program(
-        &[TypeTag::Int],
-        TypeTag::Int,
+        &[TypeDesc::Int],
+        TypeDesc::Int,
         1,
         vec![],
         vec![Inst::abc(Op::Return, 0, 0, 0)],
@@ -340,7 +341,7 @@ fn call_arguments_must_fit_in_the_frame() {
         name: "caller".into(),
         params: Vec::new(),
         reg_count: 1,
-        ret_type: TypeTag::Int as u32,
+        ret_type: 2,
         code_off: 1,
         code_len: 2,
     });
@@ -360,7 +361,7 @@ fn call_arguments_must_fit_in_the_frame() {
 fn comparing_two_different_types_is_rejected() {
     let p = program(
         &[],
-        TypeTag::Bool,
+        TypeDesc::Bool,
         3,
         vec![Const::I64(1), Const::Bool(true)],
         vec![
@@ -381,8 +382,8 @@ fn comparing_two_different_types_is_rejected() {
 fn a_loop_converges() {
     // A backward jump: the fixed point must terminate rather than spin.
     let p = program(
-        &[TypeTag::Bool],
-        TypeTag::Int,
+        &[TypeDesc::Bool],
+        TypeDesc::Int,
         2,
         vec![Const::I64(0)],
         vec![
@@ -398,13 +399,13 @@ fn a_loop_converges() {
 
 /// A program with one capability: `process.exec(String) -> Int`.
 fn with_exec_capability(reg_count: u8, consts: Vec<Const>, code: Vec<Inst>) -> Program {
-    let mut p = program(&[], TypeTag::Int, reg_count, consts, code);
+    let mut p = program(&[], TypeDesc::Int, reg_count, consts, code);
     p.caps.push(CapDecl {
         name: "process.exec".into(),
         kind: CapKind::Exec,
         constraints: "/usr/bin/true".into(),
-        params: vec![TypeTag::Str as u32],
-        ret_type: TypeTag::Int as u32,
+        params: vec![4],
+        ret_type: 2,
     });
     p
 }

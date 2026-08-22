@@ -155,6 +155,20 @@ fn type_str(t: &TypeExpr) -> String {
     }
 }
 
+fn policy_str(policy: &CallPolicy) -> Option<String> {
+    if policy.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if let Some(n) = policy.attempts {
+        parts.push(format!("retry {n}"));
+    }
+    if let Some(ms) = policy.timeout_ms {
+        parts.push(format!("timeout {ms}"));
+    }
+    Some(parts.join(" "))
+}
+
 /// Expressions are printed on one line; parentheses show the tree shape.
 pub fn expr_str(e: &Expr) -> String {
     match &e.kind {
@@ -175,10 +189,23 @@ pub fn expr_str(e: &Expr) -> String {
         ExprKind::Binary { op, lhs, rhs } => {
             format!("({} {} {})", op.text(), expr_str(lhs), expr_str(rhs))
         }
-        ExprKind::Call { callee, args } => {
+        ExprKind::Call {
+            callee,
+            args,
+            policy,
+        } => {
             let a: Vec<String> = args.iter().map(expr_str).collect();
-            format!("(call {} {})", expr_str(callee), a.join(" ")).replace(" )", ")")
+            let call = format!("(call {} {})", expr_str(callee), a.join(" ")).replace(" )", ")");
+            match policy_str(policy) {
+                Some(p) => format!("({call} {p})"),
+                None => call,
+            }
         }
+        ExprKind::Spawn { callee, args } => {
+            let a: Vec<String> = args.iter().map(expr_str).collect();
+            format!("(spawn {} {})", expr_str(callee), a.join(" ")).replace(" )", ")")
+        }
+        ExprKind::Await { task } => format!("(await {})", expr_str(task)),
         ExprKind::Field { base, name } => format!("(. {} {})", expr_str(base), name.name),
         ExprKind::Error => "<error>".into(),
     }

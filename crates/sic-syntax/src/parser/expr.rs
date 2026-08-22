@@ -109,6 +109,23 @@ impl Parser {
             TokenKind::Int(v) => self.literal(ExprKind::Int(v)),
             TokenKind::Float(v) => self.literal(ExprKind::Float(v)),
             TokenKind::Str(s) => self.literal(ExprKind::Str(s)),
+            TokenKind::Kw(Keyword::Spawn) => {
+                self.bump();
+                self.parse_spawn(start)
+            }
+            TokenKind::Kw(Keyword::Await) => {
+                self.bump();
+                let task = self.expr_bp(PREFIX_BP);
+                let span = Span::new(start, task.span.hi);
+                let id = self.id();
+                Expr {
+                    id,
+                    kind: ExprKind::Await {
+                        task: Box::new(task),
+                    },
+                    span,
+                }
+            }
             TokenKind::Kw(Keyword::True) => self.literal(ExprKind::Bool(true)),
             TokenKind::Kw(Keyword::False) => self.literal(ExprKind::Bool(false)),
             TokenKind::Kw(Keyword::Null) => self.literal(ExprKind::Null),
@@ -165,6 +182,65 @@ impl Parser {
 
     fn parse_call(&mut self, callee: Expr) -> Expr {
         self.bump(); // `(`
+        let args = self.parse_args();
+        // A policy is only ever written here, directly after a call, so it
+        // needs no place in the precedence table.
+        let policy = self.parse_policy();
+        let span = Span::new(callee.span.lo, self.prev_end());
+        let id = self.id();
+        Expr {
+            id,
+            kind: ExprKind::Call {
+                callee: Box::new(callee),
+                args,
+                policy,
+            },
+            span,
+        }
+    }
+
+    /// `spawn f(args)`.
+    ///
+    /// The callee is parsed as a name, or as `namespace.name` so that spawning
+    /// a capability reaches the type checker, which can say why it is not
+    /// allowed. The grammar's job here is only to get the shape.
+    fn parse_spawn(&mut self, start: u32) -> Expr {
+        let name = self.expect_ident("a function name after `spawn`");
+        let callee_span = name.span;
+        let callee_id = self.id();
+        let mut callee = Expr {
+            id: callee_id,
+            kind: ExprKind::Path(name),
+            span: callee_span,
+        };
+        if self.at(&TokenKind::Dot) {
+            callee = self.parse_field(callee);
+        }
+        let args = if self.eat(&TokenKind::LParen) {
+            self.parse_args()
+        } else {
+            self.error(
+                "E0205",
+                "`spawn` needs a call",
+                self.span(),
+                "write `spawn f(...)`",
+            );
+            Vec::new()
+        };
+        let span = Span::new(start, self.prev_end());
+        let id = self.id();
+        Expr {
+            id,
+            kind: ExprKind::Spawn {
+                callee: Box::new(callee),
+                args,
+            },
+            span,
+        }
+    }
+
+    /// The arguments of a call, with the opening parenthesis already consumed.
+    fn parse_args(&mut self) -> Vec<Expr> {
         let mut args = Vec::new();
         while !self.at(&TokenKind::RParen) && !self.at_eof() {
             let before = self.pos;
@@ -177,15 +253,64 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RParen, "after the argument list");
-        let span = Span::new(callee.span.lo, self.prev_end());
-        let id = self.id();
-        Expr {
-            id,
-            kind: ExprKind::Call {
-                callee: Box::new(callee),
-                args,
-            },
-            span,
+        args
+    }
+
+    /// `retry N` and `timeout N`, in either order, each at most once.
+    fn parse_policy(&mut self) -> CallPolicy {
+        let mut policy = CallPolicy::default();
+        let start = self.span().lo;
+        while let TokenKind::Kw(kw @ (Keyword::Retry | Keyword::Timeout)) = self.peek() {
+            let keyword = *kw;
+            let keyword_span = self.bump().span;
+            let value = self.parse_policy_number(keyword, keyword_span);
+            let slot = match keyword {
+                Keyword::Retry => &mut policy.attempts,
+                _ => &mut policy.timeout_ms,
+            };
+            if slot.replace(value).is_some() {
+                self.error(
+                    "E0206",
+                    format!("`{}` is given twice", keyword.text()),
+                    keyword_span,
+                    "already set on this call",
+                );
+            }
+        }
+        if !policy.is_empty() {
+            policy.span = Some(Span::new(start, self.prev_end()));
+        }
+        policy
+    }
+
+    fn parse_policy_number(&mut self, keyword: Keyword, keyword_span: Span) -> u32 {
+        match self.peek().clone() {
+            TokenKind::Int(value) => {
+                let span = self.bump().span;
+                match u32::try_from(value) {
+                    Ok(v) if v > 0 => v,
+                    _ => {
+                        self.error(
+                            "E0207",
+                            format!("`{}` needs a positive number", keyword.text()),
+                            span,
+                            "must fit in a 32-bit count",
+                        );
+                        1
+                    }
+                }
+            }
+            other => {
+                let span = self.span();
+                self.error(
+                    "E0207",
+                    format!("`{}` needs a number", keyword.text()),
+                    span,
+                    format!("found {}", other.describe()),
+                );
+                let _ = keyword_span;
+                1
+            }
         }
     }
 

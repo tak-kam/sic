@@ -40,9 +40,13 @@ pub enum Op {
     Call = 17,
     /// The only instruction that reaches outside the VM.
     CallCap = 18,
-    Return = 19,
-    Fail = 20,
-    Halt = 21,
+    /// Starts a task. Same shape as CALL.
+    Spawn = 19,
+    /// Waits for a task and takes its result.
+    Await = 20,
+    Return = 21,
+    Fail = 22,
+    Halt = 23,
 }
 
 impl Op {
@@ -71,9 +75,11 @@ impl Op {
             16 => JumpIfNot,
             17 => Call,
             18 => CallCap,
-            19 => Return,
-            20 => Fail,
-            21 => Halt,
+            19 => Spawn,
+            20 => Await,
+            21 => Return,
+            22 => Fail,
+            23 => Halt,
             _ => return None,
         })
     }
@@ -100,6 +106,8 @@ impl Op {
             JumpIfNot => "JUMP_IF_NOT",
             Call => "CALL",
             CallCap => "CALL_CAP",
+            Spawn => "SPAWN",
+            Await => "AWAIT",
             Return => "RETURN",
             Fail => "FAIL",
             Halt => "HALT",

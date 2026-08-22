@@ -10,7 +10,8 @@ use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::*;
 use sic_core::{BlockId, SourceFile, Span};
 use sic_ir::hir::{
-    BinOp, Const as HirConst, Hir, HirFunc, Inst as HirInst, InstKind, Term, Terminator, UnOp,
+    BinOp, CallPolicy as HirCallPolicy, Const as HirConst, Hir, HirFunc, Inst as HirInst, InstKind,
+    Term, Terminator, UnOp,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,16 +51,8 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
 
     let mut consts: Vec<Const> = hir.consts.iter().map(to_bytecode_const).collect();
 
+    let mut types = TypeSection::new();
     let mut program = Program {
-        // The type section lists the tags in tag order, so a tag doubles as its
-        // own index.
-        types: vec![
-            TypeTag::Unit,
-            TypeTag::Bool,
-            TypeTag::Int,
-            TypeTag::Float,
-            TypeTag::Str,
-        ],
         debug: DebugInfo {
             source_name: file.name().to_string(),
             lines: Vec::new(),
@@ -74,8 +67,12 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
             name: c.name.clone(),
             kind: c.kind,
             constraints: c.constraint.clone(),
-            params: c.params.iter().map(|t| type_tag_of(*t) as u32).collect(),
-            ret_type: type_tag_of(c.ret) as u32,
+            params: c
+                .params
+                .iter()
+                .map(|t| types.intern(*t, &hir.types))
+                .collect(),
+            ret_type: types.intern(c.ret, &hir.types),
         })
         .collect();
 
@@ -91,15 +88,22 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
                         .push((code_off + offset, pos.line, pos.col));
                 }
                 program.code.extend(compiled.code);
+                for (offset, policy) in compiled.policies {
+                    program.policies.push(PolicyEntry {
+                        pc: code_off + offset,
+                        attempts: policy.attempts.unwrap_or(1),
+                        timeout_ms: policy.timeout_ms.unwrap_or(0),
+                    });
+                }
                 program.funcs.push(FuncDef {
                     name: func.name.clone(),
                     params: func
                         .params
                         .iter()
-                        .map(|p| type_tag_of(func.locals[p.index()]) as u32)
+                        .map(|p| types.intern(func.locals[p.index()], &hir.types))
                         .collect(),
                     reg_count: compiled.reg_count,
-                    ret_type: type_tag_of(func.ret) as u32,
+                    ret_type: types.intern(func.ret, &hir.types),
                     code_off,
                     code_len: program.code.len() as u32 - code_off,
                 });
@@ -115,6 +119,14 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
         )));
     }
     program.consts = consts;
+    // Every task type a `SPAWN` produces has to be in the section, so the
+    // verifier can name what `AWAIT` will give back.
+    for func in &hir.funcs {
+        for local in &func.locals {
+            types.intern(*local, &hir.types);
+        }
+    }
+    program.types = types.descs;
 
     if errors.is_empty() {
         Ok(program)
@@ -142,16 +154,53 @@ fn intern(consts: &mut Vec<Const>, value: Const) -> u16 {
     (consts.len() - 1) as u16
 }
 
-/// Maps a checked type onto the coarser tag the bytecode level uses.
-fn type_tag_of(ty: sic_core::TypeId) -> TypeTag {
-    use sic_types::Types;
-    match ty {
-        Types::BOOL => TypeTag::Bool,
-        Types::INT => TypeTag::Int,
-        Types::FLOAT => TypeTag::Float,
-        Types::STR => TypeTag::Str,
-        // Unit, and anything the checker could not name, is represented as unit.
-        _ => TypeTag::Unit,
+/// Builds the bytecode's type section from the checker's types.
+///
+/// The first five entries are the primitives in tag order, so a primitive is
+/// its own index; task types are appended and deduplicated, which is what lets
+/// the verifier compare two types by comparing two numbers.
+#[derive(Debug)]
+struct TypeSection {
+    descs: Vec<TypeDesc>,
+    index: HashMap<sic_core::TypeId, u32>,
+}
+
+impl TypeSection {
+    fn new() -> Self {
+        Self {
+            descs: TypeDesc::PRIMITIVES.to_vec(),
+            index: HashMap::new(),
+        }
+    }
+
+    fn intern(&mut self, ty: sic_core::TypeId, types: &sic_types::Types) -> u32 {
+        if let Some(existing) = self.index.get(&ty) {
+            return *existing;
+        }
+        let desc = match types.get(ty) {
+            sic_types::Type::Bool => TypeDesc::Bool,
+            sic_types::Type::Int => TypeDesc::Int,
+            sic_types::Type::Float => TypeDesc::Float,
+            sic_types::Type::Str => TypeDesc::Str,
+            sic_types::Type::Task(inner) => {
+                let inner = self.intern(*inner, types);
+                TypeDesc::Task(inner)
+            }
+            // Unit, and anything the checker could not name, is unit here.
+            _ => TypeDesc::Unit,
+        };
+        let position = match desc.primitive_index() {
+            Some(i) => i,
+            None => match self.descs.iter().position(|d| *d == desc) {
+                Some(i) => i as u32,
+                None => {
+                    self.descs.push(desc);
+                    self.descs.len() as u32 - 1
+                }
+            },
+        };
+        self.index.insert(ty, position);
+        position
     }
 }
 
@@ -160,6 +209,8 @@ struct Compiled {
     reg_count: u8,
     /// `(offset within the function, span)` for the debug section.
     spans: Vec<(u32, Span)>,
+    /// `(offset within the function, policy)` for the policy section.
+    policies: Vec<(u32, HirCallPolicy)>,
 }
 
 struct FnCompile<'a> {
@@ -178,6 +229,9 @@ struct FnCompile<'a> {
     /// zero operand of a negation.
     scratch_base: usize,
     scratch_used: usize,
+    /// Policies collected as capability calls are emitted, keyed by the offset
+    /// of the instruction they belong to.
+    policies: Vec<(u32, HirCallPolicy)>,
     errors: Vec<CompileError>,
 }
 
@@ -192,6 +246,7 @@ impl<'a> FnCompile<'a> {
             fixups: Vec::new(),
             scratch_base: func.locals.len(),
             scratch_used: 0,
+            policies: Vec::new(),
             errors: Vec::new(),
         }
     }
@@ -244,6 +299,7 @@ impl<'a> FnCompile<'a> {
                 code: self.code,
                 reg_count: reg_count as u8,
                 spans: self.spans,
+                policies: self.policies,
             })
         } else {
             Err(self.errors)
@@ -367,7 +423,12 @@ impl<'a> FnCompile<'a> {
                         .push(CompileError::new("a function index does not fit in a byte")),
                 }
             }
-            InstKind::CallCap { dst, cap, args, .. } => {
+            InstKind::CallCap {
+                dst,
+                cap,
+                args,
+                policy,
+            } => {
                 // Same calling convention as CALL: the arguments go into
                 // consecutive scratch registers.
                 let base = self.scratch(args.len());
@@ -377,15 +438,43 @@ impl<'a> FnCompile<'a> {
                 }
                 let dst = self.reg(*dst);
                 match u8::try_from(cap.0) {
-                    Ok(c) => self.emit(Inst::abc(Op::CallCap, dst, c, base), span),
+                    Ok(c) => {
+                        // The policy is keyed by the instruction's offset: a
+                        // four-byte instruction has no room for it, and a side
+                        // table can be read without executing anything.
+                        if !policy.is_empty() {
+                            self.policies.push((self.code.len() as u32, policy.clone()));
+                        }
+                        self.emit(Inst::abc(Op::CallCap, dst, c, base), span);
+                    }
                     Err(_) => self.errors.push(CompileError::new(
                         "a capability index does not fit in a byte",
                     )),
                 }
             }
-            InstKind::Spawn { .. } | InstKind::Await { .. } | InstKind::Log { .. } => {
+            InstKind::Spawn { dst, func, args } => {
+                // Same calling convention as CALL: the arguments go into
+                // consecutive scratch registers.
+                let base = self.scratch(args.len());
+                for (i, arg) in args.iter().enumerate() {
+                    let src = self.reg(*arg);
+                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
+                }
+                let dst = self.reg(*dst);
+                match u8::try_from(func.0) {
+                    Ok(f) => self.emit(Inst::abc(Op::Spawn, dst, f, base), span),
+                    Err(_) => self
+                        .errors
+                        .push(CompileError::new("a function index does not fit in a byte")),
+                }
+            }
+            InstKind::Await { dst, task } => {
+                let (dst, task) = (self.reg(*dst), self.reg(*task));
+                self.emit(Inst::abc(Op::Await, dst, task, 0), span);
+            }
+            InstKind::Log { .. } => {
                 self.errors.push(CompileError::new(
-                    "tasks and logging arrive in a later phase".to_string(),
+                    "logging arrives in a later phase".to_string(),
                 ));
             }
         }

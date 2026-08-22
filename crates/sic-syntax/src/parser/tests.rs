@@ -134,6 +134,63 @@ fn return_without_value() {
     assert!(out.contains("(return)"), "{out}");
 }
 
+// ---- tasks and policies ----
+
+#[test]
+fn spawn_and_await() {
+    assert_eq!(expr("await t"), "(await t)");
+    let out = ok("fn f() -> Int { return 1; }\nfn main() { let t = spawn f(); return await t; }");
+    assert!(out.contains("(let t (spawn f))"), "{out}");
+    assert!(out.contains("(return (await t))"), "{out}");
+}
+
+#[test]
+fn spawn_takes_arguments_like_a_call() {
+    let out = ok("fn f(a: Int) -> Int { return a; }\nfn main() { let t = spawn f(1, 2); }");
+    assert!(out.contains("(spawn f 1 2)"), "{out}");
+}
+
+#[test]
+fn await_binds_like_a_prefix_operator() {
+    // Tighter than any binary operator, looser than a call.
+    assert_eq!(expr("await a + await b"), "(+ (await a) (await b))");
+    assert_eq!(expr("await f(1)"), "(await (call f 1))");
+}
+
+#[test]
+fn a_policy_follows_a_call() {
+    assert_eq!(expr("f(1) retry 3"), "((call f 1) retry 3)");
+    assert_eq!(expr("f() timeout 500"), "((call f) timeout 500)");
+    // Either order, and both.
+    assert_eq!(
+        expr("f() retry 2 timeout 5"),
+        "((call f) retry 2 timeout 5)"
+    );
+    assert_eq!(
+        expr("f() timeout 5 retry 2"),
+        "((call f) retry 2 timeout 5)"
+    );
+}
+
+#[test]
+fn a_policy_does_not_disturb_the_surrounding_expression() {
+    assert_eq!(expr("f() retry 2 + 1"), "(+ ((call f) retry 2) 1)");
+    assert_eq!(expr("g(f() retry 2)"), "(call g ((call f) retry 2))");
+}
+
+#[test]
+fn a_policy_is_rejected_when_it_is_malformed() {
+    assert!(codes("fn main() { let x = f() retry; }").contains(&"E0207"));
+    assert!(codes("fn main() { let x = f() retry 0; }").contains(&"E0207"));
+    assert!(codes("fn main() { let x = f() retry 1 retry 2; }").contains(&"E0206"));
+}
+
+#[test]
+fn spawn_needs_a_call() {
+    assert!(codes("fn main() { let t = spawn 1; }").contains(&"E0201"));
+    assert!(codes("fn main() { let t = spawn f; }").contains(&"E0205"));
+}
+
 // ---- capability grants ----
 
 #[test]

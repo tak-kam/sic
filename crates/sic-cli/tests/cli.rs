@@ -339,10 +339,12 @@ fn a_run_writes_its_journal() {
         journal_events(&journal),
         vec![
             "run_started",
+            "task_started",
             "function_entered",
             "capability_requested",
             "capability_completed",
             "function_exited",
+            "task_completed",
             "run_completed",
         ]
     );
@@ -545,6 +547,7 @@ fn the_journal_is_one_sequence_across_both_processes() {
         journal_events(&journal),
         vec![
             "run_started",
+            "task_started",
             "function_entered",
             "capability_requested",
             "run_suspended",
@@ -552,6 +555,7 @@ fn the_journal_is_one_sequence_across_both_processes() {
             "run_resumed",
             "capability_completed",
             "function_exited",
+            "task_completed",
             "run_completed",
         ]
     );
@@ -567,7 +571,7 @@ fn the_journal_is_one_sequence_across_both_processes() {
             l[start..end].parse().unwrap()
         })
         .collect();
-    assert_eq!(seqs, (0..9).collect::<Vec<u64>>());
+    assert_eq!(seqs, (0..11).collect::<Vec<u64>>());
 
     let run_ids: std::collections::HashSet<&str> = text
         .lines()
@@ -688,6 +692,143 @@ fn a_corrupt_checkpoint_is_refused() {
 
     std::fs::remove_file(src).ok();
     std::fs::remove_file(checkpoint).ok();
+}
+
+// ---- tasks, retry and timeout ----
+
+#[test]
+fn the_concurrency_example_runs() {
+    // It calls /usr/bin/true, so skip where that is not present.
+    if !std::path::Path::new("/usr/bin/true").exists() {
+        return;
+    }
+    let (stdout, stderr, code) = sic(&["run", &example("tasks.sic")]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "0\n");
+}
+
+#[test]
+fn two_tasks_wait_at_the_same_time() {
+    if !std::path::Path::new("/usr/bin/true").exists() {
+        return;
+    }
+    let journal = write_temp("tasks-journal.txt", "");
+    let (_, stderr, code) = sic(&[
+        "run",
+        &example("tasks.sic"),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    // Both requests are recorded before either answer: while one task waits,
+    // the other one runs.
+    let events = journal_events(&journal);
+    let first_completed = events
+        .iter()
+        .position(|e| e == "capability_completed")
+        .expect("a capability completed");
+    let requests_before = events[..first_completed]
+        .iter()
+        .filter(|e| *e == "capability_requested")
+        .count();
+    assert_eq!(requests_before, 2, "{events:?}");
+
+    // Events name the task they belong to, and it is no longer always zero.
+    let text = std::fs::read_to_string(&journal).unwrap();
+    let tasks: std::collections::HashSet<&str> = text
+        .lines()
+        .map(|l| {
+            let start = l.find("\"task\":").unwrap() + 7;
+            let end = start + l[start..].find(',').unwrap();
+            &l[start..end]
+        })
+        .collect();
+    assert!(tasks.len() >= 3, "{tasks:?}");
+
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn awaiting_a_task_twice_fails_at_run_time() {
+    // A result is moved out of a task, and the checker cannot see that a local
+    // is awaited twice, so this is a run-time failure with a clear message.
+    let src = write_temp(
+        "await-twice.sic",
+        "fn work() -> Int { return 1; }\nfn main() -> Int { let t = spawn work(); return await t + await t; }\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("already been awaited"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn a_policy_is_visible_in_the_bytecode() {
+    // `sic plan` will read this without executing anything.
+    let src = write_temp(
+        "policy.sic",
+        "allow { fs.read \"./x.txt\"; }\nfn main() -> String { return fs.read(\"./x.txt\") retry 3 timeout 250; }\n",
+    );
+    let out = src.with_extension("sicb");
+    let out_str = out.to_str().unwrap().to_string();
+    let (_, stderr, code) = sic(&["compile", src.to_str().unwrap(), "-o", &out_str]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic(&["disasm", &out_str]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("retry 3"), "{stdout}");
+    assert!(stdout.contains("timeout 250ms"), "{stdout}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(out).ok();
+}
+
+#[test]
+fn a_retried_call_records_every_attempt() {
+    let src = write_temp(
+        "retry-journal.sic",
+        "allow { fs.read \"./definitely-missing.txt\"; }\n\
+         fn main() -> String { return fs.read(\"./definitely-missing.txt\") retry 3; }\n",
+    );
+    let journal = src.with_extension("jsonl");
+    let (_, stderr, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 1, "stderr: {stderr}");
+
+    let events = journal_events(&journal);
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| *e == "capability_requested")
+            .count(),
+        3,
+        "{events:?}"
+    );
+    assert_eq!(
+        events.iter().filter(|e| *e == "capability_failed").count(),
+        3,
+        "{events:?}"
+    );
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn a_policy_on_a_function_call_is_a_compile_error() {
+    let src = write_temp(
+        "policy-bad.sic",
+        "fn work() -> Int { return 1; }\nfn main() -> Int { return work() retry 3; }\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0330"), "{stderr}");
+    std::fs::remove_file(src).ok();
 }
 
 #[test]

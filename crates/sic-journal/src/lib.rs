@@ -75,18 +75,35 @@ pub enum EventKind {
         func: String,
     },
 
+    /// `attempt` counts from 1. A retried call records every attempt, so an
+    /// audit shows what happened rather than only what finally worked.
     CapabilityRequested {
         cap: String,
         args: Digest,
+        attempt: u32,
     },
     CapabilityCompleted {
         cap: String,
         result: Digest,
+        attempt: u32,
     },
     CapabilityFailed {
         cap: String,
         error: String,
+        attempt: u32,
     },
+
+    TaskStarted {
+        func: String,
+    },
+    TaskCompleted {
+        result: Digest,
+    },
+    TaskFailed {
+        error: String,
+    },
+    /// The run ended while this task was still going.
+    TaskAbandoned,
 
     /// The run stopped because a capability could not answer yet.
     RunSuspended {
@@ -116,6 +133,10 @@ impl EventKind {
             EventKind::CapabilityRequested { .. } => "capability_requested",
             EventKind::CapabilityCompleted { .. } => "capability_completed",
             EventKind::CapabilityFailed { .. } => "capability_failed",
+            EventKind::TaskStarted { .. } => "task_started",
+            EventKind::TaskCompleted { .. } => "task_completed",
+            EventKind::TaskFailed { .. } => "task_failed",
+            EventKind::TaskAbandoned => "task_abandoned",
             EventKind::RunSuspended { .. } => "run_suspended",
             EventKind::RunResumed { .. } => "run_resumed",
             EventKind::CheckpointWritten { .. } => "checkpoint_written",
@@ -215,10 +236,21 @@ impl Journal {
     }
 
     pub fn emit(&mut self, span: SpanId, parent: Option<SpanId>, kind: EventKind) {
+        self.emit_for(TaskId(0), span, parent, kind);
+    }
+
+    /// Records an event belonging to a particular task.
+    pub fn emit_for(
+        &mut self,
+        task: TaskId,
+        span: SpanId,
+        parent: Option<SpanId>,
+        kind: EventKind,
+    ) {
         let event = Event {
             seq: self.seq,
             run: self.run,
-            task: TaskId(0),
+            task,
             span,
             parent,
             kind,

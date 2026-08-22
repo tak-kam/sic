@@ -29,6 +29,7 @@ pub fn lower(module: &Module, typed: &Typed) -> Hir {
         funcs,
         consts: consts.values,
         caps: typed.caps.clone(),
+        types: typed.types.clone(),
     }
 }
 
@@ -260,7 +261,11 @@ impl<'a> FnLower<'a> {
                 self.emit(InstKind::Bin { dst, op: *op, l, r }, e.span);
                 dst
             }
-            ExprKind::Call { callee, args } => {
+            ExprKind::Call {
+                callee,
+                args,
+                policy,
+            } => {
                 // Arguments are evaluated into locals first; the bytecode
                 // compiler is what moves them into consecutive registers.
                 let args: Vec<LocalId> = args.iter().map(|a| self.expr(a)).collect();
@@ -272,15 +277,31 @@ impl<'a> FnLower<'a> {
                             dst,
                             cap,
                             args,
-                            // Retry, timeout and budget arrive in phase 6. The
-                            // slot is here so they attach to the call rather
-                            // than to something reconstructed later.
-                            policy: CallPolicy::default(),
+                            policy: crate::hir::CallPolicy {
+                                attempts: policy.attempts,
+                                timeout_ms: policy.timeout_ms,
+                                ..Default::default()
+                            },
                         },
                         e.span,
                     ),
                     _ => unreachable!("a call must resolve to a function or a capability"),
                 }
+                dst
+            }
+            ExprKind::Spawn { callee, args } => {
+                let Some(Res::Fn(func)) = self.typed.res_of(callee.id) else {
+                    unreachable!("a spawn must resolve to a function");
+                };
+                let args: Vec<LocalId> = args.iter().map(|a| self.expr(a)).collect();
+                let dst = self.temp(ty);
+                self.emit(InstKind::Spawn { dst, func, args }, e.span);
+                dst
+            }
+            ExprKind::Await { task } => {
+                let task = self.expr(task);
+                let dst = self.temp(ty);
+                self.emit(InstKind::Await { dst, task }, e.span);
                 dst
             }
             ExprKind::Null | ExprKind::Field { .. } | ExprKind::Error => {

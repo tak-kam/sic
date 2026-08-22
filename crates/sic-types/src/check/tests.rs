@@ -132,6 +132,84 @@ fn unsupported_v01_features() {
     assert!(codes("fn f() { }\nfn main() { let x = f(); }").contains(&"E0311"));
 }
 
+// ---- tasks ----
+
+#[test]
+fn spawn_produces_a_task_and_await_unwraps_it() {
+    let typed = ok("fn work(a: Int) -> Int { return a; }\n\
+        fn main() -> Int { let t = spawn work(1); return await t; }");
+    assert_eq!(typed.fns[1].ret, Types::INT);
+    // The local holding the task has the task type.
+    let task_local = typed.fns[1].local_types[0];
+    assert_eq!(typed.types.task_output(task_local), Some(Types::INT));
+    assert_eq!(typed.types.name(task_local), "Task<Int>");
+}
+
+#[test]
+fn a_task_type_can_be_written_down() {
+    ok("fn work() -> Int { return 1; }\n\
+        fn main() -> Int { let t: Task<Int> = spawn work(); return await t; }");
+    assert!(
+        codes(
+            "fn work() -> Int { return 1; }\n\
+            fn main() -> Int { let t: Task<Bool> = spawn work(); return 0; }"
+        )
+        .contains(&"E0301")
+    );
+    assert!(codes("fn f(t: Task) { }").contains(&"E0310"));
+}
+
+#[test]
+fn spawn_checks_its_arguments_like_a_call() {
+    assert!(
+        codes("fn work(a: Int) -> Int { return a; }\nfn main() { let t = spawn work(true); }")
+            .contains(&"E0301")
+    );
+    assert!(
+        codes("fn work(a: Int) -> Int { return a; }\nfn main() { let t = spawn work(); }")
+            .contains(&"E0302")
+    );
+    assert!(codes("fn main() { let t = spawn nope(); }").contains(&"E0300"));
+}
+
+#[test]
+fn only_a_task_can_be_awaited() {
+    assert!(codes("fn main() -> Int { let x = 1; return await x; }").contains(&"E0333"));
+}
+
+#[test]
+fn a_capability_cannot_be_spawned() {
+    // Two effects in flight at once is a broker change, not a language one.
+    assert!(
+        codes(&format!(
+            "{ALLOW_ALL}fn main() {{ let t = spawn fs.read(\"./in.txt\"); }}"
+        ))
+        .contains(&"E0332")
+    );
+}
+
+#[test]
+fn main_cannot_return_a_task() {
+    let cs =
+        codes("fn work() -> Int { return 1; }\nfn main() -> Task<Int> { return spawn work(); }");
+    assert!(cs.contains(&"E0331"), "{cs:?}");
+}
+
+// ---- retry and timeout ----
+
+#[test]
+fn a_policy_belongs_to_a_capability_call() {
+    ok(&format!(
+        "{ALLOW_ALL}fn main() {{ let t = fs.read(\"./in.txt\") retry 3 timeout 500; }}"
+    ));
+}
+
+#[test]
+fn a_policy_on_a_function_call_is_rejected() {
+    let cs = codes("fn work() -> Int { return 1; }\nfn main() -> Int { return work() retry 3; }");
+    assert!(cs.contains(&"E0330"), "{cs:?}");
+}
+
 // ---- capabilities ----
 
 const ALLOW_ALL: &str = "allow {\n  fs.read \"./in.txt\";\n  fs.write \"./out.txt\";\n  process.exec \"/usr/bin/true\";\n}\n";

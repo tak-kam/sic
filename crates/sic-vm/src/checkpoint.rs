@@ -1,10 +1,11 @@
 //! Checkpoints: the state of a suspended run, written out and read back.
 //!
 //! A run stops at a capability that cannot answer yet, and everything needed to
-//! continue is already in the VM - program counter, registers, call stack,
-//! arena, the pending call, and where the journal had got to. Durable execution
-//! is therefore writing out state that exists, not a second mechanism beside a
-//! synchronous call. That is why the VM suspends instead of calling the broker.
+//! continue is already in the VM - the tasks, their registers and call stacks,
+//! the arena, the outstanding call, and where the journal had got to. Durable
+//! execution is therefore writing out state that exists, not a second mechanism
+//! beside a synchronous call. That is why the VM suspends instead of calling the
+//! broker.
 //!
 //! **A checkpoint holds values, and the journal does not.** They are different
 //! things: the journal is an account of a run that leaves the process, so it
@@ -17,13 +18,15 @@
 //! one must not start out with its invariants already broken.
 
 use sic_core::bin::{Reader, Writer};
-use sic_core::{Digest, Sha256};
+use sic_core::{CapValue, Digest, Sha256};
 
 use crate::value::{Handle, Value};
 
 pub const MAGIC: [u8; 4] = *b"SICC";
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 1;
+/// Bumped from 1 for tasks: a phase 5 checkpoint holds one implicit task and
+/// cannot be read as this. Refusing it is better than half-understanding it.
+pub const VERSION_MINOR: u16 = 2;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -40,27 +43,63 @@ pub struct Checkpoint {
     /// sequence rather than starting a second.
     pub seq: u64,
     pub next_span: u64,
+    pub root_span: u64,
     pub fuel: u64,
-    pub pending: Pending,
-    pub frames: Vec<Frame>,
-    pub regs: Vec<Value>,
+    /// Where round-robin scheduling resumes, so a resumed run schedules the
+    /// same way an uninterrupted one would.
+    pub cursor: u32,
+    /// The task whose capability call is outstanding.
+    pub answering: u32,
+    /// What is being waited for, for whoever has to answer it. This is a value,
+    /// which is why it belongs in a checkpoint and not in the journal.
+    pub question: String,
+    pub tasks: Vec<TaskSnapshot>,
     /// Handles of the string constants, which are allocated before the run and
     /// so cannot be rebuilt without duplicating them in the arena.
     pub str_consts: Vec<Option<u32>>,
     pub strings: Vec<String>,
 }
 
-/// The capability call the run is waiting on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TaskSnapshot {
+    pub state: TaskStateSnapshot,
+    pub span: u64,
+    pub func_name: String,
+    pub regs: Vec<Value>,
+    pub frames: Vec<Frame>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum TaskStateSnapshot {
+    Ready,
+    WaitingCap(Pending),
+    WaitingTask(u32),
+    Finished(Value),
+    Taken,
+    /// A failure is stored as the text it reports. The kind matters to the
+    /// program only through that text, and a restored run reports the same
+    /// thing it would have.
+    Failed {
+        message: String,
+        func: String,
+        pc: u32,
+    },
+    FailureTaken,
+}
+
+/// The capability call a task is waiting on.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pending {
-    /// Absolute register the answer goes into.
+    /// Register in the task the answer goes into.
     pub reg: u32,
+    pub index: u32,
     pub cap: String,
+    pub args: Vec<CapValue>,
+    pub attempt: u32,
+    pub attempts: u32,
+    pub timeout_ms: u32,
     pub span: u64,
     pub parent: Option<u64>,
-    /// What is being waited for, for whoever has to answer it. This is a value,
-    /// which is why it belongs in a checkpoint and not in the journal.
-    pub question: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -83,27 +122,30 @@ impl Checkpoint {
         w.u128(self.run);
         w.u64(self.seq);
         w.u64(self.next_span);
+        w.u64(self.root_span);
         w.u64(self.fuel);
+        w.u32(self.cursor);
+        w.u32(self.answering);
+        w.str(&self.question);
 
-        w.u32(self.pending.reg);
-        w.str(&self.pending.cap);
-        w.u64(self.pending.span);
-        write_option_u64(&mut w, self.pending.parent);
-        w.str(&self.pending.question);
-
-        w.u32(self.frames.len() as u32);
-        for frame in &self.frames {
-            w.u32(frame.func);
-            w.u32(frame.pc);
-            w.u32(frame.reg_base);
-            w.u32(frame.ret_reg);
-            w.u64(frame.span);
-            write_option_u64(&mut w, frame.parent);
-        }
-
-        w.u32(self.regs.len() as u32);
-        for value in &self.regs {
-            write_value(&mut w, value);
+        w.u32(self.tasks.len() as u32);
+        for task in &self.tasks {
+            write_state(&mut w, &task.state);
+            w.u64(task.span);
+            w.str(&task.func_name);
+            w.u32(task.regs.len() as u32);
+            for value in &task.regs {
+                write_value(&mut w, value);
+            }
+            w.u32(task.frames.len() as u32);
+            for frame in &task.frames {
+                w.u32(frame.func);
+                w.u32(frame.pc);
+                w.u32(frame.reg_base);
+                w.u32(frame.ret_reg);
+                w.u64(frame.span);
+                write_option_u64(&mut w, frame.parent);
+            }
         }
 
         w.u32(self.str_consts.len() as u32);
@@ -143,33 +185,44 @@ impl Checkpoint {
         let run = r.u128()?;
         let seq = r.u64()?;
         let next_span = r.u64()?;
+        let root_span = r.u64()?;
         let fuel = r.u64()?;
+        let cursor = r.u32()?;
+        let answering = r.u32()?;
+        let question = r.str()?;
 
-        let pending = Pending {
-            reg: r.u32()?,
-            cap: r.str()?,
-            span: r.u64()?,
-            parent: read_option_u64(&mut r)?,
-            question: r.str()?,
-        };
+        let task_count = r.count(16)?;
+        let mut tasks = Vec::with_capacity(task_count);
+        for _ in 0..task_count {
+            let state = read_state(&mut r)?;
+            let span = r.u64()?;
+            let func_name = r.str()?;
 
-        let frame_count = r.count(28)?;
-        let mut frames = Vec::with_capacity(frame_count);
-        for _ in 0..frame_count {
-            frames.push(Frame {
-                func: r.u32()?,
-                pc: r.u32()?,
-                reg_base: r.u32()?,
-                ret_reg: r.u32()?,
-                span: r.u64()?,
-                parent: read_option_u64(&mut r)?,
+            let reg_count = r.count(1)?;
+            let mut regs = Vec::with_capacity(reg_count);
+            for _ in 0..reg_count {
+                regs.push(read_value(&mut r)?);
+            }
+
+            let frame_count = r.count(28)?;
+            let mut frames = Vec::with_capacity(frame_count);
+            for _ in 0..frame_count {
+                frames.push(Frame {
+                    func: r.u32()?,
+                    pc: r.u32()?,
+                    reg_base: r.u32()?,
+                    ret_reg: r.u32()?,
+                    span: r.u64()?,
+                    parent: read_option_u64(&mut r)?,
+                });
+            }
+            tasks.push(TaskSnapshot {
+                state,
+                span,
+                func_name,
+                regs,
+                frames,
             });
-        }
-
-        let reg_count = r.count(1)?;
-        let mut regs = Vec::with_capacity(reg_count);
-        for _ in 0..reg_count {
-            regs.push(read_value(&mut r)?);
         }
 
         let const_count = r.count(1)?;
@@ -191,10 +244,12 @@ impl Checkpoint {
             run,
             seq,
             next_span,
+            root_span,
             fuel,
-            pending,
-            frames,
-            regs,
+            cursor,
+            answering,
+            question,
+            tasks,
             str_consts,
             strings,
         };
@@ -208,43 +263,82 @@ impl Checkpoint {
     /// checks only because they happened here. Everything a hostile file could
     /// point somewhere wrong is checked against the state it points into.
     fn check_consistency(&self) -> Result<()> {
-        if self.frames.is_empty() {
+        if self.tasks.is_empty() {
+            return Err(CheckpointError::new("a run has at least one task"));
+        }
+        let task_count = self.tasks.len() as u32;
+        if self.answering >= task_count {
             return Err(CheckpointError::new(
-                "a suspended run has at least one frame",
+                "the outstanding call belongs to a task that does not exist",
             ));
         }
-        let regs = self.regs.len() as u32;
-        if self.pending.reg >= regs {
+        if !matches!(
+            self.tasks[self.answering as usize].state,
+            TaskStateSnapshot::WaitingCap(_)
+        ) {
             return Err(CheckpointError::new(
-                "the pending call writes to a register that does not exist",
+                "the task with the outstanding call is not waiting for one",
             ));
         }
-        for (i, frame) in self.frames.iter().enumerate() {
-            if frame.reg_base > regs || frame.ret_reg >= regs {
-                return Err(CheckpointError::new(format!(
-                    "frame {i} refers to registers outside the saved stack"
-                )));
-            }
+        if self.cursor >= task_count {
+            return Err(CheckpointError::new(
+                "the scheduler cursor is outside the task list",
+            ));
         }
-        // Frames sit one above another in a single register stack, and the
-        // arithmetic that finds a register assumes that ordering.
-        for pair in self.frames.windows(2) {
-            if pair[1].reg_base < pair[0].reg_base {
-                return Err(CheckpointError::new(
-                    "frames are not in order of their register windows",
-                ));
-            }
-        }
+
         let strings = self.strings.len() as u32;
-        for value in &self.regs {
-            if let Value::Str(h) | Value::List(h) | Value::Object(h) = value {
-                if h.0 >= strings {
-                    return Err(CheckpointError::new(
-                        "a saved value points outside the saved arena",
-                    ));
+        for (index, task) in self.tasks.iter().enumerate() {
+            let regs = task.regs.len() as u32;
+            if let TaskStateSnapshot::WaitingCap(pending) = &task.state {
+                if pending.reg >= regs {
+                    return Err(CheckpointError::new(format!(
+                        "task {index} answers into a register that does not exist"
+                    )));
                 }
             }
+            if let TaskStateSnapshot::WaitingTask(waited) = task.state {
+                if waited >= task_count {
+                    return Err(CheckpointError::new(format!(
+                        "task {index} waits for task {waited}, which does not exist"
+                    )));
+                }
+            }
+            // A running task has frames; a finished one does not.
+            let running = matches!(
+                task.state,
+                TaskStateSnapshot::Ready
+                    | TaskStateSnapshot::WaitingCap(_)
+                    | TaskStateSnapshot::WaitingTask(_)
+            );
+            if running && task.frames.is_empty() {
+                return Err(CheckpointError::new(format!(
+                    "task {index} is runnable but has no frames"
+                )));
+            }
+            for (i, frame) in task.frames.iter().enumerate() {
+                if frame.reg_base > regs || frame.ret_reg >= regs.max(1) {
+                    return Err(CheckpointError::new(format!(
+                        "frame {i} of task {index} refers to registers outside the saved stack"
+                    )));
+                }
+            }
+            // Frames sit one above another in a single register stack, and the
+            // arithmetic that finds a register assumes that ordering.
+            for pair in task.frames.windows(2) {
+                if pair[1].reg_base < pair[0].reg_base {
+                    return Err(CheckpointError::new(format!(
+                        "the frames of task {index} are not in order of their register windows"
+                    )));
+                }
+            }
+            for value in &task.regs {
+                check_value(value, strings, task_count)?;
+            }
+            if let TaskStateSnapshot::Finished(value) = &task.state {
+                check_value(value, strings, task_count)?;
+            }
         }
+
         for handle in self.str_consts.iter().flatten() {
             if *handle >= strings {
                 return Err(CheckpointError::new(
@@ -261,6 +355,103 @@ impl Checkpoint {
         h.update(bytes);
         h.finish()
     }
+}
+
+fn check_value(value: &Value, strings: u32, tasks: u32) -> Result<()> {
+    match value {
+        Value::Str(h) | Value::List(h) | Value::Object(h) => {
+            if h.0 >= strings {
+                return Err(CheckpointError::new(
+                    "a saved value points outside the saved arena",
+                ));
+            }
+        }
+        Value::Task(id) if *id >= tasks => {
+            return Err(CheckpointError::new(
+                "a saved value names a task that does not exist",
+            ));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {
+    match state {
+        TaskStateSnapshot::Ready => w.u8(0),
+        TaskStateSnapshot::WaitingCap(pending) => {
+            w.u8(1);
+            w.u32(pending.reg);
+            w.u32(pending.index);
+            w.str(&pending.cap);
+            w.u32(pending.args.len() as u32);
+            for arg in &pending.args {
+                write_cap_value(w, arg);
+            }
+            w.u32(pending.attempt);
+            w.u32(pending.attempts);
+            w.u32(pending.timeout_ms);
+            w.u64(pending.span);
+            write_option_u64(w, pending.parent);
+        }
+        TaskStateSnapshot::WaitingTask(id) => {
+            w.u8(2);
+            w.u32(*id);
+        }
+        TaskStateSnapshot::Finished(value) => {
+            w.u8(3);
+            write_value(w, value);
+        }
+        TaskStateSnapshot::Taken => w.u8(4),
+        TaskStateSnapshot::Failed { message, func, pc } => {
+            w.u8(5);
+            w.str(message);
+            w.str(func);
+            w.u32(*pc);
+        }
+        TaskStateSnapshot::FailureTaken => w.u8(6),
+    }
+}
+
+fn read_state(r: &mut Reader<'_>) -> Result<TaskStateSnapshot> {
+    Ok(match r.u8()? {
+        0 => TaskStateSnapshot::Ready,
+        1 => {
+            let reg = r.u32()?;
+            let index = r.u32()?;
+            let cap = r.str()?;
+            let arg_count = r.count(1)?;
+            let mut args = Vec::with_capacity(arg_count);
+            for _ in 0..arg_count {
+                args.push(read_cap_value(r)?);
+            }
+            TaskStateSnapshot::WaitingCap(Pending {
+                reg,
+                index,
+                cap,
+                args,
+                attempt: r.u32()?,
+                attempts: r.u32()?,
+                timeout_ms: r.u32()?,
+                span: r.u64()?,
+                parent: read_option_u64(r)?,
+            })
+        }
+        2 => TaskStateSnapshot::WaitingTask(r.u32()?),
+        3 => TaskStateSnapshot::Finished(read_value(r)?),
+        4 => TaskStateSnapshot::Taken,
+        5 => TaskStateSnapshot::Failed {
+            message: r.str()?,
+            func: r.str()?,
+            pc: r.u32()?,
+        },
+        6 => TaskStateSnapshot::FailureTaken,
+        other => {
+            return Err(CheckpointError::new(format!(
+                "unknown task state {other} in a checkpoint"
+            )));
+        }
+    })
 }
 
 fn write_option_u64(w: &mut Writer, value: Option<u64>) {
@@ -304,6 +495,10 @@ fn write_value(w: &mut Writer, value: &Value) {
             w.u8(6);
             w.u32(h.0);
         }
+        Value::Task(id) => {
+            w.u8(7);
+            w.u32(*id);
+        }
     }
 }
 
@@ -316,9 +511,47 @@ fn read_value(r: &mut Reader<'_>) -> Result<Value> {
         4 => Value::Str(Handle(r.u32()?)),
         5 => Value::List(Handle(r.u32()?)),
         6 => Value::Object(Handle(r.u32()?)),
+        7 => Value::Task(r.u32()?),
         other => {
             return Err(CheckpointError::new(format!(
                 "unknown value tag {other} in a checkpoint"
+            )));
+        }
+    })
+}
+
+fn write_cap_value(w: &mut Writer, value: &CapValue) {
+    match value {
+        CapValue::Unit => w.u8(0),
+        CapValue::Bool(v) => {
+            w.u8(1);
+            w.bool(*v);
+        }
+        CapValue::I64(v) => {
+            w.u8(2);
+            w.i64(*v);
+        }
+        CapValue::F64(v) => {
+            w.u8(3);
+            w.f64(*v);
+        }
+        CapValue::Str(s) => {
+            w.u8(4);
+            w.str(s);
+        }
+    }
+}
+
+fn read_cap_value(r: &mut Reader<'_>) -> Result<CapValue> {
+    Ok(match r.u8()? {
+        0 => CapValue::Unit,
+        1 => CapValue::Bool(r.bool()?),
+        2 => CapValue::I64(r.i64()?),
+        3 => CapValue::F64(r.f64()?),
+        4 => CapValue::Str(r.str()?),
+        other => {
+            return Err(CheckpointError::new(format!(
+                "unknown capability value tag {other} in a checkpoint"
             )));
         }
     })
