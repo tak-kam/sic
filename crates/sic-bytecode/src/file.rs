@@ -55,6 +55,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
             Const::I64(v) => w.u64(*v as u64),
             Const::F64(v) => w.u64(v.to_bits()),
             Const::Str(s) => w.str(s),
+            Const::EmptyList(index) => w.u32(*index),
         }
     }
     sections.push((section::CONSTANTS, w.finish()));
@@ -63,8 +64,16 @@ pub fn encode(p: &Program) -> Vec<u8> {
     w.u32(p.types.len() as u32);
     for t in &p.types {
         w.u8(t.tag());
-        if let TypeDesc::Task(inner) = t {
-            w.u32(*inner);
+        match t {
+            TypeDesc::Task(inner) | TypeDesc::List(inner) => w.u32(*inner),
+            TypeDesc::Object { name, fields } => {
+                w.str(name);
+                w.u8(fields.len() as u8);
+                for field in fields {
+                    w.u32(*field);
+                }
+            }
+            _ => {}
         }
     }
     sections.push((section::TYPES, w.finish()));
@@ -231,6 +240,7 @@ fn decode_consts(body: &[u8]) -> Result<Vec<Const>> {
             2 => Const::I64(r.u64()? as i64),
             3 => Const::F64(f64::from_bits(r.u64()?)),
             4 => Const::Str(r.str()?),
+            5 => Const::EmptyList(r.u32()?),
             other => return Err(DecodeError::new(format!("unknown constant tag {other}"))),
         });
     }
@@ -251,6 +261,16 @@ fn decode_types(body: &[u8]) -> Result<Vec<TypeDesc>> {
             3 => TypeDesc::Float,
             4 => TypeDesc::Str,
             5 => TypeDesc::Task(r.u32()?),
+            6 => TypeDesc::List(r.u32()?),
+            7 => {
+                let name = r.str()?;
+                let field_count = r.u8()? as usize;
+                let mut fields = Vec::with_capacity(field_count);
+                for _ in 0..field_count {
+                    fields.push(r.u32()?);
+                }
+                TypeDesc::Object { name, fields }
+            }
             other => return Err(DecodeError::new(format!("unknown type tag {other}"))),
         });
     }

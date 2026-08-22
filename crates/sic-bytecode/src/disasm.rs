@@ -64,6 +64,7 @@ fn const_str(c: &Const) -> String {
         Const::I64(v) => format!("{v}"),
         Const::F64(v) => format!("{v:?}"),
         Const::Str(s) => format!("{s:?}"),
+        Const::EmptyList(index) => format!("[] : t{index}"),
     }
 }
 
@@ -91,7 +92,11 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             Op::Call => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::CallCap => format!("r{}, c{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::Spawn => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
-            Op::Await => format!("r{}, r{}", inst.a(), inst.b()),
+            Op::Await | Op::Len => format!("r{}, r{}", inst.a(), inst.b()),
+            Op::MakeObject => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
+            Op::GetField => format!("r{}, r{}, .{}", inst.a(), inst.b(), inst.c()),
+            Op::MakeList => format!("r{}, r{}, {}", inst.a(), inst.b(), inst.c()),
+            Op::GetIndex => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
             _ => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
         },
     };
@@ -119,6 +124,9 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
                 line.push_str(&format!("  ; timeout {}ms", policy.timeout_ms));
             }
         }
+    }
+    if op == Op::MakeObject {
+        line.push_str(&format!("  ; {}", p.type_name(inst.b() as u32)));
     }
     if op == Op::Spawn {
         if let Some(f) = p.funcs.get(inst.b() as usize) {

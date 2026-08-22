@@ -12,6 +12,35 @@ use sic_core::TypeId;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FnSigId(pub u32);
 
+/// Index into the record type table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ObjectId(pub u32);
+
+impl ObjectId {
+    pub fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A user-defined record type.
+///
+/// Fields are ordered: the source addresses them by name, the bytecode by
+/// position.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ObjectDef {
+    pub name: String,
+    pub fields: Vec<(String, TypeId)>,
+}
+
+impl ObjectDef {
+    pub fn field(&self, name: &str) -> Option<(usize, TypeId)> {
+        self.fields
+            .iter()
+            .position(|(n, _)| n == name)
+            .map(|i| (i, self.fields[i].1))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
     Unit,
@@ -24,6 +53,8 @@ pub enum Type {
     List(TypeId),
     /// A running computation and, eventually, what it produces.
     Task(TypeId),
+    /// A user-defined record.
+    Object(ObjectId),
     Fn(FnSigId),
     /// Section 19 of the specification. Never constructed in v0.1; the variant
     /// exists so that adding it later does not reshape every match.
@@ -55,6 +86,7 @@ pub struct Types {
     types: Vec<Type>,
     index: HashMap<Type, TypeId>,
     sigs: Vec<FnSig>,
+    objects: Vec<ObjectDef>,
 }
 
 impl Types {
@@ -70,6 +102,7 @@ impl Types {
             types: Vec::new(),
             index: HashMap::new(),
             sigs: Vec::new(),
+            objects: Vec::new(),
         };
         // The order here defines the constants above.
         assert_eq!(t.intern(Type::Unit), Self::UNIT);
@@ -105,6 +138,51 @@ impl Types {
         &self.sigs[id.0 as usize]
     }
 
+    /// Declares a record type, before its fields are known.
+    ///
+    /// Two types may refer to each other's names, so the id has to exist before
+    /// either body is resolved.
+    pub fn declare_object(&mut self, name: impl Into<String>) -> ObjectId {
+        let id = ObjectId(self.objects.len() as u32);
+        self.objects.push(ObjectDef {
+            name: name.into(),
+            fields: Vec::new(),
+        });
+        id
+    }
+
+    pub fn set_object_fields(&mut self, id: ObjectId, fields: Vec<(String, TypeId)>) {
+        self.objects[id.index()].fields = fields;
+    }
+
+    pub fn object(&self, id: ObjectId) -> &ObjectDef {
+        &self.objects[id.index()]
+    }
+
+    pub fn object_count(&self) -> usize {
+        self.objects.len()
+    }
+
+    /// The record a type is, if it is one.
+    pub fn as_object(&self, id: TypeId) -> Option<ObjectId> {
+        match self.get(id) {
+            Type::Object(object) => Some(*object),
+            _ => None,
+        }
+    }
+
+    /// What a list holds, if this is a list type.
+    pub fn list_element(&self, id: TypeId) -> Option<TypeId> {
+        match self.get(id) {
+            Type::List(inner) => Some(*inner),
+            _ => None,
+        }
+    }
+
+    pub fn list(&mut self, element: TypeId) -> TypeId {
+        self.intern(Type::List(element))
+    }
+
     /// Resolves a type name as written in the source.
     ///
     /// Only the primitive names exist in v0.1; user-defined types arrive with
@@ -135,6 +213,7 @@ impl Types {
                 let params: Vec<String> = s.params.iter().map(|p| self.name(*p)).collect();
                 format!("fn({}) -> {}", params.join(", "), self.name(s.ret))
             }
+            Type::Object(object) => self.object(*object).name.clone(),
             Type::Trust(kind, inner) => format!("{kind:?}<{}>", self.name(*inner)),
             Type::Error => "<error>".into(),
         }

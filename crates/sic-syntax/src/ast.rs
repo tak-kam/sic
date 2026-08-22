@@ -18,6 +18,8 @@ pub enum Item {
     /// A block of capability grants. Declaring a capability is what makes
     /// calling it legal, so this is part of the program, not configuration.
     Allow(AllowDecl),
+    /// A user-defined record type.
+    Type(TypeDecl),
 }
 
 impl Item {
@@ -25,8 +27,35 @@ impl Item {
         match self {
             Item::Fn(f) => f.span,
             Item::Allow(a) => a.span,
+            Item::Type(t) => t.span,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeDecl {
+    pub id: NodeId,
+    pub name: Ident,
+    /// Fields are ordered. The order is what the bytecode uses; the source uses
+    /// names.
+    pub fields: Vec<FieldDecl>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct FieldDecl {
+    pub id: NodeId,
+    pub name: Ident,
+    pub ty: TypeExpr,
+    pub span: Span,
+}
+
+/// One field of a struct literal.
+#[derive(Debug, Clone)]
+pub struct FieldInit {
+    pub name: Ident,
+    pub value: Expr,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -189,6 +218,20 @@ pub enum ExprKind {
     /// `await t`: waits for a task and evaluates to its result.
     Await {
         task: Box<Expr>,
+    },
+    /// `Point { x: 1, y: 2 }`.
+    Struct {
+        name: Ident,
+        fields: Vec<FieldInit>,
+    },
+    /// `[1, 2, 3]`.
+    List {
+        elements: Vec<Expr>,
+    },
+    /// `xs[i]`.
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
     },
     Field {
         base: Box<Expr>,

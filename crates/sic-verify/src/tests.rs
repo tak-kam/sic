@@ -20,10 +20,10 @@ fn program(
 ) -> Program {
     Program {
         consts,
-        types: TypeDesc::PRIMITIVES.to_vec(),
+        types: TypeDesc::primitives(),
         funcs: vec![FuncDef {
             name: "f".into(),
-            params: params.iter().map(|t| index_of(*t)).collect(),
+            params: params.iter().map(|t| index_of(t.clone())).collect(),
             reg_count,
             ret_type: index_of(ret),
             code_off: 0,
@@ -482,5 +482,144 @@ fn a_granted_but_uncalled_capability_is_a_warning() {
             .any(|w| w.message.contains("never called")),
         "{:#?}",
         report.warnings
+    );
+}
+
+// ---- records and lists ----
+
+#[test]
+fn the_verifier_knows_what_a_field_produces() {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::MakeObject, 2, 5, 1),
+            Inst::abc(Op::GetField, 0, 2, 0),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![index_of(TypeDesc::Int)],
+    });
+    assert_ok(&p);
+}
+
+#[test]
+fn a_field_of_the_wrong_type_is_rejected() {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::Bool(true)],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::MakeObject, 2, 5, 1),
+            Inst::abc(Op::GetField, 0, 2, 0),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![index_of(TypeDesc::Int)],
+    });
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("holds Bool where Int is required")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn a_field_that_does_not_exist_is_rejected() {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::MakeObject, 2, 5, 1),
+            Inst::abc(Op::GetField, 0, 2, 7),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![index_of(TypeDesc::Int)],
+    });
+    assert!(
+        errors(&p).iter().any(|m| m.contains("has no field 7")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn indexing_a_non_list_is_rejected() {
+    let p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::GetIndex, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p).iter().any(|m| m.contains("cannot be indexed")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn a_list_needs_its_type_in_the_section() {
+    // Without it the verifier could not say what indexing produces.
+    let p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abc(Op::MakeList, 1, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p).iter().any(|m| m.contains("no `List<Int>`")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+#[test]
+fn len_needs_a_list_or_a_string() {
+    let p = program(
+        &[],
+        TypeDesc::Int,
+        2,
+        vec![Const::Bool(true)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abc(Op::Len, 1, 0, 0),
+            Inst::abc(Op::Return, 1, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("`len` cannot be applied")),
+        "{:?}",
+        errors(&p)
     );
 }

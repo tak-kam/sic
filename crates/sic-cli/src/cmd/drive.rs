@@ -52,7 +52,7 @@ pub fn manifest(program: &Program) -> Vec<CapGrant> {
 
 /// Reads a value supplied on the command line, in the type the capability
 /// returns.
-pub fn parse_answer(text: &str, tag: TypeDesc) -> Result<CapValue, String> {
+pub fn parse_answer(text: &str, tag: &TypeDesc) -> Result<CapValue, String> {
     Ok(match tag {
         TypeDesc::Bool => match text {
             "true" => CapValue::Bool(true),
@@ -69,16 +69,19 @@ pub fn parse_answer(text: &str, tag: TypeDesc) -> Result<CapValue, String> {
         ),
         TypeDesc::Str => CapValue::Str(text.to_string()),
         TypeDesc::Unit => CapValue::Unit,
-        // A capability cannot produce a task; the verifier would have refused
-        // the manifest.
-        TypeDesc::Task(_) => {
-            return Err("a capability cannot answer with a task".to_string());
+        // A capability answers with one value the broker can produce; the
+        // verifier would have refused a manifest asking for anything else.
+        TypeDesc::Task(_) | TypeDesc::List(_) | TypeDesc::Object { .. } => {
+            return Err(format!(
+                "a capability cannot answer with a {}",
+                tag.short_name()
+            ));
         }
     })
 }
 
 /// The type a capability returns, for reading an answer.
-pub fn capability_return_type(program: &Program, cap: &str) -> Option<TypeDesc> {
+pub fn capability_return_type<'a>(program: &'a Program, cap: &str) -> Option<&'a TypeDesc> {
     let decl = program.caps.iter().find(|c| c.name == cap)?;
-    program.types.get(decl.ret_type as usize).copied()
+    program.types.get(decl.ret_type as usize)
 }

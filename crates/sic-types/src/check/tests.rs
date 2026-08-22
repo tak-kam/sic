@@ -117,7 +117,9 @@ fn shadowing_is_allowed_and_uses_a_new_slot() {
 fn unknown_names_and_types() {
     assert!(codes("fn main() { return x; }").contains(&"E0300"));
     assert!(codes("fn f(a: Nope) { }").contains(&"E0310"));
-    assert!(codes("fn f(a: List<Int>) { }").contains(&"E0310"));
+    // `List<T>` is a type now; `List` on its own still is not.
+    ok("fn f(a: List<Int>) { }");
+    assert!(codes("fn f(a: List) { }").contains(&"E0310"));
 }
 
 #[test]
@@ -128,8 +130,119 @@ fn duplicate_function() {
 #[test]
 fn unsupported_v01_features() {
     assert!(codes("fn main() { let x = null; }").contains(&"E0312"));
-    assert!(codes("fn main() { let a = 1; return a.b; }").contains(&"E0308"));
+    // Field access exists now, so this is "Int has no fields" rather than
+    // "field access is not supported".
+    assert!(codes("fn main() { let a = 1; return a.b; }").contains(&"E0341"));
     assert!(codes("fn f() { }\nfn main() { let x = f(); }").contains(&"E0311"));
+}
+
+// ---- record types and lists ----
+
+const POINT: &str = "type Point { x: Int, y: Int }\n";
+
+#[test]
+fn a_record_can_be_built_and_read() {
+    let typed = ok(&format!(
+        "{POINT}fn main() -> Int {{ let p = Point {{ x: 1, y: 2 }}; return p.x + p.y; }}"
+    ));
+    assert_eq!(typed.fns[0].ret, Types::INT);
+    let p = typed.fns[0].local_types[0];
+    assert_eq!(typed.types.name(p), "Point");
+}
+
+#[test]
+fn every_field_is_required_and_named_once() {
+    assert!(codes(&format!("{POINT}fn main() {{ let p = Point {{ x: 1 }}; }}")).contains(&"E0350"));
+    assert!(
+        codes(&format!(
+            "{POINT}fn main() {{ let p = Point {{ x: 1, y: 2, z: 3 }}; }}"
+        ))
+        .contains(&"E0348")
+    );
+    assert!(
+        codes(&format!(
+            "{POINT}fn main() {{ let p = Point {{ x: 1, x: 2, y: 3 }}; }}"
+        ))
+        .contains(&"E0349")
+    );
+    assert!(
+        codes(&format!(
+            "{POINT}fn main() {{ let p = Point {{ x: true, y: 2 }}; }}"
+        ))
+        .contains(&"E0301")
+    );
+}
+
+#[test]
+fn a_field_that_does_not_exist_is_reported() {
+    assert!(
+        codes(&format!(
+            "{POINT}fn main() -> Int {{ let p = Point {{ x: 1, y: 2 }}; return p.z; }}"
+        ))
+        .contains(&"E0341")
+    );
+    assert!(codes("fn main() -> Int { let n = 1; return n.x; }").contains(&"E0341"));
+}
+
+#[test]
+fn types_may_refer_to_each_other_in_any_order() {
+    ok("type Outer { inner: Inner }\ntype Inner { n: Int }\n\
+        fn main() -> Int { let o = Outer { inner: Inner { n: 1 } }; return o.inner.n; }");
+}
+
+#[test]
+fn a_type_containing_itself_is_rejected() {
+    assert!(codes("type Loop { next: Loop }\nfn main() { }").contains(&"E0340"));
+    assert!(codes("type A { b: B }\ntype B { a: A }\nfn main() { }").contains(&"E0340"));
+    // A list is a handle, so a cycle through one is finite.
+    ok("type Tree { children: List<Tree> }\nfn main() { }");
+}
+
+#[test]
+fn duplicate_and_builtin_type_names_are_rejected() {
+    assert!(codes("type P { x: Int }\ntype P { y: Int }\nfn main() { }").contains(&"E0344"));
+    assert!(codes("type Int { x: Int }\nfn main() { }").contains(&"E0345"));
+    assert!(codes("type List { x: Int }\nfn main() { }").contains(&"E0345"));
+    assert!(codes("type P { x: Int, x: Bool }\nfn main() { }").contains(&"E0346"));
+}
+
+#[test]
+fn lists_are_homogeneous() {
+    let typed = ok("fn main() -> Int { let xs = [1, 2, 3]; return xs[0]; }");
+    assert_eq!(typed.types.name(typed.fns[0].local_types[0]), "List<Int>");
+    assert!(codes("fn main() { let xs = [1, true]; }").contains(&"E0301"));
+}
+
+#[test]
+fn an_empty_list_needs_an_annotation() {
+    ok("fn main() { let xs: List<Int> = []; }");
+    assert!(codes("fn main() { let xs = []; }").contains(&"E0342"));
+}
+
+#[test]
+fn indexing_needs_a_list_and_an_integer() {
+    assert!(codes("fn main() -> Int { let n = 1; return n[0]; }").contains(&"E0351"));
+    assert!(codes("fn main() -> Int { let xs = [1]; return xs[true]; }").contains(&"E0301"));
+}
+
+#[test]
+fn len_works_on_lists_and_strings() {
+    ok("fn main() -> Int { let xs = [1, 2]; return len(xs); }");
+    ok("fn main() -> Int { return len(\"abc\"); }");
+    assert!(codes("fn main() -> Int { return len(1); }").contains(&"E0352"));
+    assert!(codes("fn main() -> Int { let xs = [1]; return len(xs, xs); }").contains(&"E0302"));
+    // A module that defines its own `len` gets that one.
+    ok("fn len(n: Int) -> Int { return n; }\nfn main() -> Int { return len(2); }");
+}
+
+#[test]
+fn nested_types_type_check_through_lists() {
+    ok("type Evidence { source: String }\n\
+        type Diagnosis { cause: String, evidence: List<Evidence> }\n\
+        fn main() -> String {\n\
+            let d = Diagnosis { cause: \"disk\", evidence: [Evidence { source: \"syslog\" }] };\n\
+            return d.evidence[0].source;\n\
+        }");
 }
 
 // ---- tasks ----

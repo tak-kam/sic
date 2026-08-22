@@ -11,7 +11,7 @@ use sic_core::{CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
 use sic_syntax::ast::*;
 
 use crate::cap::{self, CapEntry};
-use crate::ty::{Type, Types};
+use crate::ty::{ObjectId, Type, Types};
 
 /// What a name in an expression refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +20,13 @@ pub enum Res {
     Fn(FuncId),
     /// A capability, resolved to its index in the module's manifest.
     Cap(CapId),
+    /// A built-in function, which lowers to an instruction rather than a call.
+    Builtin(Builtin),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Builtin {
+    Len,
 }
 
 #[derive(Debug, Clone)]
@@ -63,6 +70,7 @@ impl Typed {
 /// Checks a module. Diagnostics are collected rather than raised.
 pub fn check(module: &Module) -> (Typed, Vec<Diagnostic>) {
     let mut c = Checker::new();
+    c.collect_types(module);
     c.collect_capabilities(module);
     c.collect_signatures(module);
     c.check_bodies(module);
@@ -90,6 +98,8 @@ struct Checker {
     res: HashMap<NodeId, Res>,
     caps: Vec<CapEntry>,
     cap_ids: HashMap<String, CapId>,
+    /// User-defined record types, by name.
+    type_ids: HashMap<String, ObjectId>,
 
     // State for the function currently being checked.
     scopes: Vec<Vec<(String, LocalId)>>,
@@ -109,6 +119,7 @@ impl Checker {
             res: HashMap::new(),
             caps: Vec::new(),
             cap_ids: HashMap::new(),
+            type_ids: HashMap::new(),
             scopes: Vec::new(),
             locals: Vec::new(),
             ret_ty: None,
@@ -131,6 +142,118 @@ impl Checker {
         if let Some(last) = self.diags.last_mut() {
             last.notes.push(note.into());
         }
+    }
+
+    // ---- pass 0: type declarations ----
+
+    /// Declares every record type, then resolves their fields.
+    ///
+    /// The two steps are separate so that two types may refer to each other's
+    /// names, which means an id has to exist before any field is resolved.
+    fn collect_types(&mut self, module: &Module) {
+        for item in &module.items {
+            let Item::Type(decl) = item else {
+                continue;
+            };
+            if self.type_ids.contains_key(&decl.name.name) {
+                self.error(
+                    "E0344",
+                    format!("type `{}` is defined more than once", decl.name.name),
+                    decl.name.span,
+                    "redefined here",
+                );
+                continue;
+            }
+            if self.types.by_name(&decl.name.name).is_some()
+                || matches!(decl.name.name.as_str(), "List" | "Task")
+            {
+                self.error(
+                    "E0345",
+                    format!("`{}` is a built-in type", decl.name.name),
+                    decl.name.span,
+                    "cannot be redefined",
+                );
+                continue;
+            }
+            let id = self.types.declare_object(decl.name.name.clone());
+            self.type_ids.insert(decl.name.name.clone(), id);
+        }
+
+        for item in &module.items {
+            let Item::Type(decl) = item else {
+                continue;
+            };
+            let Some(id) = self.type_ids.get(&decl.name.name).copied() else {
+                continue;
+            };
+            let mut fields: Vec<(String, TypeId)> = Vec::new();
+            for field in &decl.fields {
+                if fields.iter().any(|(n, _)| *n == field.name.name) {
+                    self.error(
+                        "E0346",
+                        format!("field `{}` is declared twice", field.name.name),
+                        field.name.span,
+                        "already a field of this type",
+                    );
+                    continue;
+                }
+                let ty = self.resolve_type(&field.ty);
+                fields.push((field.name.name.clone(), ty));
+            }
+            self.types.set_object_fields(id, fields);
+        }
+
+        self.check_for_recursive_types(module);
+    }
+
+    /// A type that contains itself has no finite size.
+    ///
+    /// A list or a task is a handle, so a cycle through either is fine; the
+    /// search stops there.
+    fn check_for_recursive_types(&mut self, module: &Module) {
+        for item in &module.items {
+            let Item::Type(decl) = item else {
+                continue;
+            };
+            let Some(id) = self.type_ids.get(&decl.name.name).copied() else {
+                continue;
+            };
+            let mut seen = vec![id];
+            if self.contains_object(&self.types.object(id).fields.clone(), id, &mut seen) {
+                self.error(
+                    "E0340",
+                    format!("type `{}` contains itself", decl.name.name),
+                    decl.span,
+                    "a value of it would have no finite size",
+                );
+                self.note("a `List<T>` or a `Task<T>` breaks the cycle, because both are handles");
+            }
+        }
+    }
+
+    fn contains_object(
+        &self,
+        fields: &[(String, TypeId)],
+        target: ObjectId,
+        seen: &mut Vec<ObjectId>,
+    ) -> bool {
+        for (_, ty) in fields {
+            let Some(object) = self.types.as_object(*ty) else {
+                continue;
+            };
+            if object == target {
+                return true;
+            }
+            if seen.contains(&object) {
+                continue;
+            }
+            seen.push(object);
+            let nested = self.types.object(object).fields.clone();
+            if self.contains_object(&nested, target, seen) {
+                return true;
+            }
+        }
+        false
     }
 
     // ---- pass 0: capability grants ----
@@ -237,6 +360,19 @@ impl Checker {
     fn resolve_type(&mut self, t: &TypeExpr) -> TypeId {
         // `Task` is the only type with an argument in v0.1. A list type is a
         // separate piece of work.
+        if t.name.name == "List" {
+            if t.args.len() != 1 {
+                self.error(
+                    "E0310",
+                    "`List` takes exactly one type argument",
+                    t.span,
+                    "write `List<T>`",
+                );
+                return Types::ERROR;
+            }
+            let element = self.resolve_type(&t.args[0]);
+            return self.types.list(element);
+        }
         if t.name.name == "Task" {
             if t.args.len() != 1 {
                 self.error(
@@ -259,19 +395,20 @@ impl Checker {
             );
             return Types::ERROR;
         }
-        match self.types.by_name(&t.name.name) {
-            Some(id) => id,
-            None => {
-                self.error(
-                    "E0310",
-                    format!("unknown type `{}`", t.name.name),
-                    t.span,
-                    "not a known type",
-                );
-                self.note("v0.1 has Unit, Bool, Int, Float and String");
-                Types::ERROR
-            }
+        if let Some(id) = self.types.by_name(&t.name.name) {
+            return id;
         }
+        if let Some(object) = self.type_ids.get(&t.name.name).copied() {
+            return self.types.intern(Type::Object(object));
+        }
+        self.error(
+            "E0310",
+            format!("unknown type `{}`", t.name.name),
+            t.span,
+            "not a known type",
+        );
+        self.note("v0.1 has Unit, Bool, Int, Float, String, List<T>, Task<T> and the types this module declares");
+        Types::ERROR
     }
 
     // ---- pass 2: bodies ----
@@ -376,10 +513,20 @@ impl Checker {
                 init,
                 span,
             } => {
-                let init_ty = self.check_expr(init);
-                let slot_ty = match ty {
-                    Some(annotation) => {
-                        let want = self.resolve_type(annotation);
+                // An empty list has no element type of its own, so an
+                // annotation is the only thing that can give it one.
+                let annotated = ty.as_ref().map(|t| self.resolve_type(t));
+                let empty_list =
+                    matches!(&init.kind, ExprKind::List { elements } if elements.is_empty());
+                let init_ty = match (annotated, empty_list) {
+                    (Some(want), true) if self.types.list_element(want).is_some() => {
+                        self.node_types.insert(init.id, want);
+                        want
+                    }
+                    _ => self.check_expr(init),
+                };
+                let slot_ty = match annotated {
+                    Some(want) => {
                         self.expect_type(want, init_ty, init.span, "this initializer");
                         want
                     }
@@ -467,6 +614,9 @@ impl Checker {
                 policy,
             } => self.check_call(callee, args, policy, e.span),
             ExprKind::Spawn { callee, args } => self.check_spawn(callee, args, e.span),
+            ExprKind::Struct { name, fields } => self.check_struct(name, fields, e.span),
+            ExprKind::List { elements } => self.check_list(elements, e.span),
+            ExprKind::Index { base, index } => self.check_index(base, index, e.span),
             ExprKind::Await { task } => self.check_await(task, e.span),
             ExprKind::Field { base, name } => {
                 if let Some(full) = self.capability_name(base, name) {
@@ -476,16 +626,10 @@ impl Checker {
                         e.span,
                         "a capability is not a value",
                     );
+                    return_error(&mut self.node_types, e.id)
                 } else {
-                    self.check_expr(base);
-                    self.error(
-                        "E0308",
-                        "field access is not supported in v0.1",
-                        e.span,
-                        "there are no object types yet",
-                    );
+                    self.check_field_access(base, name, e.span)
                 }
-                Types::ERROR
             }
             ExprKind::Error => Types::ERROR,
         };
@@ -639,6 +783,12 @@ impl Checker {
         }
 
         let Some(id) = self.fn_ids.get(&name.name).copied() else {
+            // `len` is the only built-in function. It is looked up last, so a
+            // module that defines its own `len` gets that one.
+            if name.name == "len" {
+                self.res.insert(callee.id, Res::Builtin(Builtin::Len));
+                return self.check_len(args, span);
+            }
             for a in args {
                 self.check_expr(a);
             }
@@ -837,6 +987,169 @@ impl Checker {
         }
     }
 
+    /// `len(xs)` for a list or a string.
+    fn check_len(&mut self, args: &[Expr], span: Span) -> TypeId {
+        if args.len() != 1 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!("`len` takes 1 argument but {} were given", args.len()),
+                span,
+                "wrong number of arguments",
+            );
+            return Types::INT;
+        }
+        let ty = self.check_expr(&args[0]);
+        if self.types.is_error(ty) {
+            return Types::INT;
+        }
+        if ty != Types::STR && self.types.list_element(ty).is_none() {
+            let found = self.types.name(ty);
+            self.error(
+                "E0352",
+                format!("`len` cannot be applied to {found}"),
+                args[0].span,
+                "expected a `List<T>` or a String",
+            );
+        }
+        Types::INT
+    }
+
+    fn check_struct(&mut self, name: &Ident, fields: &[FieldInit], span: Span) -> TypeId {
+        let Some(object) = self.type_ids.get(&name.name).copied() else {
+            for field in fields {
+                self.check_expr(&field.value);
+            }
+            self.error(
+                "E0347",
+                format!("`{}` is not a record type", name.name),
+                name.span,
+                "no such type in this module",
+            );
+            return Types::ERROR;
+        };
+
+        let declared = self.types.object(object).fields.clone();
+        let mut given: Vec<&str> = Vec::new();
+        for field in fields {
+            let found = self.check_expr(&field.value);
+            match declared.iter().find(|(n, _)| *n == field.name.name) {
+                Some((_, want)) => {
+                    self.expect_type(*want, found, field.value.span, "this field");
+                }
+                None => self.error(
+                    "E0348",
+                    format!("`{}` has no field `{}`", name.name, field.name.name),
+                    field.name.span,
+                    "not a field of this type",
+                ),
+            }
+            if given.contains(&field.name.name.as_str()) {
+                self.error(
+                    "E0349",
+                    format!("field `{}` is given twice", field.name.name),
+                    field.name.span,
+                    "already set",
+                );
+            }
+            given.push(&field.name.name);
+        }
+
+        // Every field is required: there is no optional type, so a missing one
+        // would have to be filled with a value nobody chose.
+        let missing: Vec<&str> = declared
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .filter(|n| !given.contains(n))
+            .collect();
+        if !missing.is_empty() {
+            self.error(
+                "E0350",
+                format!("`{}` is missing {}", name.name, join_names(&missing)),
+                span,
+                "every field has to be given",
+            );
+        }
+        self.types.intern(Type::Object(object))
+    }
+
+    fn check_field_access(&mut self, base: &Expr, name: &Ident, span: Span) -> TypeId {
+        let base_ty = self.check_expr(base);
+        if self.types.is_error(base_ty) {
+            return Types::ERROR;
+        }
+        let Some(object) = self.types.as_object(base_ty) else {
+            let found = self.types.name(base_ty);
+            self.error(
+                "E0341",
+                format!("{found} has no fields"),
+                span,
+                "only a record type has fields",
+            );
+            return Types::ERROR;
+        };
+        match self.types.object(object).field(&name.name) {
+            Some((_, ty)) => ty,
+            None => {
+                let type_name = self.types.object(object).name.clone();
+                self.error(
+                    "E0341",
+                    format!("`{type_name}` has no field `{}`", name.name),
+                    name.span,
+                    "not a field of this type",
+                );
+                Types::ERROR
+            }
+        }
+    }
+
+    fn check_list(&mut self, elements: &[Expr], span: Span) -> TypeId {
+        let Some(first) = elements.first() else {
+            // There is nothing to infer from, and guessing would make the
+            // error appear wherever the list is used instead of here.
+            self.error(
+                "E0342",
+                "an empty list needs a type annotation",
+                span,
+                "write `let xs: List<T> = [];`",
+            );
+            return Types::ERROR;
+        };
+        let element = self.check_expr(first);
+        for other in &elements[1..] {
+            let found = self.check_expr(other);
+            self.expect_type(element, found, other.span, "this element");
+        }
+        if self.types.is_error(element) {
+            return Types::ERROR;
+        }
+        self.types.list(element)
+    }
+
+    fn check_index(&mut self, base: &Expr, index: &Expr, span: Span) -> TypeId {
+        let base_ty = self.check_expr(base);
+        let index_ty = self.check_expr(index);
+        self.expect_type(Types::INT, index_ty, index.span, "this index");
+        if self.types.is_error(base_ty) {
+            return Types::ERROR;
+        }
+        match self.types.list_element(base_ty) {
+            Some(element) => element,
+            None => {
+                let found = self.types.name(base_ty);
+                self.error(
+                    "E0351",
+                    format!("{found} cannot be indexed"),
+                    span,
+                    "only a `List<T>` can be indexed",
+                );
+                Types::ERROR
+            }
+        }
+    }
+
     fn finish(self) -> (Typed, Vec<Diagnostic>) {
         let entry = self.fn_ids.get("main").copied();
         let fns = self
@@ -862,6 +1175,26 @@ impl Checker {
             },
             self.diags,
         )
+    }
+}
+
+/// Records an error type for a node and returns it.
+fn return_error(node_types: &mut HashMap<NodeId, TypeId>, node: NodeId) -> TypeId {
+    node_types.insert(node, Types::ERROR);
+    Types::ERROR
+}
+
+/// "`a`", "`a` and `b`", "`a`, `b` and `c`".
+fn join_names(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+    match quoted.len() {
+        0 => String::new(),
+        1 => quoted[0].clone(),
+        _ => format!(
+            "{} and {}",
+            quoted[..quoted.len() - 1].join(", "),
+            quoted[quoted.len() - 1]
+        ),
     }
 }
 

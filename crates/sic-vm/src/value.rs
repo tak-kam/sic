@@ -19,7 +19,6 @@ pub enum Value {
     /// A running computation. The number is a task in this run, and means
     /// nothing outside it.
     Task(u32),
-    /// Phase 2 does not construct these yet; the variants fix the shape.
     List(Handle),
     Object(Handle),
 }
@@ -46,8 +45,15 @@ impl Value {
             Value::F64(v) => format!("{v}"),
             Value::Str(h) => format!("{:?}", arena.str(*h)),
             Value::Task(id) => format!("<task {id}>"),
-            Value::List(h) => format!("<list {}>", h.0),
-            Value::Object(h) => format!("<object {}>", h.0),
+            Value::List(h) => {
+                let items: Vec<String> = arena.list(*h).iter().map(|v| v.display(arena)).collect();
+                format!("[{}]", items.join(", "))
+            }
+            Value::Object(h) => {
+                let fields: Vec<String> =
+                    arena.object(*h).iter().map(|v| v.display(arena)).collect();
+                format!("{{{}}}", fields.join(", "))
+            }
         }
     }
 }
@@ -60,6 +66,8 @@ impl Value {
 #[derive(Debug, Default, Clone)]
 pub struct Arena {
     strings: Vec<String>,
+    lists: Vec<Vec<Value>>,
+    objects: Vec<Vec<Value>>,
 }
 
 impl Arena {
@@ -78,14 +86,56 @@ impl Arena {
     }
 
     /// Every string in the arena, for writing a checkpoint.
+    pub fn alloc_list(&mut self, values: Vec<Value>) -> Handle {
+        self.lists.push(values);
+        Handle(self.lists.len() as u32 - 1)
+    }
+
+    /// The elements behind a list handle, or nothing for a handle this arena
+    /// did not issue.
+    pub fn list(&self, h: Handle) -> &[Value] {
+        self.lists
+            .get(h.0 as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn alloc_object(&mut self, fields: Vec<Value>) -> Handle {
+        self.objects.push(fields);
+        Handle(self.objects.len() as u32 - 1)
+    }
+
+    pub fn object(&self, h: Handle) -> &[Value] {
+        self.objects
+            .get(h.0 as usize)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    pub fn lists(&self) -> &[Vec<Value>] {
+        &self.lists
+    }
+
+    pub fn objects(&self) -> &[Vec<Value>] {
+        &self.objects
+    }
+
     pub fn strings(&self) -> &[String] {
         &self.strings
     }
 
     /// Rebuilds an arena from a checkpoint. Handles keep their meaning because
     /// the order is preserved.
-    pub fn from_strings(strings: Vec<String>) -> Self {
-        Self { strings }
+    pub fn from_parts(
+        strings: Vec<String>,
+        lists: Vec<Vec<Value>>,
+        objects: Vec<Vec<Value>>,
+    ) -> Self {
+        Self {
+            strings,
+            lists,
+            objects,
+        }
     }
 
     pub fn len(&self) -> usize {

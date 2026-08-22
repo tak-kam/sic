@@ -9,5 +9,5 @@ pub mod check;
 pub mod ty;
 
 pub use cap::{BUILTIN_CAPS, CapEntry, CapSig, builtin};
-pub use check::{FnInfo, Res, Typed, check};
-pub use ty::{FnSig, FnSigId, TrustKind, Type, Types};
+pub use check::{Builtin, FnInfo, Res, Typed, check};
+pub use ty::{FnSig, FnSigId, ObjectDef, ObjectId, TrustKind, Type, Types};

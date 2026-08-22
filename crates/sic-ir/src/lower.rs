@@ -272,6 +272,11 @@ impl<'a> FnLower<'a> {
                 let dst = self.temp(ty);
                 match self.typed.res_of(callee.id) {
                     Some(Res::Fn(func)) => self.emit(InstKind::Call { dst, func, args }, e.span),
+                    // `len` is the one built-in: it becomes an instruction
+                    // rather than a call.
+                    Some(Res::Builtin(sic_types::Builtin::Len)) => {
+                        self.emit(InstKind::Len { dst, src: args[0] }, e.span)
+                    }
                     Some(Res::Cap(cap)) => self.emit(
                         InstKind::CallCap {
                             dst,
@@ -304,7 +309,80 @@ impl<'a> FnLower<'a> {
                 self.emit(InstKind::Await { dst, task }, e.span);
                 dst
             }
-            ExprKind::Null | ExprKind::Field { .. } | ExprKind::Error => {
+            ExprKind::Struct { fields, .. } => {
+                // Fields are stored in declaration order, which is not
+                // necessarily the order they were written in.
+                let Some(object) = self.typed.types.as_object(ty) else {
+                    unreachable!("a struct literal has a record type");
+                };
+                let declared = self.typed.types.object(object).fields.clone();
+                let mut slots: Vec<Option<LocalId>> = vec![None; declared.len()];
+                for field in fields {
+                    let value = self.expr(&field.value);
+                    if let Some(position) = declared.iter().position(|(n, _)| *n == field.name.name)
+                    {
+                        slots[position] = Some(value);
+                    }
+                }
+                let values: Vec<LocalId> = slots
+                    .into_iter()
+                    .map(|slot| slot.expect("the checker required every field"))
+                    .collect();
+                let dst = self.temp(ty);
+                self.emit(
+                    InstKind::MakeObject {
+                        dst,
+                        ty,
+                        fields: values,
+                    },
+                    e.span,
+                );
+                dst
+            }
+            ExprKind::List { elements } => {
+                let values: Vec<LocalId> = elements.iter().map(|el| self.expr(el)).collect();
+                let dst = self.temp(ty);
+                self.emit(
+                    InstKind::MakeList {
+                        dst,
+                        ty,
+                        elements: values,
+                    },
+                    e.span,
+                );
+                dst
+            }
+            ExprKind::Index { base, index } => {
+                let base = self.expr(base);
+                let index = self.expr(index);
+                let dst = self.temp(ty);
+                self.emit(InstKind::GetIndex { dst, base, index }, e.span);
+                dst
+            }
+            ExprKind::Field { base, name } => {
+                let base_ty = self.typed.type_of(base.id);
+                let base = self.expr(base);
+                let Some(object) = self.typed.types.as_object(base_ty) else {
+                    unreachable!("field access needs a record type");
+                };
+                let (index, _) = self
+                    .typed
+                    .types
+                    .object(object)
+                    .field(&name.name)
+                    .expect("the checker resolved this field");
+                let dst = self.temp(ty);
+                self.emit(
+                    InstKind::GetField {
+                        dst,
+                        base,
+                        index: index as u32,
+                    },
+                    e.span,
+                );
+                dst
+            }
+            ExprKind::Null | ExprKind::Error => {
                 unreachable!("rejected by the type checker")
             }
         }

@@ -19,7 +19,7 @@ type FuncSpec<'a> = (&'a str, &'a [TypeDesc], TypeDesc, u8, Vec<Inst>);
 fn program(funcs: Vec<FuncSpec<'_>>, consts: Vec<Const>) -> Program {
     let mut p = Program {
         consts,
-        types: TypeDesc::PRIMITIVES.to_vec(),
+        types: TypeDesc::primitives(),
         ..Program::default()
     };
     for (name, params, ret, reg_count, code) in funcs {
@@ -27,7 +27,7 @@ fn program(funcs: Vec<FuncSpec<'_>>, consts: Vec<Const>) -> Program {
         p.code.extend(code);
         p.funcs.push(FuncDef {
             name: name.into(),
-            params: params.iter().map(|t| index_of(*t)).collect(),
+            params: params.iter().map(|t| index_of(t.clone())).collect(),
             reg_count,
             ret_type: index_of(ret),
             code_off,
@@ -854,6 +854,8 @@ fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
         }],
         str_consts: vec![None],
         strings: Vec::new(),
+        lists: Vec::new(),
+        objects: Vec::new(),
     };
     // The honest one decodes.
     assert!(Checkpoint::decode(&base.encode()).is_ok());
@@ -933,6 +935,8 @@ fn a_checkpoint_frame_must_point_into_this_program() {
         }],
         str_consts: vec![None],
         strings: Vec::new(),
+        lists: Vec::new(),
+        objects: Vec::new(),
     };
     let err = Vm::restore(
         &p,
@@ -1120,4 +1124,153 @@ fn the_timeout_travels_with_the_request() {
     };
     assert_eq!(request.timeout_ms, 250);
     assert_eq!(request.task, 0);
+}
+
+// ---- records and lists ----
+
+/// `main` builds `Point { x: 3, y: 4 }`, reads `y`, and returns it.
+fn record_program() -> Program {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            5,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0), // 3
+                Inst::abx(Op::LoadConst, 2, 1), // 4
+                Inst::abc(Op::MakeObject, 3, 5, 1),
+                Inst::abc(Op::GetField, 4, 3, 1),
+                Inst::abc(Op::Return, 4, 0, 0),
+            ],
+        )],
+        vec![Const::I64(3), Const::I64(4)],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Point".into(),
+        fields: vec![index_of(TypeDesc::Int), index_of(TypeDesc::Int)],
+    });
+    p
+}
+
+#[test]
+fn a_record_is_built_and_read_by_position() {
+    let p = record_program();
+    assert_eq!(run(&p, &[]), Value::I64(4));
+}
+
+#[test]
+fn a_list_is_built_indexed_and_measured() {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            6,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0), // 10
+                Inst::abx(Op::LoadConst, 1, 1), // 20
+                Inst::abc(Op::MakeList, 2, 0, 2),
+                Inst::abx(Op::LoadConst, 3, 2), // index 1
+                Inst::abc(Op::GetIndex, 4, 2, 3),
+                Inst::abc(Op::Len, 5, 2, 0),
+                Inst::abc(Op::AddI64, 5, 4, 5),
+                Inst::abc(Op::Return, 5, 0, 0),
+            ],
+        )],
+        vec![Const::I64(10), Const::I64(20), Const::I64(1)],
+    );
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    // 20 + 2
+    assert_eq!(run(&p, &[]), Value::I64(22));
+}
+
+#[test]
+fn an_index_outside_the_list_fails_the_run() {
+    // There is no option type to return instead, and a silent default would be
+    // worse than stopping.
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            4,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abc(Op::MakeList, 1, 0, 1),
+                Inst::abx(Op::LoadConst, 2, 1), // index 5
+                Inst::abc(Op::GetIndex, 3, 1, 2),
+                Inst::abc(Op::Return, 3, 0, 0),
+            ],
+        )],
+        vec![Const::I64(10), Const::I64(5)],
+    );
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    assert_eq!(fail_kind(&p, &[]), FailKind::IndexOutOfRange);
+}
+
+#[test]
+fn len_of_a_string_counts_characters() {
+    // Bytes would be about the encoding rather than the text.
+    let p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            2,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abc(Op::Len, 1, 0, 0),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::Str("aあ😀".into())],
+    );
+    assert_eq!(run(&p, &[]), Value::I64(3));
+}
+
+#[test]
+fn an_empty_list_constant_is_shared() {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            2,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abc(Op::Len, 1, 0, 0),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::EmptyList(0)],
+    );
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    p.consts[0] = Const::EmptyList(p.types.len() as u32 - 1);
+    assert_eq!(run(&p, &[]), Value::I64(0));
+}
+
+#[test]
+fn a_nested_value_survives_a_checkpoint() {
+    // Handles only mean anything against their own store, so every store
+    // travels with the registers.
+    let mut p = exec_program();
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    let list_type = p.types.len() as u32 - 1;
+    p.consts.push(Const::EmptyList(list_type));
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+    let (mut vm, _) = Vm::restore(
+        &p,
+        &bytes,
+        program_digest(),
+        Box::new(SharedSink::default()),
+    )
+    .expect("the checkpoint should restore");
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::I64(1)),
+        Status::Finished(Value::I64(1))
+    ));
 }

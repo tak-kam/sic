@@ -1,0 +1,26 @@
+// Records and lists: the shape a model's answer has to fit before a workflow
+// can branch on it.
+//
+// Every field is required - there is no optional type, so validation is a yes
+// or a no. A type may not contain itself, because a value of it would have no
+// finite size; a `List<T>` breaks the cycle, since a list is a handle.
+type Evidence {
+    source: String,
+    weight: Int,
+}
+
+type Diagnosis {
+    cause: String,
+    evidence: List<Evidence>,
+}
+
+fn main() -> Int {
+    let d = Diagnosis {
+        cause: "disk full",
+        evidence: [
+            Evidence { source: "syslog", weight: 3 },
+            Evidence { source: "df", weight: 5 },
+        ],
+    };
+    return d.evidence[1].weight + len(d.evidence) + len(d.cause);
+}

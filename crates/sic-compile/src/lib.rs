@@ -77,7 +77,7 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
         .collect();
 
     for func in &hir.funcs {
-        match FnCompile::new(func, &mut consts).run() {
+        match FnCompile::new(func, &mut consts, &mut types, &hir.types).run() {
             Ok(compiled) => {
                 let code_off = program.code.len() as u32;
                 for (offset, span) in compiled.spans {
@@ -177,6 +177,27 @@ impl TypeSection {
         if let Some(existing) = self.index.get(&ty) {
             return *existing;
         }
+        // A record is reserved before its fields are interned: a type may
+        // reach itself through a list, and the reservation is what stops that
+        // from recursing forever.
+        if let sic_types::Type::Object(object) = types.get(ty) {
+            let def = types.object(*object);
+            let position = self.descs.len() as u32;
+            self.descs.push(TypeDesc::Object {
+                name: def.name.clone(),
+                fields: Vec::new(),
+            });
+            self.index.insert(ty, position);
+            let field_types: Vec<sic_core::TypeId> = def.fields.iter().map(|(_, t)| *t).collect();
+            let fields: Vec<u32> = field_types
+                .into_iter()
+                .map(|t| self.intern(t, types))
+                .collect();
+            let name = types.object(*object).name.clone();
+            self.descs[position as usize] = TypeDesc::Object { name, fields };
+            return position;
+        }
+
         let desc = match types.get(ty) {
             sic_types::Type::Bool => TypeDesc::Bool,
             sic_types::Type::Int => TypeDesc::Int,
@@ -185,6 +206,10 @@ impl TypeSection {
             sic_types::Type::Task(inner) => {
                 let inner = self.intern(*inner, types);
                 TypeDesc::Task(inner)
+            }
+            sic_types::Type::List(inner) => {
+                let inner = self.intern(*inner, types);
+                TypeDesc::List(inner)
             }
             // Unit, and anything the checker could not name, is unit here.
             _ => TypeDesc::Unit,
@@ -215,6 +240,10 @@ struct Compiled {
 
 struct FnCompile<'a> {
     func: &'a HirFunc,
+    /// The module's type section, so an instruction can name a type.
+    types: &'a mut TypeSection,
+    /// The checker's type table, which the section is built from.
+    type_table: &'a sic_types::Types,
     /// The module's constant pool. A function may need to add to it: `-x`
     /// compiles to `0 - x`, and a bare `return` has to load unit. Adding those
     /// on demand keeps a pool free of constants no instruction mentions.
@@ -236,9 +265,16 @@ struct FnCompile<'a> {
 }
 
 impl<'a> FnCompile<'a> {
-    fn new(func: &'a HirFunc, consts: &'a mut Vec<Const>) -> Self {
+    fn new(
+        func: &'a HirFunc,
+        consts: &'a mut Vec<Const>,
+        types: &'a mut TypeSection,
+        type_table: &'a sic_types::Types,
+    ) -> Self {
         Self {
             func,
+            types,
+            type_table,
             consts,
             code: Vec::new(),
             spans: Vec::new(),
@@ -322,6 +358,24 @@ impl<'a> FnCompile<'a> {
         let at = self.code.len() as u32;
         self.emit(Inst::asbx(op, a, 0), span);
         self.fixups.push((at, target));
+    }
+
+    /// The type section index for a type, as a byte operand.
+    fn type_index(&mut self, ty: sic_core::TypeId) -> u8 {
+        let index = self.types.intern(ty, self.type_table);
+        match u8::try_from(index) {
+            Ok(index) => index,
+            Err(_) => {
+                self.errors.push(CompileError::new(
+                    "a module can name at most 256 types in an instruction",
+                ));
+                0
+            }
+        }
+    }
+
+    fn type_index_u32(&mut self, ty: sic_core::TypeId) -> u32 {
+        self.types.intern(ty, self.type_table)
     }
 
     fn reg(&mut self, local: sic_core::LocalId) -> u8 {
@@ -471,6 +525,55 @@ impl<'a> FnCompile<'a> {
             InstKind::Await { dst, task } => {
                 let (dst, task) = (self.reg(*dst), self.reg(*task));
                 self.emit(Inst::abc(Op::Await, dst, task, 0), span);
+            }
+            InstKind::MakeObject { dst, ty, fields } => {
+                let base = self.scratch(fields.len());
+                for (i, field) in fields.iter().enumerate() {
+                    let src = self.reg(*field);
+                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
+                }
+                let dst = self.reg(*dst);
+                let type_index = self.type_index(*ty);
+                self.emit(Inst::abc(Op::MakeObject, dst, type_index, base), span);
+            }
+            InstKind::GetField { dst, base, index } => {
+                let (dst, base) = (self.reg(*dst), self.reg(*base));
+                match u8::try_from(*index) {
+                    Ok(field) => self.emit(Inst::abc(Op::GetField, dst, base, field), span),
+                    Err(_) => self
+                        .errors
+                        .push(CompileError::new("a record can have at most 256 fields")),
+                }
+            }
+            InstKind::MakeList { dst, ty, elements } => {
+                let dst_reg = self.reg(*dst);
+                if elements.is_empty() {
+                    // An empty list has no elements to take a type from, so it
+                    // is a constant carrying its own.
+                    let type_index = self.type_index_u32(*ty);
+                    let konst = intern(self.consts, Const::EmptyList(type_index));
+                    self.emit(Inst::abx(Op::LoadConst, dst_reg, konst), span);
+                    return;
+                }
+                let base = self.scratch(elements.len());
+                for (i, element) in elements.iter().enumerate() {
+                    let src = self.reg(*element);
+                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
+                }
+                match u8::try_from(elements.len()) {
+                    Ok(count) => self.emit(Inst::abc(Op::MakeList, dst_reg, base, count), span),
+                    Err(_) => self.errors.push(CompileError::new(
+                        "a list literal can have at most 255 elements",
+                    )),
+                }
+            }
+            InstKind::GetIndex { dst, base, index } => {
+                let (dst, base, index) = (self.reg(*dst), self.reg(*base), self.reg(*index));
+                self.emit(Inst::abc(Op::GetIndex, dst, base, index), span);
+            }
+            InstKind::Len { dst, src } => {
+                let (dst, src) = (self.reg(*dst), self.reg(*src));
+                self.emit(Inst::abc(Op::Len, dst, src, 0), span);
             }
             InstKind::Log { .. } => {
                 self.errors.push(CompileError::new(

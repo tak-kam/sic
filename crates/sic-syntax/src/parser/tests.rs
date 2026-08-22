@@ -134,6 +134,49 @@ fn return_without_value() {
     assert!(out.contains("(return)"), "{out}");
 }
 
+// ---- types, structs and lists ----
+
+#[test]
+fn type_declarations() {
+    let out = ok("type Point {\n  x: Int,\n  y: Int,\n}\nfn main() { }");
+    assert!(out.contains("(type Point (x Int) (y Int))"), "{out}");
+}
+
+#[test]
+fn struct_literals() {
+    let out = ok("type Point { x: Int, y: Int }\nfn main() { let p = Point { x: 1, y: 2 }; }");
+    assert!(out.contains("(struct Point (x 1) (y 2))"), "{out}");
+}
+
+#[test]
+fn a_struct_literal_is_not_allowed_in_an_if_condition() {
+    // `if Point { .. }` would be ambiguous with the body, so the `{` starts the
+    // body and the condition is just a name.
+    let (m, diags) = parse("type Point { x: Int }\nfn f() { if Point { x: 1 } }");
+    assert!(!diags.is_empty(), "{m:?}");
+
+    // Parentheses make it unambiguous again.
+    ok("type Point { ok: Bool }\nfn f() { if (Point { ok: true }).ok { return; } }");
+}
+
+#[test]
+fn list_literals_and_indexing() {
+    assert_eq!(expr("[1, 2, 3]"), "(list 1 2 3)");
+    assert_eq!(expr("[]"), "(list)");
+    assert_eq!(expr("xs[0]"), "(index xs 0)");
+    // Indexing binds as tightly as a call.
+    assert_eq!(expr("xs[0] + 1"), "(+ (index xs 0) 1)");
+    assert_eq!(expr("f(xs)[1]"), "(index (call f xs) 1)");
+    assert_eq!(expr("a.b[2]"), "(index (. a b) 2)");
+}
+
+#[test]
+fn a_struct_literal_is_legal_inside_brackets_and_parentheses() {
+    // Inside a delimiter there is no ambiguity to avoid.
+    ok("type P { x: Int }\nfn f(p: P) { }\nfn main() { f(P { x: 1 }); }");
+    ok("type P { x: Int }\nfn main() { let xs = [P { x: 1 }]; }");
+}
+
 // ---- tasks and policies ----
 
 #[test]

@@ -28,6 +28,9 @@ struct Parser {
     pos: usize,
     next_id: u32,
     diags: Vec<Diagnostic>,
+    /// Non-zero while parsing somewhere a `{` would be read as the start of a
+    /// block rather than of a struct literal.
+    no_struct: u32,
 }
 
 impl Parser {
@@ -37,6 +40,7 @@ impl Parser {
             pos: 0,
             next_id: 0,
             diags: Vec::new(),
+            no_struct: 0,
         }
     }
 
@@ -173,12 +177,13 @@ impl Parser {
             match self.peek() {
                 TokenKind::Kw(Keyword::Fn) => items.push(Item::Fn(self.parse_fn())),
                 TokenKind::Kw(Keyword::Allow) => items.push(Item::Allow(self.parse_allow())),
+                TokenKind::Kw(Keyword::Type) => items.push(Item::Type(self.parse_type_decl())),
                 other => {
                     let span = self.span();
                     let found = other.describe();
                     self.error(
                         "E0202",
-                        "the top level holds function definitions and `allow` blocks",
+                        "the top level holds `fn`, `type` and `allow` declarations",
                         span,
                         format!("found {found}"),
                     );
@@ -202,6 +207,50 @@ impl Parser {
         while !self.at_eof() && !matches!(self.peek(), TokenKind::Kw(Keyword::Fn | Keyword::Allow))
         {
             self.bump();
+        }
+    }
+
+    /// ```text
+    /// type Point { x: Int, y: Int }
+    /// ```
+    fn parse_type_decl(&mut self) -> TypeDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `type`
+        let name = self.expect_ident("a type name");
+        let mut fields = Vec::new();
+        if self.expect(&TokenKind::LBrace, "to open a type body") {
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let before = self.pos;
+                fields.push(self.parse_field_decl());
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.pos == before {
+                    self.bump();
+                }
+            }
+            self.expect(&TokenKind::RBrace, "to close the type body");
+        }
+        TypeDecl {
+            id,
+            name,
+            fields,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    fn parse_field_decl(&mut self) -> FieldDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        let name = self.expect_ident("a field name");
+        self.expect(&TokenKind::Colon, "before a field type");
+        let ty = self.parse_type();
+        FieldDecl {
+            id,
+            name,
+            ty,
+            span: Span::new(start, self.prev_end()),
         }
     }
 
@@ -479,7 +528,9 @@ impl Parser {
         let id = self.id();
         let start = self.span().lo;
         self.bump(); // `if`
-        let cond = self.parse_expr();
+        // `if Point { .. }` would be ambiguous with the body that follows, so a
+        // struct literal is not allowed here. Parentheses make it legal again.
+        let cond = self.parse_condition();
         let then_block = self.parse_block();
         let else_branch = if self.eat(&TokenKind::Kw(Keyword::Else)) {
             if matches!(self.peek(), TokenKind::Kw(Keyword::If)) {

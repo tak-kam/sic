@@ -59,6 +59,19 @@ fn inst_str(kind: &InstKind) -> String {
             format!("%{} = spawn f{}({})", dst.0, func.0, locals(args))
         }
         InstKind::Await { dst, task } => format!("%{} = await %{}", dst.0, task.0),
+        InstKind::MakeObject { dst, fields, .. } => {
+            format!("%{} = object({})", dst.0, locals(fields))
+        }
+        InstKind::GetField { dst, base, index } => {
+            format!("%{} = field %{} .{index}", dst.0, base.0)
+        }
+        InstKind::MakeList { dst, elements, .. } => {
+            format!("%{} = list({})", dst.0, locals(elements))
+        }
+        InstKind::GetIndex { dst, base, index } => {
+            format!("%{} = index %{} %{}", dst.0, base.0, index.0)
+        }
+        InstKind::Len { dst, src } => format!("%{} = len %{}", dst.0, src.0),
         InstKind::Log { level, msg, .. } => format!("log {level:?} %{}", msg.0),
     }
 }

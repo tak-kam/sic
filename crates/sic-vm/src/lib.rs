@@ -76,6 +76,8 @@ pub enum FailKind {
     /// The instruction budget ran out.
     OutOfFuel,
     CallStackTooDeep,
+    /// A list index was outside the list.
+    IndexOutOfRange,
     /// A task was awaited whose result had already been taken.
     TaskAlreadyAwaited,
     /// The task being awaited failed.
@@ -100,6 +102,7 @@ impl FailKind {
             FailKind::Capability => "a capability call failed",
             FailKind::OutOfFuel => "ran out of fuel",
             FailKind::CallStackTooDeep => "call stack too deep",
+            FailKind::IndexOutOfRange => "the index is outside the list",
             FailKind::TaskAlreadyAwaited => "this task has already been awaited",
             FailKind::AwaitedTaskFailed => "the awaited task failed",
             FailKind::Deadlock => "every task is waiting for another task",
@@ -227,6 +230,7 @@ impl<'a> Vm<'a> {
             .iter()
             .map(|c| match c {
                 Const::Str(s) => Some(arena.alloc_str(s.clone())),
+                Const::EmptyList(_) => Some(arena.alloc_list(Vec::new())),
                 _ => None,
             })
             .collect();
@@ -455,6 +459,8 @@ impl<'a> Vm<'a> {
             tasks: self.tasks.iter().map(snapshot_task).collect(),
             str_consts: self.str_consts.iter().map(|h| h.map(|h| h.0)).collect(),
             strings: self.arena.strings().to_vec(),
+            lists: self.arena.lists().to_vec(),
+            objects: self.arena.objects().to_vec(),
         };
 
         let bytes = saved.encode();
@@ -523,7 +529,7 @@ impl<'a> Vm<'a> {
             tasks: saved.tasks.iter().map(restore_task).collect(),
             cursor: saved.cursor as usize,
             answering: Some(saved.answering as usize),
-            arena: Arena::from_strings(saved.strings),
+            arena: Arena::from_parts(saved.strings, saved.lists, saved.objects),
             str_consts: saved.str_consts.iter().map(|h| h.map(Handle)).collect(),
             journal,
             root_span: SpanId(saved.root_span),
@@ -785,6 +791,12 @@ impl<'a> Vm<'a> {
                             Some(h) => Value::Str(h),
                             None => die!(FailKind::Internal("missing string"), None, None),
                         },
+                        // A list cannot be modified, so one empty list per
+                        // constant is enough for the whole run.
+                        Const::EmptyList(_) => match self.str_consts[inst.bx() as usize] {
+                            Some(h) => Value::List(h),
+                            None => die!(FailKind::Internal("missing empty list"), None, None),
+                        },
                     };
                     self.set(index, base + a, value);
                 }
@@ -921,6 +933,76 @@ impl<'a> Vm<'a> {
                             return;
                         }
                     }
+                }
+                Op::MakeObject => {
+                    let field_count = self
+                        .program
+                        .types
+                        .get(b)
+                        .and_then(|t| t.fields())
+                        .map(<[u32]>::len)
+                        .unwrap_or(0);
+                    let fields: Vec<Value> = (0..field_count)
+                        .map(|i| self.get(index, base + c + i))
+                        .collect();
+                    let handle = self.arena.alloc_object(fields);
+                    self.set(index, base + a, Value::Object(handle));
+                }
+                Op::GetField => {
+                    let Value::Object(handle) = self.get(index, base + b) else {
+                        die!(
+                            FailKind::Internal("field access on a non-object"),
+                            None,
+                            None
+                        );
+                    };
+                    let Some(value) = self.arena.object(handle).get(c).cloned() else {
+                        die!(FailKind::Internal("field index out of range"), None, None);
+                    };
+                    self.set(index, base + a, value);
+                }
+                Op::MakeList => {
+                    let elements: Vec<Value> =
+                        (0..c).map(|i| self.get(index, base + b + i)).collect();
+                    let handle = self.arena.alloc_list(elements);
+                    self.set(index, base + a, Value::List(handle));
+                }
+                Op::GetIndex => {
+                    let Value::List(handle) = self.get(index, base + b) else {
+                        die!(FailKind::Internal("indexing a non-list"), None, None);
+                    };
+                    let Value::I64(position) = self.get(index, base + c) else {
+                        die!(FailKind::Internal("a non-integer index"), None, None);
+                    };
+                    let list = self.arena.list(handle);
+                    // There is no option type to return instead, and a silent
+                    // default would be worse than stopping.
+                    let Some(value) = usize::try_from(position)
+                        .ok()
+                        .and_then(|i| list.get(i))
+                        .cloned()
+                    else {
+                        die!(
+                            FailKind::IndexOutOfRange,
+                            None,
+                            Some(format!("index {position} of a list of {}", list.len()))
+                        );
+                    };
+                    self.set(index, base + a, value);
+                }
+                Op::Len => {
+                    let length = match self.get(index, base + b) {
+                        Value::List(handle) => self.arena.list(handle).len(),
+                        // Characters, not bytes: a length in bytes would be
+                        // about the encoding rather than the text.
+                        Value::Str(handle) => self.arena.str(handle).chars().count(),
+                        _ => die!(
+                            FailKind::Internal("len of neither a list nor a string"),
+                            None,
+                            None
+                        ),
+                    };
+                    self.set(index, base + a, Value::I64(length as i64));
                 }
                 Op::CallCap => {
                     let Some(decl) = self.program.caps.get(b) else {
@@ -1074,6 +1156,8 @@ impl<'a> Vm<'a> {
             Value::I64(v) => CapValue::I64(*v),
             Value::F64(v) => CapValue::F64(*v),
             Value::Str(h) => CapValue::Str(self.arena.str(*h).to_string()),
+            // A handle means nothing outside this arena, and a task means
+            // nothing outside this run.
             Value::Task(_) | Value::List(_) | Value::Object(_) => return None,
         })
     }

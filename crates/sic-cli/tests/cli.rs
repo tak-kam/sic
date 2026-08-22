@@ -831,6 +831,51 @@ fn a_policy_on_a_function_call_is_a_compile_error() {
     std::fs::remove_file(src).ok();
 }
 
+// ---- records and lists ----
+
+#[test]
+fn the_records_example_runs() {
+    let (stdout, stderr, code) = sic(&["run", &example("records.sic")]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    // 5 (a weight) + 2 (the list) + 9 ("disk full")
+    assert_eq!(stdout, "16\n");
+}
+
+#[test]
+fn a_record_value_prints_its_fields() {
+    let src = write_temp(
+        "record-print.sic",
+        "type P { x: Int, y: Int }\nfn main() -> P { return P { x: 1, y: 2 }; }\n",
+    );
+    let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "{1, 2}\n");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn an_index_outside_a_list_names_the_source() {
+    let src = write_temp(
+        "index-oob.sic",
+        "fn main() -> Int {\n    let xs = [1, 2];\n    return xs[5];\n}\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("outside the list"), "{stderr}");
+    assert!(stderr.contains(":3:12"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn a_type_containing_itself_does_not_compile() {
+    let src = write_temp("recursive.sic", "type Loop { next: Loop }\nfn main() { }\n");
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0340"), "{stderr}");
+    assert!(stderr.contains("finite size"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

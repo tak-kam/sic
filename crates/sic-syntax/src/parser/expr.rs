@@ -43,6 +43,23 @@ impl Parser {
         self.expr_bp(0)
     }
 
+    /// Parses the condition of an `if`, where a `{` starts the body rather than
+    /// a struct literal.
+    pub(super) fn parse_condition(&mut self) -> Expr {
+        self.no_struct += 1;
+        let expr = self.expr_bp(0);
+        self.no_struct -= 1;
+        expr
+    }
+
+    /// Parses inside a delimiter, where a struct literal is unambiguous again.
+    fn nested<T>(&mut self, parse: impl FnOnce(&mut Self) -> T) -> T {
+        let saved = std::mem::take(&mut self.no_struct);
+        let out = parse(self);
+        self.no_struct = saved;
+        out
+    }
+
     /// Stops and returns the subexpression built so far as soon as it meets an
     /// operator whose binding power is below `min_bp`.
     fn expr_bp(&mut self, min_bp: u8) -> Expr {
@@ -57,6 +74,10 @@ impl Parser {
                 }
                 TokenKind::Dot if POSTFIX_BP > min_bp => {
                     lhs = self.parse_field(lhs);
+                    continue;
+                }
+                TokenKind::LBracket if POSTFIX_BP > min_bp => {
+                    lhs = self.parse_index(lhs);
                     continue;
                 }
                 _ => {}
@@ -131,16 +152,45 @@ impl Parser {
             TokenKind::Kw(Keyword::Null) => self.literal(ExprKind::Null),
             TokenKind::Ident(name) => {
                 let span = self.bump().span;
+                let name = Ident { name, span };
+                if self.at(&TokenKind::LBrace) && self.no_struct == 0 {
+                    return self.parse_struct_literal(name);
+                }
                 let id = self.id();
                 Expr {
                     id,
-                    kind: ExprKind::Path(Ident { name, span }),
+                    kind: ExprKind::Path(name),
+                    span,
+                }
+            }
+            TokenKind::LBracket => {
+                self.bump();
+                let elements = self.nested(|p| {
+                    let mut elements = Vec::new();
+                    while !p.at(&TokenKind::RBracket) && !p.at_eof() {
+                        let before = p.pos;
+                        elements.push(p.expr_bp(0));
+                        if !p.eat(&TokenKind::Comma) {
+                            break;
+                        }
+                        if p.pos == before {
+                            p.bump();
+                        }
+                    }
+                    elements
+                });
+                self.expect(&TokenKind::RBracket, "to close a list");
+                let span = Span::new(start, self.prev_end());
+                let id = self.id();
+                Expr {
+                    id,
+                    kind: ExprKind::List { elements },
                     span,
                 }
             }
             TokenKind::LParen => {
                 self.bump();
-                let inner = self.expr_bp(0);
+                let inner = self.nested(|p| p.expr_bp(0));
                 self.expect(&TokenKind::RParen, "to close a parenthesized expression");
                 // The parentheses leave no trace in the AST; only the span grows.
                 Expr {
@@ -241,19 +291,74 @@ impl Parser {
 
     /// The arguments of a call, with the opening parenthesis already consumed.
     fn parse_args(&mut self) -> Vec<Expr> {
-        let mut args = Vec::new();
-        while !self.at(&TokenKind::RParen) && !self.at_eof() {
-            let before = self.pos;
-            args.push(self.expr_bp(0));
-            if !self.eat(&TokenKind::Comma) {
-                break;
+        let args = self.nested(|p| {
+            let mut args = Vec::new();
+            while !p.at(&TokenKind::RParen) && !p.at_eof() {
+                let before = p.pos;
+                args.push(p.expr_bp(0));
+                if !p.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if p.pos == before {
+                    p.bump();
+                }
             }
-            if self.pos == before {
-                self.bump();
-            }
-        }
+            args
+        });
         self.expect(&TokenKind::RParen, "after the argument list");
         args
+    }
+
+    /// `Point { x: 1, y: 2 }`, with the name already consumed.
+    fn parse_struct_literal(&mut self, name: Ident) -> Expr {
+        let start = name.span.lo;
+        self.bump(); // `{`
+        let fields = self.nested(|p| {
+            let mut fields = Vec::new();
+            while !p.at(&TokenKind::RBrace) && !p.at_eof() {
+                let before = p.pos;
+                let field_start = p.span().lo;
+                let field = p.expect_ident("a field name");
+                p.expect(&TokenKind::Colon, "after a field name");
+                let value = p.expr_bp(0);
+                fields.push(FieldInit {
+                    name: field,
+                    value,
+                    span: Span::new(field_start, p.prev_end()),
+                });
+                if !p.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if p.pos == before {
+                    p.bump();
+                }
+            }
+            fields
+        });
+        self.expect(&TokenKind::RBrace, "to close a struct literal");
+        let span = Span::new(start, self.prev_end());
+        let id = self.id();
+        Expr {
+            id,
+            kind: ExprKind::Struct { name, fields },
+            span,
+        }
+    }
+
+    fn parse_index(&mut self, base: Expr) -> Expr {
+        self.bump(); // `[`
+        let index = self.nested(|p| p.expr_bp(0));
+        self.expect(&TokenKind::RBracket, "to close an index");
+        let span = Span::new(base.span.lo, self.prev_end());
+        let id = self.id();
+        Expr {
+            id,
+            kind: ExprKind::Index {
+                base: Box::new(base),
+                index: Box::new(index),
+            },
+            span,
+        }
     }
 
     /// `retry N` and `timeout N`, in either order, each at most once.

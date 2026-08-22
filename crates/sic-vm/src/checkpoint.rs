@@ -58,6 +58,8 @@ pub struct Checkpoint {
     /// so cannot be rebuilt without duplicating them in the arena.
     pub str_consts: Vec<Option<u32>>,
     pub strings: Vec<String>,
+    pub lists: Vec<Vec<Value>>,
+    pub objects: Vec<Vec<Value>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +165,8 @@ impl Checkpoint {
         for s in &self.strings {
             w.str(s);
         }
+        write_value_lists(&mut w, &self.lists);
+        write_value_lists(&mut w, &self.objects);
         w.finish()
     }
 
@@ -236,6 +240,8 @@ impl Checkpoint {
         for _ in 0..string_count {
             strings.push(r.str()?);
         }
+        let lists = read_value_lists(&mut r)?;
+        let objects = read_value_lists(&mut r)?;
 
         r.expect_end("the checkpoint")?;
 
@@ -252,6 +258,8 @@ impl Checkpoint {
             tasks,
             str_consts,
             strings,
+            lists,
+            objects,
         };
         checkpoint.check_consistency()?;
         Ok(checkpoint)
@@ -286,7 +294,18 @@ impl Checkpoint {
             ));
         }
 
-        let strings = self.strings.len() as u32;
+        // A handle only means anything against its own store, so each kind is
+        // checked against the store it points into.
+        let stores = Stores {
+            strings: self.strings.len() as u32,
+            lists: self.lists.len() as u32,
+            objects: self.objects.len() as u32,
+        };
+        for values in self.lists.iter().chain(self.objects.iter()) {
+            for value in values {
+                check_value(value, stores, task_count)?;
+            }
+        }
         for (index, task) in self.tasks.iter().enumerate() {
             let regs = task.regs.len() as u32;
             if let TaskStateSnapshot::WaitingCap(pending) = &task.state {
@@ -332,15 +351,17 @@ impl Checkpoint {
                 }
             }
             for value in &task.regs {
-                check_value(value, strings, task_count)?;
+                check_value(value, stores, task_count)?;
             }
             if let TaskStateSnapshot::Finished(value) = &task.state {
-                check_value(value, strings, task_count)?;
+                check_value(value, stores, task_count)?;
             }
         }
 
         for handle in self.str_consts.iter().flatten() {
-            if *handle >= strings {
+            // A constant handle is a string or an empty list; both stores have
+            // to be able to hold it.
+            if *handle >= stores.strings.max(stores.lists) {
                 return Err(CheckpointError::new(
                     "a string constant points outside the saved arena",
                 ));
@@ -357,23 +378,56 @@ impl Checkpoint {
     }
 }
 
-fn check_value(value: &Value, strings: u32, tasks: u32) -> Result<()> {
-    match value {
-        Value::Str(h) | Value::List(h) | Value::Object(h) => {
-            if h.0 >= strings {
-                return Err(CheckpointError::new(
-                    "a saved value points outside the saved arena",
-                ));
-            }
-        }
+/// How big each of the arena's stores is.
+#[derive(Debug, Clone, Copy)]
+struct Stores {
+    strings: u32,
+    lists: u32,
+    objects: u32,
+}
+
+fn check_value(value: &Value, stores: Stores, tasks: u32) -> Result<()> {
+    let out_of_range = match value {
+        Value::Str(h) => h.0 >= stores.strings,
+        Value::List(h) => h.0 >= stores.lists,
+        Value::Object(h) => h.0 >= stores.objects,
         Value::Task(id) if *id >= tasks => {
             return Err(CheckpointError::new(
                 "a saved value names a task that does not exist",
             ));
         }
-        _ => {}
+        _ => false,
+    };
+    if out_of_range {
+        return Err(CheckpointError::new(
+            "a saved value points outside the saved arena",
+        ));
     }
     Ok(())
+}
+
+fn write_value_lists(w: &mut Writer, values: &[Vec<Value>]) {
+    w.u32(values.len() as u32);
+    for group in values {
+        w.u32(group.len() as u32);
+        for value in group {
+            write_value(w, value);
+        }
+    }
+}
+
+fn read_value_lists(r: &mut Reader<'_>) -> Result<Vec<Vec<Value>>> {
+    let count = r.count(4)?;
+    let mut out = Vec::with_capacity(count);
+    for _ in 0..count {
+        let len = r.count(1)?;
+        let mut group = Vec::with_capacity(len);
+        for _ in 0..len {
+            group.push(read_value(r)?);
+        }
+        out.push(group);
+    }
+    Ok(out)
 }
 
 fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {

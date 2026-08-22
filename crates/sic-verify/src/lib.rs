@@ -131,12 +131,17 @@ impl<'a> Verifier<'a> {
             );
         }
         for (i, desc) in p.types.iter().enumerate() {
-            if let TypeDesc::Task(inner) = desc {
-                if *inner as usize >= p.types.len() {
+            let referenced: Vec<u32> = match desc {
+                TypeDesc::Task(inner) | TypeDesc::List(inner) => vec![*inner],
+                TypeDesc::Object { fields, .. } => fields.clone(),
+                _ => Vec::new(),
+            };
+            for inner in referenced {
+                if inner as usize >= p.types.len() {
                     self.error(
                         None,
                         None,
-                        format!("type {i} is a task producing type {inner}, which is out of range"),
+                        format!("type {i} refers to type {inner}, which is out of range"),
                     );
                 }
             }
@@ -421,9 +426,72 @@ impl<'a> Verifier<'a> {
                         ok = false;
                     }
                 }
-                Op::Await => {
+                Op::Await | Op::Len => {
                     ok &= check_reg(self, inst.a(), "destination");
-                    ok &= check_reg(self, inst.b(), "task");
+                    ok &= check_reg(self, inst.b(), "operand");
+                }
+                Op::MakeObject => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    let Some(fields) = p.types.get(inst.b() as usize).and_then(|t| t.fields())
+                    else {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!("type t{} is not a record", inst.b()),
+                        );
+                        ok = false;
+                        continue;
+                    };
+                    let last = inst.c() as usize + fields.len();
+                    if last > func.reg_count as usize {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!(
+                                "fields r{}..r{} do not fit in reg_count {}",
+                                inst.c(),
+                                last,
+                                func.reg_count
+                            ),
+                        );
+                        ok = false;
+                    }
+                }
+                Op::GetField => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    ok &= check_reg(self, inst.b(), "record");
+                }
+                Op::MakeList => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    let last = inst.b() as usize + inst.c() as usize;
+                    if last > func.reg_count as usize {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!(
+                                "elements r{}..r{} do not fit in reg_count {}",
+                                inst.b(),
+                                last,
+                                func.reg_count
+                            ),
+                        );
+                        ok = false;
+                    }
+                    if inst.c() == 0 {
+                        // An empty list is a constant, because it has no
+                        // element to take a type from.
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            "MAKE_LIST needs at least one element",
+                        );
+                        ok = false;
+                    }
+                }
+                Op::GetIndex => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    ok &= check_reg(self, inst.b(), "list");
+                    ok &= check_reg(self, inst.c(), "index");
                 }
                 Op::Return | Op::Fail => ok &= check_reg(self, inst.a(), "operand"),
                 Op::Halt => {}
@@ -487,10 +555,30 @@ impl<'a> Verifier<'a> {
 
             match op {
                 Op::LoadConst => {
-                    // A constant is always a primitive, so its tag is its index.
-                    let desc = p.consts[inst.bx() as usize].type_desc();
-                    next[inst.a() as usize] =
-                        Abst::Val(desc.primitive_index().expect("constants are primitive"));
+                    let konst = &p.consts[inst.bx() as usize];
+                    let ty = match konst.list_type() {
+                        // An empty list carries the type it is empty of.
+                        Some(index) => {
+                            if index as usize >= p.types.len() {
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!(
+                                        "constant k{} names type {index}, which is out of range",
+                                        inst.bx()
+                                    ),
+                                );
+                                UNIT
+                            } else {
+                                index
+                            }
+                        }
+                        None => konst
+                            .type_desc()
+                            .primitive_index()
+                            .expect("every other constant is primitive"),
+                    };
+                    next[inst.a() as usize] = Abst::Val(ty);
                     successors.push(index + 1);
                 }
                 Op::Move => {
@@ -608,6 +696,125 @@ impl<'a> Verifier<'a> {
                     next[inst.a() as usize] = Abst::Val(cap.ret_type);
                     successors.push(index + 1);
                 }
+                Op::MakeObject => {
+                    let fields = p.types[inst.b() as usize]
+                        .fields()
+                        .expect("checked in the structure pass")
+                        .to_vec();
+                    for (i, want) in fields.iter().enumerate() {
+                        let reg = inst.c() + i as u8;
+                        self.read(&name, pc, &state, reg, Some(*want));
+                    }
+                    next[inst.a() as usize] = Abst::Val(inst.b() as u32);
+                    successors.push(index + 1);
+                }
+                Op::GetField => {
+                    let record = self.read(&name, pc, &state, inst.b(), None);
+                    let produced = match record {
+                        Abst::Val(ty) => match p.types.get(ty as usize).and_then(|t| t.fields()) {
+                            Some(fields) => match fields.get(inst.c() as usize) {
+                                Some(field) => Some(*field),
+                                None => {
+                                    self.error(
+                                        Some(&name),
+                                        Some(pc),
+                                        format!("{} has no field {}", p.type_name(ty), inst.c()),
+                                    );
+                                    None
+                                }
+                            },
+                            None => {
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!(
+                                        "r{} holds {}, which has no fields",
+                                        inst.b(),
+                                        p.type_name(ty)
+                                    ),
+                                );
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
+                    next[inst.a() as usize] = match produced {
+                        Some(ty) => Abst::Val(ty),
+                        None => Abst::Top,
+                    };
+                    successors.push(index + 1);
+                }
+                Op::MakeList => {
+                    // Every element has the same type, and the section has to
+                    // hold the list type so `GET_INDEX` can be checked.
+                    let first = self.read(&name, pc, &state, inst.b(), None);
+                    let element = match first {
+                        Abst::Val(ty) => Some(ty),
+                        _ => None,
+                    };
+                    for i in 1..inst.c() {
+                        self.read(&name, pc, &state, inst.b() + i, element);
+                    }
+                    next[inst.a() as usize] = match element
+                        .and_then(|el| p.types.iter().position(|d| *d == TypeDesc::List(el)))
+                    {
+                        Some(i) => Abst::Val(i as u32),
+                        None => {
+                            if let Some(el) = element {
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!("the type section has no `List<{}>`", p.type_name(el)),
+                                );
+                            }
+                            Abst::Top
+                        }
+                    };
+                    successors.push(index + 1);
+                }
+                Op::GetIndex => {
+                    let list = self.read(&name, pc, &state, inst.b(), None);
+                    self.read(&name, pc, &state, inst.c(), Some(INT));
+                    let produced = match list {
+                        Abst::Val(ty) => match p.types.get(ty as usize) {
+                            Some(TypeDesc::List(element)) => Some(*element),
+                            _ => {
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!(
+                                        "r{} holds {}, which cannot be indexed",
+                                        inst.b(),
+                                        p.type_name(ty)
+                                    ),
+                                );
+                                None
+                            }
+                        },
+                        _ => None,
+                    };
+                    next[inst.a() as usize] = match produced {
+                        Some(ty) => Abst::Val(ty),
+                        None => Abst::Top,
+                    };
+                    successors.push(index + 1);
+                }
+                Op::Len => {
+                    let operand = self.read(&name, pc, &state, inst.b(), None);
+                    if let Abst::Val(ty) = operand {
+                        let ok = ty == STR
+                            || matches!(p.types.get(ty as usize), Some(TypeDesc::List(_)));
+                        if !ok {
+                            self.error(
+                                Some(&name),
+                                Some(pc),
+                                format!("`len` cannot be applied to {}", p.type_name(ty)),
+                            );
+                        }
+                    }
+                    next[inst.a() as usize] = Abst::Val(INT);
+                    successors.push(index + 1);
+                }
                 Op::Return => {
                     let want = func.ret_type;
                     self.read(&name, pc, &state, inst.a(), Some(want));
@@ -706,6 +913,7 @@ enum Abst {
 const UNIT: u32 = 0;
 const BOOL: u32 = 1;
 const INT: u32 = 2;
+const STR: u32 = 4;
 
 type State = Vec<Abst>;
 

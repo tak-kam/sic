@@ -16,6 +16,7 @@ pub fn dump(m: &Module) -> String {
         match item {
             Item::Fn(f) => p.fn_decl(f),
             Item::Allow(a) => p.allow_decl(a),
+            Item::Type(t) => p.type_decl(t),
         }
     }
     p.depth -= 1;
@@ -77,6 +78,15 @@ impl Printer {
         }
         self.depth -= 1;
         self.push_close();
+    }
+
+    fn type_decl(&mut self, t: &TypeDecl) {
+        let fields: Vec<String> = t
+            .fields
+            .iter()
+            .map(|f| format!("({} {})", f.name.name, type_str(&f.ty)))
+            .collect();
+        self.line(&format!("(type {} {})", t.name.name, fields.join(" ")));
     }
 
     fn block(&mut self, b: &Block) {
@@ -206,6 +216,20 @@ pub fn expr_str(e: &Expr) -> String {
             format!("(spawn {} {})", expr_str(callee), a.join(" ")).replace(" )", ")")
         }
         ExprKind::Await { task } => format!("(await {})", expr_str(task)),
+        ExprKind::Struct { name, fields } => {
+            let fs: Vec<String> = fields
+                .iter()
+                .map(|f| format!("({} {})", f.name.name, expr_str(&f.value)))
+                .collect();
+            format!("(struct {} {})", name.name, fs.join(" ")).replace(" )", ")")
+        }
+        ExprKind::List { elements } => {
+            let es: Vec<String> = elements.iter().map(expr_str).collect();
+            format!("(list {})", es.join(" ")).replace("(list )", "(list)")
+        }
+        ExprKind::Index { base, index } => {
+            format!("(index {} {})", expr_str(base), expr_str(index))
+        }
         ExprKind::Field { base, name } => format!("(. {} {})", expr_str(base), name.name),
         ExprKind::Error => "<error>".into(),
     }

@@ -42,6 +42,7 @@ impl Program {
     pub fn type_name(&self, index: u32) -> String {
         match self.types.get(index as usize) {
             Some(TypeDesc::Task(inner)) => format!("Task<{}>", self.type_name(*inner)),
+            Some(TypeDesc::List(inner)) => format!("List<{}>", self.type_name(*inner)),
             Some(other) => other.short_name().to_string(),
             None => "?".to_string(),
         }
@@ -68,6 +69,12 @@ pub enum Const {
     I64(i64),
     F64(f64),
     Str(String),
+    /// An empty list of the type at this index.
+    ///
+    /// `MAKE_LIST` takes its element type from the elements, which an empty
+    /// list does not have. It is a constant rather than an instruction because
+    /// a list cannot be modified, so one empty list can be shared.
+    EmptyList(u32),
 }
 
 impl Const {
@@ -78,6 +85,7 @@ impl Const {
             Const::I64(_) => 2,
             Const::F64(_) => 3,
             Const::Str(_) => 4,
+            Const::EmptyList(_) => 5,
         }
     }
 
@@ -89,6 +97,17 @@ impl Const {
             Const::I64(_) => TypeDesc::Int,
             Const::F64(_) => TypeDesc::Float,
             Const::Str(_) => TypeDesc::Str,
+            // The list's own type index is what it carries; the caller uses
+            // `Const::list_type` for it.
+            Const::EmptyList(_) => TypeDesc::Unit,
+        }
+    }
+
+    /// The type index of an empty list constant.
+    pub fn list_type(&self) -> Option<u32> {
+        match self {
+            Const::EmptyList(index) => Some(*index),
+            _ => None,
         }
     }
 }
@@ -100,7 +119,7 @@ impl Const {
 /// system. `Task` is the exception, because the verifier has to know what
 /// `AWAIT` produces, and that is why the type section holds descriptors rather
 /// than single bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeDesc {
     Unit,
     Bool,
@@ -109,6 +128,16 @@ pub enum TypeDesc {
     Str,
     /// A task, and the index of the type it produces.
     Task(u32),
+    /// A list, and the index of the type it holds.
+    List(u32),
+    /// A record: its name, for diagnostics, and the type of each field in
+    /// order. Fields are addressed by position, because the compiler knows the
+    /// layout and a verifier comparing names would be doing the type checker's
+    /// work again.
+    Object {
+        name: String,
+        fields: Vec<u32>,
+    },
 }
 
 impl TypeDesc {
@@ -122,7 +151,11 @@ impl TypeDesc {
         TypeDesc::Str,
     ];
 
-    pub fn tag(self) -> u8 {
+    pub fn primitives() -> Vec<TypeDesc> {
+        Self::PRIMITIVES.to_vec()
+    }
+
+    pub fn tag(&self) -> u8 {
         match self {
             TypeDesc::Unit => 0,
             TypeDesc::Bool => 1,
@@ -130,18 +163,20 @@ impl TypeDesc {
             TypeDesc::Float => 3,
             TypeDesc::Str => 4,
             TypeDesc::Task(_) => 5,
+            TypeDesc::List(_) => 6,
+            TypeDesc::Object { .. } => 7,
         }
     }
 
     /// The index a primitive occupies in the type section.
-    pub fn primitive_index(self) -> Option<u32> {
+    pub fn primitive_index(&self) -> Option<u32> {
         match self {
-            TypeDesc::Task(_) => None,
+            TypeDesc::Task(_) | TypeDesc::List(_) | TypeDesc::Object { .. } => None,
             other => Some(other.tag() as u32),
         }
     }
 
-    pub fn short_name(self) -> &'static str {
+    pub fn short_name(&self) -> &str {
         match self {
             TypeDesc::Unit => "Unit",
             TypeDesc::Bool => "Bool",
@@ -149,6 +184,16 @@ impl TypeDesc {
             TypeDesc::Float => "Float",
             TypeDesc::Str => "String",
             TypeDesc::Task(_) => "Task",
+            TypeDesc::List(_) => "List",
+            TypeDesc::Object { name, .. } => name,
+        }
+    }
+
+    /// The fields of a record, if this is one.
+    pub fn fields(&self) -> Option<&[u32]> {
+        match self {
+            TypeDesc::Object { fields, .. } => Some(fields),
+            _ => None,
         }
     }
 }

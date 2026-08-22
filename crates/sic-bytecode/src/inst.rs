@@ -44,9 +44,14 @@ pub enum Op {
     Spawn = 19,
     /// Waits for a task and takes its result.
     Await = 20,
-    Return = 21,
-    Fail = 22,
-    Halt = 23,
+    MakeObject = 21,
+    GetField = 22,
+    MakeList = 23,
+    GetIndex = 24,
+    Len = 25,
+    Return = 26,
+    Fail = 27,
+    Halt = 28,
 }
 
 impl Op {
@@ -77,9 +82,14 @@ impl Op {
             18 => CallCap,
             19 => Spawn,
             20 => Await,
-            21 => Return,
-            22 => Fail,
-            23 => Halt,
+            21 => MakeObject,
+            22 => GetField,
+            23 => MakeList,
+            24 => GetIndex,
+            25 => Len,
+            26 => Return,
+            27 => Fail,
+            28 => Halt,
             _ => return None,
         })
     }
@@ -108,6 +118,11 @@ impl Op {
             CallCap => "CALL_CAP",
             Spawn => "SPAWN",
             Await => "AWAIT",
+            MakeObject => "MAKE_OBJECT",
+            GetField => "GET_FIELD",
+            MakeList => "MAKE_LIST",
+            GetIndex => "GET_INDEX",
+            Len => "LEN",
             Return => "RETURN",
             Fail => "FAIL",
             Halt => "HALT",

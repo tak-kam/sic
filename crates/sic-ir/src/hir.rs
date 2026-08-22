@@ -86,6 +86,33 @@ pub enum InstKind {
         func: FuncId,
         args: Vec<LocalId>,
     },
+    /// Builds a record of type `ty` from its fields, in declaration order.
+    MakeObject {
+        dst: LocalId,
+        ty: TypeId,
+        fields: Vec<LocalId>,
+    },
+    /// Reads the field at `index`, which the type checker resolved from a name.
+    GetField {
+        dst: LocalId,
+        base: LocalId,
+        index: u32,
+    },
+    MakeList {
+        dst: LocalId,
+        ty: TypeId,
+        elements: Vec<LocalId>,
+    },
+    GetIndex {
+        dst: LocalId,
+        base: LocalId,
+        index: LocalId,
+    },
+    /// The length of a list or a string.
+    Len {
+        dst: LocalId,
+        src: LocalId,
+    },
 
     // ---- phase 3 and later ----
     // Defined here so the shape of the IR is settled, never generated in v0.1.
