@@ -1,0 +1,11 @@
+[package]
+name = "sic-types"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sic-core = { path = "../sic-core" }
+sic-syntax = { path = "../sic-syntax" }
+[lints]
+workspace = true

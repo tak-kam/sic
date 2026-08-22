@@ -3,11 +3,34 @@
 version = 4
 
 [[package]]
-name = "sic-cli"
+name = "sic-bytecode"
 version = "0.1.0"
 dependencies = [
  "sic-core",
+]
+
+[[package]]
+name = "sic-cli"
+version = "0.1.0"
+dependencies = [
+ "sic-bytecode",
+ "sic-compile",
+ "sic-core",
+ "sic-ir",
  "sic-syntax",
+ "sic-types",
+ "sic-verify",
+ "sic-vm",
+]
+
+[[package]]
+name = "sic-compile"
+version = "0.1.0"
+dependencies = [
+ "sic-bytecode",
+ "sic-core",
+ "sic-ir",
+ "sic-types",
 ]
 
 [[package]]
@@ -15,8 +38,41 @@ name = "sic-core"
 version = "0.1.0"
 
 [[package]]
+name = "sic-ir"
+version = "0.1.0"
+dependencies = [
+ "sic-core",
+ "sic-syntax",
+ "sic-types",
+]
+
+[[package]]
 name = "sic-syntax"
 version = "0.1.0"
 dependencies = [
+ "sic-core",
+]
+
+[[package]]
+name = "sic-types"
+version = "0.1.0"
+dependencies = [
+ "sic-core",
+ "sic-syntax",
+]
+
+[[package]]
+name = "sic-verify"
+version = "0.1.0"
+dependencies = [
+ "sic-bytecode",
+ "sic-core",
+]
+
+[[package]]
+name = "sic-vm"
+version = "0.1.0"
+dependencies = [
+ "sic-bytecode",
  "sic-core",
 ]

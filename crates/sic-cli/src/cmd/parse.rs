@@ -4,14 +4,14 @@ use std::process::ExitCode;
 
 use sic_syntax::print::dump;
 
-use super::{read_source, report};
+use super::{EXIT_USAGE, read_source, report};
 
 pub fn run(path: &str) -> ExitCode {
     let file = match read_source(path) {
         Ok(f) => f,
         Err(msg) => {
             eprintln!("error: {msg}");
-            return ExitCode::from(2);
+            return ExitCode::from(EXIT_USAGE);
         }
     };
 

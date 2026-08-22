@@ -1,0 +1,13 @@
+[package]
+name = "sic-compile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sic-core = { path = "../sic-core" }
+sic-ir = { path = "../sic-ir" }
+sic-types = { path = "../sic-types" }
+sic-bytecode = { path = "../sic-bytecode" }
+[lints]
+workspace = true

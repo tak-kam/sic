@@ -1,0 +1,351 @@
+use sic_bytecode::inst::{Inst, Op};
+use sic_bytecode::program::*;
+
+use super::*;
+
+/// One hand-written function: name, parameter types, return type, register
+/// count, and its instructions.
+type FuncSpec<'a> = (&'a str, &'a [TypeTag], TypeTag, u8, Vec<Inst>);
+
+/// Builds a program from hand-written functions.
+///
+/// The type section lists tags in tag order, so a `TypeTag` is its own index.
+fn program(funcs: Vec<FuncSpec<'_>>, consts: Vec<Const>) -> Program {
+    let mut p = Program {
+        consts,
+        types: vec![
+            TypeTag::Unit,
+            TypeTag::Bool,
+            TypeTag::Int,
+            TypeTag::Float,
+            TypeTag::Str,
+        ],
+        ..Program::default()
+    };
+    for (name, params, ret, reg_count, code) in funcs {
+        let code_off = p.code.len() as u32;
+        p.code.extend(code);
+        p.funcs.push(FuncDef {
+            name: name.into(),
+            params: params.iter().map(|t| *t as u32).collect(),
+            reg_count,
+            ret_type: ret as u32,
+            code_off,
+            code_len: p.code.len() as u32 - code_off,
+        });
+    }
+    p
+}
+
+/// Runs the first function and returns its result, asserting it finished.
+fn run(p: &Program, args: &[Value]) -> Value {
+    let mut vm = Vm::new(p, DEFAULT_FUEL);
+    match vm.run(0, args) {
+        Status::Finished(v) => v,
+        other => panic!("expected a result, got {other:?}"),
+    }
+}
+
+fn fail_kind(p: &Program, args: &[Value]) -> FailKind {
+    let mut vm = Vm::new(p, DEFAULT_FUEL);
+    match vm.run(0, args) {
+        Status::Failed(info) => info.kind,
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn returns_a_constant() {
+    let p = program(
+        vec![(
+            "main",
+            &[],
+            TypeTag::Int,
+            1,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abc(Op::Return, 0, 0, 0),
+            ],
+        )],
+        vec![Const::I64(30)],
+    );
+    assert_eq!(run(&p, &[]), Value::I64(30));
+}
+
+#[test]
+fn arithmetic() {
+    // (a + b) * a
+    let p = program(
+        vec![(
+            "f",
+            &[TypeTag::Int, TypeTag::Int],
+            TypeTag::Int,
+            3,
+            vec![
+                Inst::abc(Op::AddI64, 2, 0, 1),
+                Inst::abc(Op::MulI64, 2, 2, 0),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![],
+    );
+    assert_eq!(run(&p, &[Value::I64(3), Value::I64(4)]), Value::I64(21));
+}
+
+#[test]
+fn overflow_and_division_by_zero_fail_rather_than_wrap() {
+    let add = program(
+        vec![(
+            "f",
+            &[TypeTag::Int, TypeTag::Int],
+            TypeTag::Int,
+            3,
+            vec![
+                Inst::abc(Op::AddI64, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![],
+    );
+    assert_eq!(
+        fail_kind(&add, &[Value::I64(i64::MAX), Value::I64(1)]),
+        FailKind::Overflow
+    );
+
+    let div = program(
+        vec![(
+            "f",
+            &[TypeTag::Int, TypeTag::Int],
+            TypeTag::Int,
+            3,
+            vec![
+                Inst::abc(Op::DivI64, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![],
+    );
+    assert_eq!(
+        fail_kind(&div, &[Value::I64(1), Value::I64(0)]),
+        FailKind::DivisionByZero
+    );
+    // i64::MIN / -1 has no representable result either.
+    assert_eq!(
+        fail_kind(&div, &[Value::I64(i64::MIN), Value::I64(-1)]),
+        FailKind::Overflow
+    );
+}
+
+#[test]
+fn comparison_and_branching() {
+    // if a < b { return 1 } else { return 0 }
+    let p = program(
+        vec![(
+            "f",
+            &[TypeTag::Int, TypeTag::Int],
+            TypeTag::Int,
+            3,
+            vec![
+                Inst::abc(Op::Lt, 2, 0, 1),
+                Inst::asbx(Op::JumpIfNot, 2, 2),
+                Inst::abx(Op::LoadConst, 2, 0),
+                Inst::abc(Op::Return, 2, 0, 0),
+                Inst::abx(Op::LoadConst, 2, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![Const::I64(1), Const::I64(0)],
+    );
+    assert_eq!(run(&p, &[Value::I64(1), Value::I64(2)]), Value::I64(1));
+    assert_eq!(run(&p, &[Value::I64(2), Value::I64(2)]), Value::I64(0));
+}
+
+#[test]
+fn a_backward_jump_loops() {
+    // sum = 0; while n > 0 { sum += n; n -= 1 }  return sum
+    let p = program(
+        vec![(
+            "f",
+            &[TypeTag::Int],
+            TypeTag::Int,
+            4,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0),  // sum = 0
+                Inst::abx(Op::LoadConst, 2, 1),  // one = 1
+                Inst::abx(Op::LoadConst, 3, 0),  // zero = 0
+                Inst::abc(Op::Gt, 3, 0, 3),      // n > 0
+                Inst::asbx(Op::JumpIfNot, 3, 4), // exit
+                Inst::abc(Op::AddI64, 1, 1, 0),  // sum += n
+                Inst::abc(Op::SubI64, 0, 0, 2),  // n -= 1
+                Inst::abx(Op::LoadConst, 3, 0),  // zero again
+                Inst::asbx(Op::Jump, 0, -6),     // back to the comparison
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::I64(0), Const::I64(1)],
+    );
+    assert_eq!(run(&p, &[Value::I64(4)]), Value::I64(10));
+    assert_eq!(run(&p, &[Value::I64(0)]), Value::I64(0));
+}
+
+#[test]
+fn calls_pass_arguments_and_return_values() {
+    // main() { return add(2, 3) }   add(a, b) { return a + b }
+    let p = program(
+        vec![
+            (
+                "main",
+                &[],
+                TypeTag::Int,
+                4,
+                vec![
+                    Inst::abx(Op::LoadConst, 2, 0),
+                    Inst::abx(Op::LoadConst, 3, 1),
+                    Inst::abc(Op::Call, 0, 1, 2),
+                    Inst::abc(Op::Return, 0, 0, 0),
+                ],
+            ),
+            (
+                "add",
+                &[TypeTag::Int, TypeTag::Int],
+                TypeTag::Int,
+                3,
+                vec![
+                    Inst::abc(Op::AddI64, 2, 0, 1),
+                    Inst::abc(Op::Return, 2, 0, 0),
+                ],
+            ),
+        ],
+        vec![Const::I64(2), Const::I64(3)],
+    );
+    assert_eq!(run(&p, &[]), Value::I64(5));
+}
+
+#[test]
+fn recursion_unwinds_correctly() {
+    // countdown(n) { if n == 0 { return 0 } return countdown(n - 1) }
+    let p = program(
+        vec![(
+            "countdown",
+            &[TypeTag::Int],
+            TypeTag::Int,
+            4,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0), // zero
+                Inst::abc(Op::Eq, 2, 0, 1),
+                Inst::asbx(Op::JumpIfNot, 2, 1),
+                Inst::abc(Op::Return, 1, 0, 0), // return 0
+                Inst::abx(Op::LoadConst, 2, 1), // one
+                Inst::abc(Op::SubI64, 3, 0, 2), // n - 1
+                Inst::abc(Op::Call, 1, 0, 3),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::I64(0), Const::I64(1)],
+    );
+    assert_eq!(run(&p, &[Value::I64(100)]), Value::I64(0));
+    // Deep enough to hit the frame limit rather than the host stack.
+    assert_eq!(
+        fail_kind(&p, &[Value::I64(100_000)]),
+        FailKind::CallStackTooDeep
+    );
+}
+
+#[test]
+fn fuel_runs_out_on_an_endless_loop() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeTag::Unit,
+            1,
+            vec![Inst::asbx(Op::Jump, 0, -1)],
+        )],
+        vec![],
+    );
+    let mut vm = Vm::new(&p, 1000);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::OutOfFuel),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+    assert_eq!(vm.fuel(), 0);
+}
+
+#[test]
+fn fail_reports_its_value_and_position() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeTag::Unit,
+            1,
+            vec![Inst::abx(Op::LoadConst, 0, 0), Inst::abc(Op::Fail, 0, 0, 0)],
+        )],
+        vec![Const::Str("boom".into())],
+    );
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::Explicit);
+            assert_eq!(info.func, "f");
+            assert_eq!(info.pc, 1);
+            assert_eq!(vm.display(&info.value.unwrap()), "\"boom\"");
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn strings_compare_by_content() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeTag::Bool,
+            3,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abx(Op::LoadConst, 1, 1),
+                Inst::abc(Op::Eq, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        // Two separate constants that happen to hold the same text.
+        vec![Const::Str("same".into()), Const::Str("same".into())],
+    );
+    assert_eq!(run(&p, &[]), Value::Bool(true));
+}
+
+#[test]
+fn halt_ends_the_run() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeTag::Unit,
+            1,
+            vec![Inst::abc(Op::Halt, 0, 0, 0)],
+        )],
+        vec![],
+    );
+    assert_eq!(run(&p, &[]), Value::Unit);
+}
+
+#[test]
+fn unverified_bytecode_fails_instead_of_panicking() {
+    // A constant index nothing checked: the VM must not index out of bounds.
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeTag::Int,
+            1,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 99),
+                Inst::abc(Op::Return, 0, 0, 0),
+            ],
+        )],
+        vec![],
+    );
+    assert!(matches!(fail_kind(&p, &[]), FailKind::Internal(_)));
+}

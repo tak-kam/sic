@@ -14,22 +14,45 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 1 (syntax)
+## Status: phase 2 (the whole pipeline runs)
 
 ```text
-Source -> Lexer -> Parser -> AST     <- we are here
-       -> Type Checker -> IR -> Bytecode -> Verifier -> VM
+Source -> Lexer -> Parser -> AST -> Type Checker -> IR
+       -> Bytecode -> Verifier -> VM
 ```
 
 ```console
-$ sic parse examples/milestone.sic
-(module
-  (fn main
-    (block
-      (let x 10)
-      (let y (+ x 20))
-      (return y))))
+$ sic run examples/milestone.sic
+30
 ```
+
+Bytecode can also be written, checked and read on its own:
+
+```console
+$ sic compile examples/factorial.sic -o factorial.sicb
+wrote factorial.sicb (426 bytes)
+
+$ sic verify factorial.sicb
+ok: 2 function(s) verified
+required capabilities:
+  (none)
+
+$ sic disasm factorial.sicb
+...
+  0000  LOAD_CONST  r1, k0  ; 1  ; 5:13
+  0001  LE          r2, r0, r1  ; 5:8
+  0002  JUMP_IF_NOT r2, +2  ; -> 0005  ; 5:8
+```
+
+`sic verify` reports what a module is allowed to do before anything runs, which
+is the foundation the capability model of phase 3 builds on. Nothing can declare
+a capability yet, so the answer is always `(none)`.
+
+Every phase is verified: `sic run` compiles, verifies, and only then executes.
+The VM never runs bytecode that has not passed the verifier, including bytecode
+this process just produced.
+
+Other commands: `sic parse` (AST), `sic hir` (high-level IR).
 
 See [docs/design/v0.1.md](docs/design/v0.1.md) for the design.
 
@@ -57,12 +80,18 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 |-------|------|
 | `sic-core` | `Span`, `SourceFile`, `Diagnostic`, shared ID newtypes |
 | `sic-syntax` | lexer, AST, parser (recursive descent; Pratt for expressions) |
+| `sic-types` | interned types, type checker, name resolution |
+| `sic-ir` | high-level IR, where workflow semantics still exist |
+| `sic-bytecode` | instruction set, `.sicb` format, disassembler |
+| `sic-compile` | HIR to bytecode |
+| `sic-verify` | the bytecode verifier |
+| `sic-vm` | the register VM |
 | `sic-cli` | the `sic` command |
 
-Crates are added per phase (`sic-types`, `sic-ir`, `sic-bytecode`, `sic-verify`,
-`sic-vm`, `sic-journal`, `sic-broker`). `sic-vm` has no external effects and does
-not depend on `sic-broker`; that boundary is where the VM and the capability
-broker will later split into separate processes.
+`sic-journal` and `sic-broker` arrive in phases 3 and 4. `sic-vm` performs no
+external effects and does not depend on `sic-broker`; that boundary is where the
+VM and the capability broker will later split into separate processes, and it is
+checked by a test rather than left as an intention.
 
 ## Adding a dependency
 

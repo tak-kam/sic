@@ -1,0 +1,13 @@
+// Recursion, branching, and an annotated signature.
+// A function must be annotated to be called before it has been checked, which
+// includes calling itself.
+fn factorial(n: Int) -> Int {
+    if n <= 1 {
+        return 1;
+    }
+    return n * factorial(n - 1);
+}
+
+fn main() {
+    return factorial(10);
+}

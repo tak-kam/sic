@@ -3,6 +3,12 @@ resolver = "3"
 members = [
     "crates/sic-core",
     "crates/sic-syntax",
+    "crates/sic-types",
+    "crates/sic-ir",
+    "crates/sic-bytecode",
+    "crates/sic-compile",
+    "crates/sic-verify",
+    "crates/sic-vm",
     "crates/sic-cli",
 ]
 

@@ -1,0 +1,11 @@
+[package]
+name = "sic-verify"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sic-core = { path = "../sic-core" }
+sic-bytecode = { path = "../sic-bytecode" }
+[lints]
+workspace = true
