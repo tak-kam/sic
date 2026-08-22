@@ -72,6 +72,17 @@ impl Arena {
             .unwrap_or("")
     }
 
+    /// Every string in the arena, for writing a checkpoint.
+    pub fn strings(&self) -> &[String] {
+        &self.strings
+    }
+
+    /// Rebuilds an arena from a checkpoint. Handles keep their meaning because
+    /// the order is preserved.
+    pub fn from_strings(strings: Vec<String>) -> Self {
+        Self { strings }
+    }
+
     pub fn len(&self) -> usize {
         self.strings.len()
     }

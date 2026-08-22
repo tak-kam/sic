@@ -445,6 +445,251 @@ fn journal_lines_are_valid_json_objects() {
     std::fs::remove_file(journal).ok();
 }
 
+// ---- suspend and resume ----
+
+/// A program that asks a person, and does something different with each answer.
+const APPROVAL_SRC: &str = "allow { human.approve \"a test\"; }\n\
+fn main() -> Int {\n\
+    let ok = human.approve(\"go ahead?\");\n\
+    if ok { return 1; }\n\
+    return 0;\n\
+}\n";
+
+#[test]
+fn a_run_that_has_to_wait_is_checkpointed() {
+    let src = write_temp("suspend.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+
+    let (_, stderr, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    // Waiting is not failing, and a caller has to be able to tell them apart.
+    assert_eq!(code, 3, "stderr: {stderr}");
+    assert!(stderr.contains("waiting: [a test] go ahead?"), "{stderr}");
+    assert!(checkpoint.exists());
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn a_checkpointed_run_continues_where_it_stopped() {
+    let src = write_temp("resume.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    // The answer decides which branch the run takes, which shows it really did
+    // continue rather than start again.
+    let (stdout, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "1\n");
+
+    let (stdout, _, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "false",
+    ]);
+    assert_eq!(code, 0);
+    assert_eq!(stdout, "0\n");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn the_journal_is_one_sequence_across_both_processes() {
+    let src = write_temp("resume-journal.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+    let journal = src.with_extension("jsonl");
+
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    let (_, _, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+
+    assert_eq!(
+        journal_events(&journal),
+        vec![
+            "run_started",
+            "function_entered",
+            "capability_requested",
+            "run_suspended",
+            "checkpoint_written",
+            "run_resumed",
+            "capability_completed",
+            "function_exited",
+            "run_completed",
+        ]
+    );
+
+    // A resumed run is the same run: one run id, and no sequence number used
+    // twice.
+    let text = std::fs::read_to_string(&journal).unwrap();
+    let seqs: Vec<u64> = text
+        .lines()
+        .map(|l| {
+            let start = l.find("\"seq\":").unwrap() + 6;
+            let end = start + l[start..].find(',').unwrap();
+            l[start..end].parse().unwrap()
+        })
+        .collect();
+    assert_eq!(seqs, (0..9).collect::<Vec<u64>>());
+
+    let run_ids: std::collections::HashSet<&str> = text
+        .lines()
+        .map(|l| {
+            let start = l.find("\"run\":\"").unwrap() + 7;
+            &l[start..start + 32]
+        })
+        .collect();
+    assert_eq!(run_ids.len(), 1);
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn waiting_with_nowhere_to_save_is_an_error() {
+    let src = write_temp("suspend-nowhere.sic", APPROVAL_SRC);
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("nowhere to be saved"), "{stderr}");
+    assert!(stderr.contains("--checkpoint"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn a_checkpoint_cannot_be_resumed_against_changed_source() {
+    let src = write_temp("resume-changed.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    // Editing the program after it was suspended must not silently continue the
+    // old run inside the new code.
+    let changed = APPROVAL_SRC.replace("return 1;", "return 42;");
+    std::fs::write(&src, changed).unwrap();
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("different bytecode"), "{stderr}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn resume_says_what_it_is_waiting_for_when_given_no_answer() {
+    let src = write_temp("resume-noanswer.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("waiting: [a test] go ahead?"), "{stderr}");
+    assert!(stderr.contains("--value <Bool>"), "{stderr}");
+
+    // And an answer of the wrong shape says what shape it should be.
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "42",
+    ]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("not `true` or `false`"), "{stderr}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn a_corrupt_checkpoint_is_refused() {
+    let src = write_temp("resume-corrupt.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    let mut bytes = std::fs::read(&checkpoint).unwrap();
+    bytes[0] = b'X';
+    std::fs::write(&checkpoint, &bytes).unwrap();
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("bad magic"), "{stderr}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(checkpoint).ok();
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

@@ -46,7 +46,12 @@ fn the_journal_reads_no_clock_and_opens_no_file() {
             }
             for pattern in FORBIDDEN {
                 if line.contains(pattern) {
-                    findings.push(format!("{}:{}: {}", file.display(), number + 1, line.trim()));
+                    findings.push(format!(
+                        "{}:{}: {}",
+                        file.display(),
+                        number + 1,
+                        line.trim()
+                    ));
                 }
             }
         }

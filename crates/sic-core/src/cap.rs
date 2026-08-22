@@ -91,6 +91,25 @@ pub struct CapRequest {
     pub args: Vec<CapValue>,
 }
 
+/// What came back from a capability call.
+///
+/// `Deferred` is what makes durable execution necessary rather than optional:
+/// some effects cannot answer within the call. A human has to approve
+/// something, a job has to finish, a model has to be asked. The run stops, its
+/// state is written out, and it continues when the answer arrives - possibly in
+/// another process, on another day.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CapOutcome {
+    /// The effect happened and produced this value.
+    Value(CapValue),
+    /// The effect will not answer now. The run must be suspended.
+    Deferred {
+        /// What is being waited for, in a form a person can read. This is shown
+        /// to whoever has to supply the answer, and never written to telemetry.
+        question: String,
+    },
+}
+
 /// Why a capability call did not happen, or did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapError {

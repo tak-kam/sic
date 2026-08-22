@@ -38,6 +38,16 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         requires_constraint: true,
     },
     CapSig {
+        name: "human.approve",
+        kind: CapKind::Invoke,
+        // The question is the argument; the answer is whether it was approved.
+        params: &[Types::STR],
+        ret: Types::BOOL,
+        // An unconstrained approval would be an approval of anything, so a
+        // grant has to say what it covers.
+        requires_constraint: true,
+    },
+    CapSig {
         name: "process.exec",
         kind: CapKind::Exec,
         // No argument vector until there is a list type; the result is the

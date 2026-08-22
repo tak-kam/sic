@@ -49,6 +49,13 @@ pub fn event_to_json(event: &Event) -> String {
             field_str(&mut out, "cap", cap, false);
             field_str(&mut out, "error", error, false);
         }
+        EventKind::RunSuspended { cap } | EventKind::RunResumed { cap } => {
+            field_str(&mut out, "cap", cap, false);
+        }
+        EventKind::CheckpointWritten { digest, bytes } => {
+            field_str(&mut out, "checkpoint", &digest.to_string(), false);
+            field_u64(&mut out, "bytes", *bytes, false);
+        }
     }
     out.push('}');
     out

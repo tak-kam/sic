@@ -25,6 +25,21 @@ impl FileSink {
             out: BufWriter::new(file),
         })
     }
+
+    /// Opens a journal to continue writing to.
+    ///
+    /// A resumed run is the same run, so its events belong in the same file,
+    /// after the ones that are already there.
+    pub fn append(path: &str) -> Result<Self, String> {
+        let file = File::options()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|e| format!("cannot append to `{path}`: {e}"))?;
+        Ok(Self {
+            out: BufWriter::new(file),
+        })
+    }
 }
 
 impl Sink for FileSink {

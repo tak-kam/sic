@@ -11,13 +11,15 @@
 //! range because a caller skipped verification, it fails the run rather than
 //! panicking.
 
+pub mod checkpoint;
 pub mod value;
 
 use sic_bytecode::inst::Op;
 use sic_bytecode::program::{Const, Program};
-use sic_core::{CapError, CapRequest, CapValue};
-use sic_journal::{EventKind, Journal, SpanId, digest_values};
+use sic_core::{CapError, CapRequest, CapValue, Digest};
+use sic_journal::{EventKind, Journal, RunId, SpanId, digest_values};
 
+pub use checkpoint::{Checkpoint, CheckpointError};
 pub use value::{Arena, Handle, Value};
 
 /// Where a run ended up.
@@ -230,6 +232,159 @@ impl<'a> Vm<'a> {
     /// Whether the VM is waiting for a capability result.
     pub fn is_suspended(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// The capability the VM is waiting on, if it is waiting.
+    pub fn pending_capability(&self) -> Option<&str> {
+        self.pending.as_ref().map(|p| p.name.as_str())
+    }
+
+    /// Writes out a suspended run, so it can continue later or elsewhere.
+    ///
+    /// Returns `None` when the VM is not suspended: there is no such thing as
+    /// checkpointing a run in the middle of an instruction, and there is no
+    /// need for one, because a run that is not waiting can simply keep going.
+    pub fn checkpoint(&mut self, program_digest: Digest, question: &str) -> Option<Vec<u8>> {
+        let pending = self.pending.clone()?;
+        self.journal.emit(
+            self.root_span,
+            None,
+            EventKind::RunSuspended {
+                cap: pending.name.clone(),
+            },
+        );
+
+        // The `checkpoint_written` event below consumes the next sequence
+        // number, so what is saved is the one after it. A resumed run continues
+        // the same sequence, and must not reuse a number.
+        let seq = self.journal.seq() + 1;
+
+        let saved = Checkpoint {
+            program_digest,
+            run: self.journal.run_id().0,
+            seq,
+            next_span: self.journal.next_span_id(),
+            fuel: self.fuel,
+            pending: checkpoint::Pending {
+                reg: pending.reg as u32,
+                cap: pending.name.clone(),
+                span: pending.span.0,
+                parent: pending.parent.map(|s| s.0),
+                question: question.to_string(),
+            },
+            frames: self
+                .frames
+                .iter()
+                .map(|f| checkpoint::Frame {
+                    func: f.func,
+                    pc: f.pc,
+                    reg_base: f.reg_base as u32,
+                    ret_reg: f.ret_reg as u32,
+                    span: f.span.0,
+                    parent: f.parent.map(|s| s.0),
+                })
+                .collect(),
+            regs: self.regs.clone(),
+            str_consts: self.str_consts.iter().map(|h| h.map(|h| h.0)).collect(),
+            strings: self.arena.strings().to_vec(),
+        };
+
+        let bytes = saved.encode();
+        self.journal.emit(
+            self.root_span,
+            None,
+            EventKind::CheckpointWritten {
+                digest: Checkpoint::digest(&bytes),
+                bytes: bytes.len() as u64,
+            },
+        );
+        Some(bytes)
+    }
+
+    /// Rebuilds a suspended run from a checkpoint, returning the VM and what it
+    /// is waiting for.
+    ///
+    /// The checkpoint is treated with the same suspicion as bytecode: it came
+    /// from a file. Everything a restored VM would otherwise assume is checked
+    /// here, including that the checkpoint belongs to this program - resuming
+    /// against different bytecode would continue one program inside another.
+    pub fn restore(
+        program: &'a Program,
+        bytes: &[u8],
+        program_digest: Digest,
+        journal_sink: Box<dyn sic_journal::Sink>,
+    ) -> Result<(Self, String), CheckpointError> {
+        let saved = Checkpoint::decode(bytes)?;
+        if saved.program_digest != program_digest {
+            return Err(CheckpointError::new(
+                "this checkpoint belongs to different bytecode",
+            ));
+        }
+
+        for (i, frame) in saved.frames.iter().enumerate() {
+            let Some(def) = program.funcs.get(frame.func as usize) else {
+                return Err(CheckpointError::new(format!(
+                    "frame {i} names function {}, which this program does not have",
+                    frame.func
+                )));
+            };
+            if !def.contains_pc(frame.pc) {
+                return Err(CheckpointError::new(format!(
+                    "frame {i} is at instruction {} which is outside `{}`",
+                    frame.pc, def.name
+                )));
+            }
+        }
+        if saved.str_consts.len() != program.consts.len() {
+            return Err(CheckpointError::new(
+                "the checkpoint's constants do not match this program's",
+            ));
+        }
+
+        let question = saved.pending.question.clone();
+        let journal = Journal::resumed(RunId(saved.run), saved.seq, saved.next_span, journal_sink);
+
+        let mut vm = Self {
+            program,
+            regs: saved.regs,
+            frames: saved
+                .frames
+                .iter()
+                .map(|f| Frame {
+                    func: f.func,
+                    pc: f.pc,
+                    reg_base: f.reg_base as usize,
+                    ret_reg: f.ret_reg as usize,
+                    span: SpanId(f.span),
+                    parent: f.parent.map(SpanId),
+                })
+                .collect(),
+            arena: Arena::from_strings(saved.strings),
+            str_consts: saved.str_consts.iter().map(|h| h.map(Handle)).collect(),
+            pending: Some(PendingCap {
+                reg: saved.pending.reg as usize,
+                name: saved.pending.cap.clone(),
+                span: SpanId(saved.pending.span),
+                parent: saved.pending.parent.map(SpanId),
+            }),
+            journal,
+            // The run span is the one the entry frame sits inside.
+            root_span: saved
+                .frames
+                .first()
+                .and_then(|f| f.parent)
+                .map(SpanId)
+                .unwrap_or(SpanId(0)),
+            fuel: saved.fuel,
+        };
+        vm.journal.emit(
+            vm.root_span,
+            None,
+            EventKind::RunResumed {
+                cap: saved.pending.cap,
+            },
+        );
+        Ok((vm, question))
     }
 
     /// Calls a function and runs until it returns, fails, or runs out of fuel.

@@ -57,16 +57,51 @@ pub struct Event {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
-    RunStarted { workflow: String, args: Digest },
-    RunCompleted { result: Digest },
-    RunFailed { error: String },
+    RunStarted {
+        workflow: String,
+        args: Digest,
+    },
+    RunCompleted {
+        result: Digest,
+    },
+    RunFailed {
+        error: String,
+    },
 
-    FunctionEntered { func: String },
-    FunctionExited { func: String },
+    FunctionEntered {
+        func: String,
+    },
+    FunctionExited {
+        func: String,
+    },
 
-    CapabilityRequested { cap: String, args: Digest },
-    CapabilityCompleted { cap: String, result: Digest },
-    CapabilityFailed { cap: String, error: String },
+    CapabilityRequested {
+        cap: String,
+        args: Digest,
+    },
+    CapabilityCompleted {
+        cap: String,
+        result: Digest,
+    },
+    CapabilityFailed {
+        cap: String,
+        error: String,
+    },
+
+    /// The run stopped because a capability could not answer yet.
+    RunSuspended {
+        cap: String,
+    },
+    /// The run picked up again from a checkpoint.
+    RunResumed {
+        cap: String,
+    },
+    /// A checkpoint was produced. The digest identifies it; the size is what
+    /// makes durable execution's cost visible.
+    CheckpointWritten {
+        digest: Digest,
+        bytes: u64,
+    },
 }
 
 impl EventKind {
@@ -81,6 +116,9 @@ impl EventKind {
             EventKind::CapabilityRequested { .. } => "capability_requested",
             EventKind::CapabilityCompleted { .. } => "capability_completed",
             EventKind::CapabilityFailed { .. } => "capability_failed",
+            EventKind::RunSuspended { .. } => "run_suspended",
+            EventKind::RunResumed { .. } => "run_resumed",
+            EventKind::CheckpointWritten { .. } => "checkpoint_written",
         }
     }
 }
@@ -135,6 +173,30 @@ impl Journal {
     /// A journal that records nothing.
     pub fn discard() -> Self {
         Self::new(RunId(0), Box::new(NullSink))
+    }
+
+    /// Continues an existing run's journal after a checkpoint.
+    ///
+    /// The counters carry over so that the stream stays one sequence across
+    /// however many processes the run takes: the whole point of the journal is
+    /// that a resumed run is the same run.
+    pub fn resumed(run: RunId, seq: u64, next_span: u64, sink: Box<dyn Sink>) -> Self {
+        Self {
+            run,
+            seq,
+            next_span,
+            sink,
+        }
+    }
+
+    /// The next sequence number, for writing a checkpoint.
+    pub fn seq(&self) -> u64 {
+        self.seq
+    }
+
+    /// The next span id, for writing a checkpoint.
+    pub fn next_span_id(&self) -> u64 {
+        self.next_span
     }
 
     pub fn run_id(&self) -> RunId {

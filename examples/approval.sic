@@ -1,0 +1,20 @@
+// Some effects cannot answer within the call. A person is not in this process,
+// so asking one has to stop the run, save its state, and continue when the
+// answer arrives - possibly in another process, on another day.
+//
+//     sic run examples/approval.sic --checkpoint deploy.sicc
+//     sic resume deploy.sicc examples/approval.sic --value true
+//
+// The grant says what the approval is about, and it travels with the question.
+allow {
+    human.approve "deploy to production";
+    process.exec "/usr/bin/true";
+}
+
+fn main() -> Int {
+    let approved = human.approve("deploy build 42?");
+    if approved {
+        return process.exec("/usr/bin/true");
+    }
+    return 1;
+}

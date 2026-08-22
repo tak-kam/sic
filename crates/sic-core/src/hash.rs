@@ -24,6 +24,13 @@ impl Digest {
         &self.0
     }
 
+    /// Rebuilds a digest that was stored somewhere. This says nothing about
+    /// what it is the digest of; comparing it with one that was computed is
+    /// what gives it meaning.
+    pub fn from_bytes(bytes: [u8; 32]) -> Digest {
+        Digest(bytes)
+    }
+
     pub fn hex(&self) -> String {
         let mut out = String::with_capacity(64);
         for b in self.0 {

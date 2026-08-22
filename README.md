@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 4 (the execution journal)
+## Status: phase 5 (durable execution)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -111,6 +111,32 @@ that fails if `sic-journal` ever mentions `std::time`.
 
 This one stream is meant to be the single source for durability, tracing,
 metrics, audit and replay, rather than separate mechanisms that have to agree.
+
+### A run can outlive its process
+
+Some effects cannot answer within the call - a person has to approve something.
+The run stops, its state is written out, and it continues when the answer
+arrives:
+
+```console
+$ sic run examples/approval.sic --checkpoint deploy.sicc --journal deploy.jsonl
+waiting: [deploy to production] deploy build 42?
+saved 274 bytes to deploy.sicc
+$ echo $?
+3
+
+$ sic resume deploy.sicc examples/approval.sic --value true --journal deploy.jsonl
+0
+```
+
+Nothing had to be added to the VM for this. Because it suspends rather than
+calling the broker, everything needed to continue was already its state; a
+checkpoint is that state written down. The journal carries on across the two
+processes as one sequence, because a resumed run is the same run.
+
+The checkpoint records the digest of the bytecode it came from, so a run cannot
+be continued inside a program that has changed since. See
+[docs/design/durable-execution.md](docs/design/durable-execution.md).
 
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode

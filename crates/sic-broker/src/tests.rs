@@ -1,4 +1,4 @@
-use sic_core::{CapGrant, CapKind, CapRequest, CapValue};
+use sic_core::{CapGrant, CapKind, CapOutcome, CapRequest, CapValue};
 
 use super::*;
 
@@ -34,10 +34,10 @@ fn reads_and_writes_the_granted_path() {
     ]);
 
     let written = broker.call(&request(0, "fs.write", &[&path, "hello"]));
-    assert_eq!(written, Ok(CapValue::Unit));
+    assert_eq!(written, Ok(CapOutcome::Value(CapValue::Unit)));
 
     let read = broker.call(&request(1, "fs.read", &[&path]));
-    assert_eq!(read, Ok(CapValue::Str("hello".into())));
+    assert_eq!(read, Ok(CapOutcome::Value(CapValue::Str("hello".into()))));
 
     std::fs::remove_file(&path).ok();
 }
@@ -142,7 +142,7 @@ fn runs_a_granted_executable() {
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, path)]);
     assert_eq!(
         broker.call(&request(0, "process.exec", &[path])),
-        Ok(CapValue::I64(0))
+        Ok(CapOutcome::Value(CapValue::I64(0)))
     );
 }
 
@@ -156,7 +156,26 @@ fn reports_a_nonzero_exit_code() {
     };
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, path)]);
     match broker.call(&request(0, "process.exec", &[path])) {
-        Ok(CapValue::I64(code)) => assert_ne!(code, 0),
+        Ok(CapOutcome::Value(CapValue::I64(code))) => assert_ne!(code, 0),
         other => panic!("expected an exit code, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_approval_defers_rather_than_answering() {
+    // A person is not in this process. The call cannot complete, so the run has
+    // to be able to stop and come back.
+    let mut broker = Broker::new(vec![grant(
+        "human.approve",
+        CapKind::Invoke,
+        "deploy to production",
+    )]);
+    match broker.call(&request(0, "human.approve", &["proceed?"])) {
+        Ok(CapOutcome::Deferred { question }) => {
+            // The grant travels with the question, so whoever answers can see
+            // which grant is being exercised.
+            assert_eq!(question, "[deploy to production] proceed?");
+        }
+        other => panic!("expected a deferral, got {other:?}"),
     }
 }

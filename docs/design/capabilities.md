@@ -28,6 +28,7 @@ v0.1 ships three, chosen because they need no credentials and no network:
 | `fs.read` | `(path: String) -> String` | read |
 | `fs.write` | `(path: String, data: String) -> Unit` | write |
 | `process.exec` | `(path: String) -> Int` | exec |
+| `human.approve` | `(question: String) -> Bool` | invoke |
 
 `process.exec` takes no arguments for the process it runs, because there is no
 `List<String>` yet. Adding one is what unblocks a real argument vector, and it
@@ -177,7 +178,30 @@ and any capability that opens a socket.
 
 ---
 
-## 8. What a failure is
+## 8. Effects that cannot answer now
+
+`human.approve` never answers within the call: a person is not in this process.
+A broker call therefore returns one of
+
+```rust
+enum CapOutcome {
+    Value(CapValue),
+    Deferred { question: String },
+}
+```
+
+`Deferred` is what makes durable execution necessary rather than optional. The
+run stops, its state is written out, and it continues when the answer arrives -
+possibly in another process, on another day. See
+[durable-execution.md](durable-execution.md).
+
+The grant's constraint says what an approval is about, and it travels with the
+question (`[deploy to production] deploy build 42?`), so whoever answers, and
+whoever audits it later, can see which grant was exercised.
+
+---
+
+## 9. What a failure is
 
 A capability failure ends the run, the same way `FAIL` does. Retry is a workflow
 concern, and the IR already has the `CallPolicy` slot for it, but nothing

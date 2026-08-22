@@ -10,6 +10,8 @@
 //! its length. Decoding performs the structural checks that must hold before a
 //! `Program` even exists; the semantic checks live in `sic-verify`.
 
+use sic_core::bin::{Reader, Writer};
+
 use crate::inst::Inst;
 use crate::program::*;
 
@@ -31,24 +33,9 @@ pub mod section {
 /// decoder allocate.
 const MAX_SECTIONS: u32 = 64;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DecodeError {
-    pub message: String,
-}
-
-impl std::fmt::Display for DecodeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
-
-impl DecodeError {
-    fn new(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-        }
-    }
-}
+/// Decoding failures are the shared binary-format error: everything that can go
+/// wrong here is "these bytes are not that".
+pub type DecodeError = sic_core::BinError;
 
 type Result<T> = std::result::Result<T, DecodeError>;
 
@@ -57,7 +44,7 @@ type Result<T> = std::result::Result<T, DecodeError>;
 pub fn encode(p: &Program) -> Vec<u8> {
     let mut sections: Vec<(u32, Vec<u8>)> = Vec::new();
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     w.u32(p.consts.len() as u32);
     for c in &p.consts {
         w.u8(c.tag());
@@ -69,16 +56,16 @@ pub fn encode(p: &Program) -> Vec<u8> {
             Const::Str(s) => w.str(s),
         }
     }
-    sections.push((section::CONSTANTS, w.done()));
+    sections.push((section::CONSTANTS, w.finish()));
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     w.u32(p.types.len() as u32);
     for t in &p.types {
         w.u8(*t as u8);
     }
-    sections.push((section::TYPES, w.done()));
+    sections.push((section::TYPES, w.finish()));
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     w.u32(p.funcs.len() as u32);
     for f in &p.funcs {
         w.str(&f.name);
@@ -91,9 +78,9 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(f.code_off);
         w.u32(f.code_len);
     }
-    sections.push((section::FUNCTIONS, w.done()));
+    sections.push((section::FUNCTIONS, w.finish()));
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     w.u32(p.caps.len() as u32);
     for c in &p.caps {
         w.str(&c.name);
@@ -105,15 +92,15 @@ pub fn encode(p: &Program) -> Vec<u8> {
         }
         w.u32(c.ret_type);
     }
-    sections.push((section::CAPABILITIES, w.done()));
+    sections.push((section::CAPABILITIES, w.finish()));
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     for inst in &p.code {
         w.u32(inst.0);
     }
-    sections.push((section::CODE, w.done()));
+    sections.push((section::CODE, w.finish()));
 
-    let mut w = Writer::default();
+    let mut w = Writer::new();
     w.str(&p.debug.source_name);
     w.u32(p.debug.lines.len() as u32);
     for (pc, line, col) in &p.debug.lines {
@@ -121,7 +108,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(*line);
         w.u32(*col);
     }
-    sections.push((section::DEBUG, w.done()));
+    sections.push((section::DEBUG, w.finish()));
 
     // Empty in v0.1. The section exists so that adding signatures later does
     // not change the shape of the file.
@@ -131,7 +118,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
     let table_len = sections.len() * 12;
     let mut body_offset = (header_len + table_len) as u32;
 
-    let mut out = Writer::default();
+    let mut out = Writer::new();
     out.bytes(&MAGIC);
     out.u16(VERSION_MAJOR);
     out.u16(VERSION_MINOR);
@@ -146,37 +133,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
     for (_, body) in &sections {
         out.bytes(body);
     }
-    out.done()
-}
-
-#[derive(Default)]
-struct Writer {
-    buf: Vec<u8>,
-}
-
-impl Writer {
-    fn u8(&mut self, v: u8) {
-        self.buf.push(v);
-    }
-    fn u16(&mut self, v: u16) {
-        self.buf.extend_from_slice(&v.to_le_bytes());
-    }
-    fn u32(&mut self, v: u32) {
-        self.buf.extend_from_slice(&v.to_le_bytes());
-    }
-    fn u64(&mut self, v: u64) {
-        self.buf.extend_from_slice(&v.to_le_bytes());
-    }
-    fn str(&mut self, s: &str) {
-        self.u32(s.len() as u32);
-        self.buf.extend_from_slice(s.as_bytes());
-    }
-    fn bytes(&mut self, b: &[u8]) {
-        self.buf.extend_from_slice(b);
-    }
-    fn done(self) -> Vec<u8> {
-        self.buf
-    }
+    out.finish()
 }
 
 // ---------------------------------------------------------------- decoding
@@ -250,7 +207,7 @@ pub fn decode(bytes: &[u8]) -> Result<Program> {
 
 fn decode_consts(body: &[u8]) -> Result<Vec<Const>> {
     let mut r = Reader::new(body);
-    let n = r.count(body.len())?;
+    let n = r.count(1)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let tag = r.u8()?;
@@ -269,7 +226,7 @@ fn decode_consts(body: &[u8]) -> Result<Vec<Const>> {
 
 fn decode_types(body: &[u8]) -> Result<Vec<TypeTag>> {
     let mut r = Reader::new(body);
-    let n = r.count(body.len())?;
+    let n = r.count(1)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let raw = r.u8()?;
@@ -284,7 +241,9 @@ fn decode_types(body: &[u8]) -> Result<Vec<TypeTag>> {
 
 fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
     let mut r = Reader::new(body);
-    let n = r.count(body.len())?;
+    // The smallest possible entry: an empty name, no parameters, and the fixed
+    // fields.
+    let n = r.count(18)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -308,7 +267,7 @@ fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
 
 fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
     let mut r = Reader::new(body);
-    let n = r.count(body.len())?;
+    let n = r.count(14)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -348,87 +307,13 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 fn decode_debug(body: &[u8]) -> Result<DebugInfo> {
     let mut r = Reader::new(body);
     let source_name = r.str()?;
-    let n = r.count(body.len())?;
+    let n = r.count(12)?;
     let mut lines = Vec::with_capacity(n);
     for _ in 0..n {
         lines.push((r.u32()?, r.u32()?, r.u32()?));
     }
     r.expect_end("debug")?;
     Ok(DebugInfo { source_name, lines })
-}
-
-struct Reader<'a> {
-    bytes: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> Reader<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, pos: 0 }
-    }
-
-    fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let end = self
-            .pos
-            .checked_add(n)
-            .ok_or_else(|| DecodeError::new("length overflows"))?;
-        if end > self.bytes.len() {
-            return Err(DecodeError::new("unexpected end of section"));
-        }
-        let out = &self.bytes[self.pos..end];
-        self.pos = end;
-        Ok(out)
-    }
-
-    fn u8(&mut self) -> Result<u8> {
-        Ok(self.take(1)?[0])
-    }
-
-    fn u16(&mut self) -> Result<u16> {
-        let b = self.take(2)?;
-        Ok(u16::from_le_bytes([b[0], b[1]]))
-    }
-
-    fn u32(&mut self) -> Result<u32> {
-        let b = self.take(4)?;
-        Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    }
-
-    fn u64(&mut self) -> Result<u64> {
-        let b = self.take(8)?;
-        Ok(u64::from_le_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-        ]))
-    }
-
-    fn str(&mut self) -> Result<String> {
-        let len = self.u32()? as usize;
-        let bytes = self.take(len)?;
-        String::from_utf8(bytes.to_vec())
-            .map_err(|_| DecodeError::new("a string in the file is not valid UTF-8"))
-    }
-
-    /// Reads an element count and rejects one that cannot fit in what is left,
-    /// so a corrupt file cannot ask for a huge allocation.
-    fn count(&mut self, section_len: usize) -> Result<usize> {
-        let n = self.u32()? as usize;
-        if n > section_len {
-            return Err(DecodeError::new(
-                "an element count is larger than the section holding it",
-            ));
-        }
-        Ok(n)
-    }
-
-    fn expect_end(&self, what: &str) -> Result<()> {
-        if self.pos != self.bytes.len() {
-            return Err(DecodeError::new(format!(
-                "{} bytes left over at the end of the {what} section",
-                self.bytes.len() - self.pos
-            )));
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]

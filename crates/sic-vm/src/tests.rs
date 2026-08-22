@@ -638,3 +638,256 @@ fn arguments_are_recorded_as_digests_not_values() {
     assert!(!all.contains("/usr/bin/true"), "{all}");
     assert!(all.contains("sha256:"), "{all}");
 }
+
+// ---- checkpoints ----
+
+use sic_core::Digest;
+
+fn program_digest() -> Digest {
+    Digest::of(b"the program these checkpoints belong to")
+}
+
+#[test]
+fn a_suspended_run_survives_being_written_out_and_read_back() {
+    let p = exec_program();
+
+    // First process: run until the capability, then write the state out.
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm
+        .checkpoint(program_digest(), "may I run /usr/bin/true?")
+        .expect("a suspended run can be checkpointed");
+    drop(vm);
+
+    // Second process: pick it up and answer.
+    let resumed_sink = SharedSink::default();
+    let (mut vm, question) =
+        Vm::restore(&p, &bytes, program_digest(), Box::new(resumed_sink.clone()))
+            .expect("the checkpoint should restore");
+    assert_eq!(question, "may I run /usr/bin/true?");
+    assert!(vm.is_suspended());
+
+    match vm.resume(sic_core::CapValue::I64(7)) {
+        Status::Finished(v) => assert_eq!(v, Value::I64(7)),
+        other => panic!("expected a result, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_journal_continues_across_the_checkpoint() {
+    // A resumed run is the same run, so its events are one sequence.
+    let p = exec_program();
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+
+    assert_eq!(
+        names(&sink),
+        vec![
+            "run_started",
+            "function_entered",
+            "capability_requested",
+            "run_suspended",
+            "checkpoint_written",
+        ]
+    );
+    let first_seqs: Vec<u64> = sink.0.borrow().iter().map(|e| e.seq).collect();
+    assert_eq!(first_seqs, vec![0, 1, 2, 3, 4]);
+
+    let second = SharedSink::default();
+    let (mut vm, _) = Vm::restore(&p, &bytes, program_digest(), Box::new(second.clone())).unwrap();
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::I64(0)),
+        Status::Finished(_)
+    ));
+
+    assert_eq!(
+        names(&second),
+        vec![
+            "run_resumed",
+            "capability_completed",
+            "function_exited",
+            "run_completed",
+        ]
+    );
+    // No sequence number is reused, and the run id is the same.
+    let second_seqs: Vec<u64> = second.0.borrow().iter().map(|e| e.seq).collect();
+    assert_eq!(second_seqs, vec![5, 6, 7, 8]);
+    assert!(second.0.borrow().iter().all(|e| e.run == RunId(42)));
+}
+
+#[test]
+fn strings_survive_a_checkpoint() {
+    // Handles only mean anything against their arena, so the arena travels with
+    // the registers.
+    let mut p = exec_program();
+    p.caps[0].ret_type = TypeTag::Str as u32;
+    p.funcs[0].ret_type = TypeTag::Str as u32;
+
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+
+    let (mut vm, _) = Vm::restore(
+        &p,
+        &bytes,
+        program_digest(),
+        Box::new(SharedSink::default()),
+    )
+    .unwrap();
+    match vm.resume(sic_core::CapValue::Str("answer".into())) {
+        Status::Finished(v) => assert_eq!(vm.display(&v), "\"answer\""),
+        other => panic!("expected a result, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_checkpoint_cannot_be_resumed_against_other_bytecode() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+
+    let err = Vm::restore(
+        &p,
+        &bytes,
+        Digest::of(b"a different program"),
+        Box::new(SharedSink::default()),
+    )
+    .unwrap_err();
+    assert!(err.message.contains("different bytecode"), "{err}");
+}
+
+#[test]
+fn a_running_vm_has_no_checkpoint() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(vm.checkpoint(program_digest(), "?").is_none());
+}
+
+#[test]
+fn a_corrupt_checkpoint_is_refused_rather_than_restored() {
+    let p = exec_program();
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+
+    // Truncated at every length: a short read must never become a bad VM.
+    for cut in [0, 4, 8, 40, 60, bytes.len() - 1] {
+        assert!(
+            Vm::restore(
+                &p,
+                &bytes[..cut],
+                program_digest(),
+                Box::new(SharedSink::default())
+            )
+            .is_err(),
+            "a checkpoint cut at {cut} should be refused"
+        );
+    }
+
+    // A wrong magic.
+    let mut broken = bytes.clone();
+    broken[0] = b'X';
+    assert!(
+        Vm::restore(
+            &p,
+            &broken,
+            program_digest(),
+            Box::new(SharedSink::default())
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
+    use crate::checkpoint::{Checkpoint, Frame, Pending};
+
+    let base = Checkpoint {
+        program_digest: program_digest(),
+        run: 1,
+        seq: 0,
+        next_span: 0,
+        fuel: 10,
+        pending: Pending {
+            reg: 0,
+            cap: "process.exec".into(),
+            span: 0,
+            parent: None,
+            question: String::new(),
+        },
+        frames: vec![Frame {
+            func: 0,
+            pc: 0,
+            reg_base: 0,
+            ret_reg: 0,
+            span: 0,
+            parent: None,
+        }],
+        regs: vec![Value::Unit],
+        str_consts: vec![None],
+        strings: Vec::new(),
+    };
+    // The honest one decodes.
+    assert!(Checkpoint::decode(&base.encode()).is_ok());
+
+    // A pending call writing to a register that does not exist.
+    let mut bad = base.clone();
+    bad.pending.reg = 9;
+    assert!(Checkpoint::decode(&bad.encode()).is_err());
+
+    // A value pointing outside the saved arena.
+    let mut bad = base.clone();
+    bad.regs = vec![Value::Str(Handle(3))];
+    assert!(Checkpoint::decode(&bad.encode()).is_err());
+
+    // No frames at all.
+    let mut bad = base.clone();
+    bad.frames.clear();
+    assert!(Checkpoint::decode(&bad.encode()).is_err());
+}
+
+#[test]
+fn a_checkpoint_frame_must_point_into_this_program() {
+    use crate::checkpoint::{Checkpoint, Frame, Pending};
+
+    let p = exec_program();
+    let checkpoint = Checkpoint {
+        program_digest: program_digest(),
+        run: 1,
+        seq: 0,
+        next_span: 0,
+        fuel: 10,
+        pending: Pending {
+            reg: 0,
+            cap: "process.exec".into(),
+            span: 0,
+            parent: None,
+            question: String::new(),
+        },
+        frames: vec![Frame {
+            func: 0,
+            // Past the end of main.
+            pc: 900,
+            reg_base: 0,
+            ret_reg: 0,
+            span: 0,
+            parent: None,
+        }],
+        regs: vec![Value::Unit],
+        str_consts: vec![None],
+        strings: Vec::new(),
+    };
+    let err = Vm::restore(
+        &p,
+        &checkpoint.encode(),
+        program_digest(),
+        Box::new(SharedSink::default()),
+    )
+    .unwrap_err();
+    assert!(err.message.contains("outside"), "{err}");
+}

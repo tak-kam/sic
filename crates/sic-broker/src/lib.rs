@@ -11,7 +11,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use sic_core::{CapError, CapGrant, CapRequest, CapValue};
+use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue};
 
 /// The largest file `fs.read` will return. A capability that can exhaust the
 /// host's memory is not much of a boundary.
@@ -32,7 +32,11 @@ impl Broker {
     }
 
     /// Performs one capability call.
-    pub fn call(&mut self, request: &CapRequest) -> Result<CapValue, CapError> {
+    ///
+    /// The result is `Deferred` when the effect cannot answer within the call.
+    /// The run is then suspended and continues once the answer arrives, which
+    /// is what durable execution is for.
+    pub fn call(&mut self, request: &CapRequest) -> Result<CapOutcome, CapError> {
         // Cloned so the borrow of the manifest ends here: performing a call
         // must not be able to change what it was authorized against.
         let grant = self.authorize(request)?.clone();
@@ -40,6 +44,7 @@ impl Broker {
             "fs.read" => fs_read(&grant, request),
             "fs.write" => fs_write(&grant, request),
             "process.exec" => process_exec(&grant, request),
+            "human.approve" => human_approve(&grant, request),
             other => Err(CapError::new(format!(
                 "`{other}` is in the manifest but this broker cannot perform it"
             ))),
@@ -67,7 +72,7 @@ impl Broker {
 
 // ---- the capabilities ----
 
-fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapValue, CapError> {
+fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     let path = allowed_path(grant, string_arg(request, 0, 1)?)?;
 
     let size = std::fs::metadata(&path)
@@ -81,18 +86,18 @@ fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapValue, CapError>
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| CapError::new(format!("cannot read `{}`: {e}", path.display())))?;
-    Ok(CapValue::Str(text))
+    Ok(CapOutcome::Value(CapValue::Str(text)))
 }
 
-fn fs_write(grant: &CapGrant, request: &CapRequest) -> Result<CapValue, CapError> {
+fn fs_write(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     let path = allowed_path(grant, string_arg(request, 0, 2)?)?;
     let data = string_arg(request, 1, 2)?.to_string();
     std::fs::write(&path, data)
         .map_err(|e| CapError::new(format!("cannot write `{}`: {e}", path.display())))?;
-    Ok(CapValue::Unit)
+    Ok(CapOutcome::Value(CapValue::Unit))
 }
 
-fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapValue, CapError> {
+fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     let path = allowed_path(grant, string_arg(request, 0, 1)?)?;
 
     // An executable is never resolved through PATH: what runs is decided by the
@@ -112,12 +117,25 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapValue, CapE
     // A process killed by a signal has no exit code, and reporting one would
     // say it finished when it did not.
     match status.code() {
-        Some(code) => Ok(CapValue::I64(code as i64)),
+        Some(code) => Ok(CapOutcome::Value(CapValue::I64(code as i64))),
         None => Err(CapError::new(format!(
             "`{}` was terminated by a signal",
             path.display()
         ))),
     }
+}
+
+/// Asking a person to approve something.
+///
+/// A person is not in this process, so this never answers within the call. The
+/// grant's constraint says what the approval is about, and it travels with the
+/// question so that whoever answers - and whoever audits it later - can see
+/// which grant was exercised.
+fn human_approve(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    let question = string_arg(request, 0, 1)?;
+    Ok(CapOutcome::Deferred {
+        question: format!("[{}] {question}", grant.constraint),
+    })
 }
 
 /// Resolves the path an argument names, refusing anything the grant does not

@@ -9,14 +9,21 @@ use std::process::ExitCode;
 
 use sic_broker::Broker;
 use sic_bytecode::Program;
-use sic_core::{CapGrant, SourceFile};
+use sic_core::{Digest, SourceFile};
 use sic_journal::Journal;
-use sic_vm::{DEFAULT_FUEL, FailInfo, Status, Value, Vm};
+use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
+use super::drive::{Outcome, drive, manifest};
 use super::journal::{FileSink, new_run_id};
-use super::{EXIT_FAILURE, compile_source};
+use super::{EXIT_FAILURE, EXIT_SUSPENDED, compile_source};
 
-pub fn run_with_journal(path: &str, journal_path: Option<&str>) -> ExitCode {
+pub struct RunOptions<'a> {
+    pub journal: Option<&'a str>,
+    /// Where to write the run's state if it has to stop and wait.
+    pub checkpoint: Option<&'a str>,
+}
+
+pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     let (file, program) = match compile_source(path) {
         Ok(v) => v,
         Err(code) => return code,
@@ -45,81 +52,79 @@ pub fn run_with_journal(path: &str, journal_path: Option<&str>) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     }
 
-    let journal = match journal_path {
-        Some(path) => {
-            let run_id = new_run_id();
-            let sink = match FileSink::create(path) {
-                Ok(sink) => sink,
-                Err(msg) => {
-                    eprintln!("error: {msg}");
-                    return ExitCode::from(EXIT_FAILURE);
-                }
-            };
-            eprintln!("run {run_id} -> {path}");
-            Journal::new(run_id, Box::new(sink))
-        }
-        None => Journal::discard(),
+    let run_id = new_run_id();
+    let journal = match options.journal {
+        Some(path) => match FileSink::create(path) {
+            Ok(sink) => {
+                eprintln!("run {run_id} -> {path}");
+                Journal::new(run_id, Box::new(sink))
+            }
+            Err(msg) => {
+                eprintln!("error: {msg}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+        },
+        None => Journal::new(run_id, Box::new(sic_journal::NullSink)),
     };
 
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let mut broker = Broker::new(manifest(&program));
-    match drive(&mut vm, &mut broker, entry) {
-        Status::Finished(Value::Unit) => ExitCode::SUCCESS,
-        Status::Finished(value) => {
+    let status = vm.run(entry, &[]);
+    let outcome = drive(&mut vm, &mut broker, status);
+    finish(&mut vm, &program, &file, outcome, options.checkpoint)
+}
+
+/// Reports how a run ended, writing a checkpoint if it stopped to wait.
+pub fn finish(
+    vm: &mut Vm,
+    program: &Program,
+    file: &SourceFile,
+    outcome: Outcome,
+    checkpoint_path: Option<&str>,
+) -> ExitCode {
+    match outcome {
+        Outcome::Finished(Value::Unit) => ExitCode::SUCCESS,
+        Outcome::Finished(value) => {
             println!("{}", vm.display(&value));
             ExitCode::SUCCESS
         }
-        Status::Failed(info) => {
-            report_failure(&vm, &program, &file, &info);
+        Outcome::Failed(info) => {
+            report_failure(vm, program, file, &info);
             ExitCode::from(EXIT_FAILURE)
         }
-        Status::Suspended(request) => {
-            // `drive` only returns once nothing is pending, so reaching this
-            // would mean the loop below stopped answering.
-            eprintln!(
-                "internal error: the run is still waiting for `{}`",
-                request.name
-            );
-            ExitCode::from(EXIT_FAILURE)
+        Outcome::Suspended { question } => {
+            let Some(path) = checkpoint_path else {
+                // Without somewhere to put the state, the only alternative
+                // would be to lose the run.
+                eprintln!("error: the run is waiting for `{question}` and has nowhere to be saved");
+                eprintln!("       pass --checkpoint PATH to write its state out");
+                return ExitCode::from(EXIT_FAILURE);
+            };
+            write_checkpoint(vm, program, path, &question)
         }
     }
 }
 
-/// Runs the program, answering each capability request from the broker.
-///
-/// This loop is the whole of the VM's access to the outside world. Phase 5
-/// replaces it with something that can also write the suspended state to disk
-/// and pick it up later; the shape does not have to change for that.
-fn drive(vm: &mut Vm, broker: &mut Broker, entry: u32) -> Status {
-    let mut status = vm.run(entry, &[]);
-    loop {
-        match status {
-            Status::Suspended(request) => {
-                status = match broker.call(&request) {
-                    Ok(value) => vm.resume(value),
-                    Err(error) => vm.resume_failed(&error),
-                };
-            }
-            other => return other,
-        }
+fn write_checkpoint(vm: &mut Vm, program: &Program, path: &str, question: &str) -> ExitCode {
+    // The digest ties the checkpoint to this exact bytecode, so it cannot be
+    // resumed against a program that has changed underneath it.
+    let digest = Digest::of(&sic_bytecode::encode(program));
+    let Some(bytes) = vm.checkpoint(digest, question) else {
+        eprintln!("internal error: the run is waiting but has no state to save");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+    if let Err(e) = std::fs::write(path, &bytes) {
+        eprintln!("error: cannot write `{path}`: {e}");
+        return ExitCode::from(EXIT_FAILURE);
     }
-}
-
-/// The manifest the broker enforces, taken from the bytecode.
-fn manifest(program: &Program) -> Vec<CapGrant> {
-    program
-        .caps
-        .iter()
-        .map(|c| CapGrant {
-            name: c.name.clone(),
-            kind: c.kind,
-            constraint: c.constraints.clone(),
-        })
-        .collect()
+    eprintln!("waiting: {question}");
+    eprintln!("saved {} bytes to {path}", bytes.len());
+    eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>");
+    ExitCode::from(EXIT_SUSPENDED)
 }
 
 /// Reports a runtime failure, naming the source line through the debug section.
-fn report_failure(vm: &Vm, program: &Program, file: &SourceFile, info: &FailInfo) {
+pub fn report_failure(vm: &Vm, program: &Program, file: &SourceFile, info: &FailInfo) {
     eprint!("error: {}", info.kind.message());
     if let Some(value) = &info.value {
         eprint!(": {}", vm.display(value));

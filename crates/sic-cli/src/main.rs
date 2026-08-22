@@ -14,9 +14,12 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic> [--journal PATH]
+  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH]
                                   compile, verify and run a source file,
-                                  optionally recording its execution journal
+                                  optionally recording its execution journal,
+                                  saving its state if it has to wait
+  sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH]
+                                  continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic verify <FILE.sicb>          check that bytecode is safe to run
   sic disasm <FILE.sicb>          print bytecode as instructions
@@ -29,6 +32,7 @@ Exit codes:
   0  success
   1  the program has errors, or a run failed
   2  the command line is wrong
+  3  the run is waiting for something and was checkpointed
 ";
 
 fn main() -> ExitCode {
@@ -40,8 +44,26 @@ fn main() -> ExitCode {
     let rest = &args[1..];
 
     match command.as_str() {
-        "run" => match parse_run_args(rest) {
-            Ok((input, journal)) => cmd::run::run_with_journal(&input, journal.as_deref()),
+        "run" => match parse_flags(rest, &["--journal", "--checkpoint"], 1) {
+            Ok((files, flags)) => cmd::run::run(
+                &files[0],
+                cmd::run::RunOptions {
+                    journal: flags[0].as_deref(),
+                    checkpoint: flags[1].as_deref(),
+                },
+            ),
+            Err(msg) => usage_error(msg),
+        },
+        "resume" => match parse_flags(rest, &["--value", "--journal", "--checkpoint"], 2) {
+            Ok((files, flags)) => cmd::resume::run(
+                &files[0],
+                &files[1],
+                cmd::resume::ResumeOptions {
+                    value: flags[0].as_deref(),
+                    journal: flags[1].as_deref(),
+                    checkpoint: flags[2].as_deref(),
+                },
+            ),
             Err(msg) => usage_error(msg),
         },
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
@@ -72,30 +94,38 @@ fn with_one_file(args: &[String], name: &str, f: fn(&str) -> ExitCode) -> ExitCo
     }
 }
 
-/// `run <input> [--journal <path>]`.
-fn parse_run_args(args: &[String]) -> Result<(String, Option<String>), String> {
-    let mut input = None;
-    let mut journal = None;
+/// Splits arguments into the expected positional files and the values of the
+/// named options, each of which takes one argument.
+fn parse_flags(
+    args: &[String],
+    names: &[&str],
+    expected_files: usize,
+) -> Result<(Vec<String>, Vec<Option<String>>), String> {
+    let mut files: Vec<String> = Vec::new();
+    let mut values: Vec<Option<String>> = vec![None; names.len()];
     let mut i = 0;
     while i < args.len() {
-        match args[i].as_str() {
-            "--journal" => {
+        let arg = args[i].as_str();
+        match names.iter().position(|n| *n == arg) {
+            Some(index) => {
                 i += 1;
-                let value = args.get(i).ok_or("`--journal` needs a path")?;
-                if journal.replace(value.clone()).is_some() {
-                    return Err("`--journal` was given twice".into());
+                let value = args.get(i).ok_or(format!("`{arg}` needs a value"))?;
+                if values[index].replace(value.clone()).is_some() {
+                    return Err(format!("`{arg}` was given twice"));
                 }
             }
-            other if other.starts_with('-') => return Err(format!("unknown option `{other}`")),
-            other => {
-                if input.replace(other.to_string()).is_some() {
-                    return Err("`run` takes exactly one file".into());
-                }
-            }
+            None if arg.starts_with('-') => return Err(format!("unknown option `{arg}`")),
+            None => files.push(arg.to_string()),
         }
         i += 1;
     }
-    Ok((input.ok_or("`run` needs a file")?, journal))
+    if files.len() != expected_files {
+        return Err(format!(
+            "expected {expected_files} file argument(s), got {}",
+            files.len()
+        ));
+    }
+    Ok((files, values))
 }
 
 /// `compile <input> [-o <output>]`.

@@ -1,8 +1,10 @@
 pub mod compile;
 pub mod disasm;
+pub mod drive;
 pub mod hir;
 pub mod journal;
 pub mod parse;
+pub mod resume;
 pub mod run;
 pub mod verify;
 
@@ -15,6 +17,9 @@ use sic_core::{Diagnostic, SourceFile};
 pub const EXIT_USAGE: u8 = 2;
 /// Exit code 1: the program has errors, or running it failed.
 pub const EXIT_FAILURE: u8 = 1;
+/// Exit code 3: the run stopped to wait for something and was checkpointed.
+/// It is not a failure, and a caller has to be able to tell the difference.
+pub const EXIT_SUSPENDED: u8 = 3;
 
 /// Reads a source file.
 ///
