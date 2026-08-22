@@ -1,0 +1,11 @@
+[package]
+name = "sic-syntax"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+sic-core = { path = "../sic-core" }
+
+[lints]
+workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "sic-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "sic"
+path = "src/main.rs"
+
+[dependencies]
+sic-core = { path = "../sic-core" }
+sic-syntax = { path = "../sic-syntax" }
+
+[lints]
+workspace = true

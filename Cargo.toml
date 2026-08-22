@@ -1,0 +1,25 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/sic-core",
+    "crates/sic-syntax",
+    "crates/sic-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+
+# No external dependency is ever added here. To propose one, document in
+# docs/design/ why it is needed, why std is insufficient, how much the
+# dependency tree grows, the cost of writing it by hand, and the security impact.
+[workspace.dependencies]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[profile.release]
+panic = "abort"
+overflow-checks = true

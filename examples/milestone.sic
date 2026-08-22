@@ -1,0 +1,7 @@
+// The first milestone of v0.1.
+// Source -> Lexer -> Parser -> AST -> IR -> Bytecode -> Verifier -> VM -> 30
+fn main() {
+    let x = 10;
+    let y = x + 20;
+    return y;
+}
