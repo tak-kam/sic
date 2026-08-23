@@ -1418,7 +1418,6 @@ impl<'a> Vm<'a> {
     }
 }
 
-/// Converting between a live task and its saved form.
 /// Prefixes a message with the path in the document it is about.
 fn at(path: &str, message: &str) -> String {
     if path.is_empty() {
@@ -1428,6 +1427,7 @@ fn at(path: &str, message: &str) -> String {
     }
 }
 
+/// Converting between a live task and its saved form.
 fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
     checkpoint::TaskSnapshot {
         state: match &task.state {

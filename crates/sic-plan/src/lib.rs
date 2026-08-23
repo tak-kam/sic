@@ -137,7 +137,6 @@ pub struct Grant {
     pub called_from: Vec<String>,
 }
 
-/// Reads a program and works out what it may do.
 /// How many elements the list in `reg` was built from, if a `MAKE_LIST` in this
 /// function built it.
 ///
@@ -172,6 +171,7 @@ fn options_at(
     None
 }
 
+/// Reads a program and works out what it may do.
 pub fn plan(program: &Program, digest: Digest) -> Plan {
     let mut functions = Vec::new();
     let mut bounded_calls: u64 = 0;

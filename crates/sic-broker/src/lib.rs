@@ -514,10 +514,6 @@ fn allowed_path(grant: &CapGrant, requested: &str) -> Result<PathBuf, CapError> 
     Ok(PathBuf::from(requested))
 }
 
-/// The argument at `index`, which must be a string.
-///
-/// The verifier already checked the types, but the broker re-checks them: it is
-/// on the other side of a boundary from whoever produced that bytecode.
 /// The argument vector a call passed, which may not be there at all.
 ///
 /// Leaving it off means passing nothing, so that a program written before
@@ -551,6 +547,10 @@ fn render_args(args: &[String]) -> String {
     format!("[{}]", quoted.join(", "))
 }
 
+/// The argument at `index`, which must be a string.
+///
+/// The verifier already checked the types, but the broker re-checks them: it is
+/// on the other side of a boundary from whoever produced that bytecode.
 fn string_arg(request: &CapRequest, index: usize, expected: usize) -> Result<&str, CapError> {
     if request.args.len() != expected {
         return Err(CapError::new(format!(
