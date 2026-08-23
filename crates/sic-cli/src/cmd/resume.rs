@@ -22,6 +22,8 @@ pub struct ResumeOptions<'a> {
     pub journal: Option<&'a str>,
     /// Where to write the state if the run has to wait again.
     pub checkpoint: Option<&'a str>,
+    /// What is to answer `llm.invoke` from here on.
+    pub llm: Option<&'a str>,
 }
 
 pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>) -> ExitCode {
@@ -86,7 +88,14 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         }
     };
 
-    let mut broker = Broker::new(manifest(&program));
+    let mut broker = match super::run::open_driver(options.llm, None) {
+        Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
+        Ok(None) => Broker::new(manifest(&program)),
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
     let status = vm.resume(value);
     let outcome = drive(&mut vm, &mut broker, status);
     finish(&mut vm, &program, outcome, options.checkpoint, None)

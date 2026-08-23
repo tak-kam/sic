@@ -15,11 +15,14 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record]
+  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record] [--llm SPEC]
                                   compile, verify and run a source file,
                                   optionally recording its execution journal,
                                   saving its state if it has to wait, or
-                                  keeping the whole run with --record
+                                  keeping the whole run with --record;
+                                  --llm <multiplexer>:<agent>, as in tmux:claude,
+                                  answers llm.invoke by driving that agent in a
+                                  pane instead of stopping to ask a person
   sic runs [--waiting]            list recorded runs, or only those waiting
   sic attach <RUN-ID> [--value V] [--because WHY]
                                   see what a waiting run needs, or answer it -
@@ -27,7 +30,7 @@ Usage:
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
-  sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH]
+  sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH] [--llm SPEC]
                                   continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic export <JOURNAL> [--traces PATH] [--metrics PATH]
@@ -64,12 +67,13 @@ fn main() -> ExitCode {
 
     match command.as_str() {
         "run" => match parse_run(rest) {
-            Ok((file, journal, checkpoint, record)) => cmd::run::run(
+            Ok((file, flags, record)) => cmd::run::run(
                 &file,
                 cmd::run::RunOptions {
-                    journal: journal.as_deref(),
-                    checkpoint: checkpoint.as_deref(),
+                    journal: flags[0].as_deref(),
+                    checkpoint: flags[1].as_deref(),
                     record,
+                    llm: flags[2].as_deref(),
                 },
             ),
             Err(msg) => usage_error(msg),
@@ -87,10 +91,15 @@ fn main() -> ExitCode {
         },
         "explain" => with_one_file(rest, "explain", cmd::runs::explain),
         "inspect-run" => with_one_file(rest, "inspect-run", cmd::runs::inspect),
+        // A replay answers from what was recorded. A driver that could reach a
+        // live agent would make it something else.
+        "replay" if rest.iter().any(|a| a == "--llm") => usage_error(
+            "`replay` re-runs a recorded run against its recorded answers, so it takes no driver",
+        ),
         "replay" => with_one_file(rest, "replay", cmd::runs::replay),
         "resume" => match parse_flags(
             rest,
-            &["--value", "--journal", "--checkpoint", "--because"],
+            &["--value", "--journal", "--checkpoint", "--because", "--llm"],
             2,
         ) {
             // A reason needs somewhere to live, and a checkpoint is a run's
@@ -107,6 +116,7 @@ fn main() -> ExitCode {
                     value: flags[0].as_deref(),
                     journal: flags[1].as_deref(),
                     checkpoint: flags[2].as_deref(),
+                    llm: flags[4].as_deref(),
                 },
             ),
             Err(msg) => usage_error(msg),
@@ -158,10 +168,10 @@ fn with_one_file(args: &[String], name: &str, f: fn(&str) -> ExitCode) -> ExitCo
     }
 }
 
-/// `run <input> [--journal PATH] [--checkpoint PATH] [--record]`.
+/// `run <input> [--journal PATH] [--checkpoint PATH] [--llm SPEC] [--record]`.
 ///
 /// `--record` takes no value, so it cannot go through `parse_flags`.
-fn parse_run(args: &[String]) -> Result<(String, Option<String>, Option<String>, bool), String> {
+fn parse_run(args: &[String]) -> Result<(String, Vec<Option<String>>, bool), String> {
     let mut record = false;
     let rest: Vec<String> = args
         .iter()
@@ -175,8 +185,8 @@ fn parse_run(args: &[String]) -> Result<(String, Option<String>, Option<String>,
         })
         .cloned()
         .collect();
-    let (files, flags) = parse_flags(&rest, &["--journal", "--checkpoint"], 1)?;
-    Ok((files[0].clone(), flags[0].clone(), flags[1].clone(), record))
+    let (files, flags) = parse_flags(&rest, &["--journal", "--checkpoint", "--llm"], 1)?;
+    Ok((files[0].clone(), flags, record))
 }
 
 /// `upgrade [--to PATH] [--sha256 HEX] [--check]`.

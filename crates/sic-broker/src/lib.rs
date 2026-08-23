@@ -14,6 +14,12 @@ use std::time::{Duration, Instant};
 
 use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
+pub mod agent;
+pub mod tmux;
+
+pub use agent::{AgentDriver, DriverInfo};
+pub use tmux::TmuxDriver;
+
 /// The largest file `fs.read` will return. A capability that can exhaust the
 /// host's memory is not much of a boundary.
 pub const MAX_READ_BYTES: u64 = 1 << 20;
@@ -33,14 +39,29 @@ const MAX_OUTPUT: usize = 1 << 20;
 /// reading one into memory to check it would be its own problem.
 const HASH_CHUNK: usize = 64 * 1024;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Broker {
     manifest: Vec<CapGrant>,
+    /// What answers `llm.invoke`, when anything does. `None` is not a degraded
+    /// mode: it is what the capability means when nobody named a driver.
+    driver: Option<Box<dyn AgentDriver>>,
 }
 
 impl Broker {
     pub fn new(manifest: Vec<CapGrant>) -> Self {
-        Self { manifest }
+        Self {
+            manifest,
+            driver: None,
+        }
+    }
+
+    /// A broker that can put a prompt in front of an agent instead of
+    /// suspending the run so a person can paste the answer in.
+    pub fn with_driver(manifest: Vec<CapGrant>, driver: Box<dyn AgentDriver>) -> Self {
+        Self {
+            manifest,
+            driver: Some(driver),
+        }
     }
 
     pub fn manifest(&self) -> &[CapGrant] {
@@ -63,7 +84,10 @@ impl Broker {
             "human.approve" => human_approve(&grant, request),
             "process.capture" => process_capture(&grant, request),
             "human.choose" => human_choose(&grant, request),
-            "llm.invoke" => llm_invoke(&grant, request),
+            "llm.invoke" => match self.driver.as_mut() {
+                Some(driver) => llm_driven(&grant, request, driver.as_mut()),
+                None => llm_invoke(&grant, request),
+            },
             other => Err(CapError::new(format!(
                 "`{other}` is in the manifest but this broker cannot perform it"
             ))),
@@ -391,6 +415,30 @@ fn llm_invoke(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapE
     Ok(CapOutcome::Deferred {
         question: format!("[{}] {prompt}", grant.constraint),
     })
+}
+
+/// Asking a model that is running in a pane.
+///
+/// The grant has to name the agent that is going to answer. A program that asks
+/// for one model and is answered by whichever one happened to be installed
+/// would leave a manifest recording a claim that was not true, which is worse
+/// than the call failing.
+fn llm_driven(
+    grant: &CapGrant,
+    request: &CapRequest,
+    driver: &mut dyn AgentDriver,
+) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
+    let prompt = string_arg(request, 0, 1)?.to_string();
+    if grant.constraint != driver.agent_name() {
+        return Err(CapError::new(format!(
+            "the grant asks `{}` to answer, but the driver runs `{}`",
+            grant.constraint,
+            driver.agent_name()
+        )));
+    }
+    let answer = driver.ask(&prompt)?;
+    Ok(CapOutcome::Value(CapValue::Str(answer)))
 }
 
 /// Resolves the path an argument names, refusing anything the grant does not

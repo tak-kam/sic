@@ -94,8 +94,8 @@ carrying accumulated context, and that is `memory: task` - §8.
 
 ### The tmux server is sic's, not the person's
 
-`-L sic` puts the driver on its own socket and `-f /dev/null` ignores the
-person's `tmux.conf`. Two reasons:
+`-L sic` puts the driver on its own socket, `-f /dev/null` ignores the person's
+`tmux.conf`, and `-u` says the pane is UTF-8. Three reasons:
 
 - **The environment.** `new-session` in an existing server runs in *that
   server's* environment, not in the one `sic` was started with. A driver that
@@ -104,14 +104,24 @@ person's `tmux.conf`. Two reasons:
 - **The configuration.** A status line, a different default shell, or
   `set -g mouse` change what `capture-pane` returns. Reading a TUI is fragile
   enough without also reading somebody's dotfiles.
+- **The encoding.** tmux otherwise decides whether a pane is UTF-8 from the
+  locale it was started with, and an answer that depends on whether `LANG` was
+  set is an answer that arrives as mojibake on the machine that did not set it.
 
 ### What the agent inherits
 
 The environment is cleared down to a named list: `HOME`, `PATH`, `TERM`,
 `LANG`, `LC_ALL`, `USER`, `SHELL`, `TMPDIR`.
 
+The pane starts in the directory `sic` was started in. A coding agent reads the
+directory it is in, so that is what decides what it can see, and leaving it to
+whatever the multiplexer picked would leave that to chance.
+
 `HOME` is there because that is where the agent's own login lives, and `PATH`
-because the agent runs tools with it. **No credential variable is passed** - not
+because the agent runs tools with it. `HOME` also means the agent reads its own
+configuration - its instructions, its permissions, its memory - so two machines
+can answer the same prompt differently. That is a property of driving a tool
+that belongs to somebody rather than an API, and it is another reason §7 matters. **No credential variable is passed** - not
 `ANTHROPIC_API_KEY`, not anything else. The agent authenticates as itself, and
 sic never holds the secret it uses; "no implicit credential access" means the
 same thing here that it means everywhere else in this project. An agent that is

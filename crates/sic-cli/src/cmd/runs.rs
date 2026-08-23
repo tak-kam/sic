@@ -214,6 +214,12 @@ pub fn explain(prefix: &str) -> ExitCode {
     if dir.join(store::CHECKPOINT).exists() {
         println!("  checkpoint present: `sic resume` can continue this run");
     }
+    // Reading a terminal user interface is a bet on a version, so a run whose
+    // model calls an agent answered says which build of what answered them.
+    if let Some(driver) = store::read_driver(&dir) {
+        println!("  answered by {} at {}", driver.driver, driver.command);
+        println!("              {}, {}", driver.agent, driver.multiplexer);
+    }
 
     println!();
     for timed in &events {

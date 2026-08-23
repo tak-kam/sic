@@ -19,6 +19,9 @@ pub const PROGRAM: &str = "program.sicb";
 /// docs/design/runs.md.
 pub const RESPONSES: &str = "responses.jsonl";
 pub const CHECKPOINT: &str = "checkpoint.sicc";
+/// What answered the run's model calls, when anything did - see
+/// docs/design/driving.md §5.
+pub const DRIVER: &str = "driver.json";
 
 pub fn store_root() -> PathBuf {
     match std::env::var(STORE_VAR) {
@@ -248,6 +251,41 @@ fn answer_to_json(answer: &Answer<'_>) -> String {
     }
     out.push('}');
     out
+}
+
+/// Records what is going to answer this run's model calls.
+///
+/// Not a journal event: the journal has a fixed vocabulary of events about what
+/// the *program* did, and records digests rather than values. Which build of
+/// which tool was on this machine is neither, and it is exactly what a person
+/// reading a run's answers back needs to know, because reading a terminal user
+/// interface is a bet on a version.
+pub fn record_driver(dir: &Path, info: &sic_broker::DriverInfo) -> Result<(), String> {
+    let json = format!(
+        "{{\"driver\":{},\"command\":{},\"agent\":{},\"multiplexer\":{}}}\n",
+        json_string(&info.driver),
+        json_string(&info.command),
+        json_string(&info.agent),
+        json_string(&info.multiplexer),
+    );
+    let path = dir.join(DRIVER);
+    std::fs::write(&path, json).map_err(|e| format!("cannot write `{}`: {e}", path.display()))
+}
+
+/// What answered a recorded run, if anything did.
+pub fn read_driver(dir: &Path) -> Option<sic_broker::DriverInfo> {
+    let text = std::fs::read_to_string(dir.join(DRIVER)).ok()?;
+    let json = sic_json::parse(&text).ok()?;
+    let field = |name: &str| match json.member(name) {
+        Some(sic_json::Json::Str(s)) => s.clone(),
+        _ => String::new(),
+    };
+    Some(sic_broker::DriverInfo {
+        driver: field("driver"),
+        command: field("command"),
+        agent: field("agent"),
+        multiplexer: field("multiplexer"),
+    })
 }
 
 fn json_string(value: &str) -> String {

@@ -184,6 +184,14 @@ comes back is text; what the program gets is a value that fit a declared type,
 and a run fails at the model boundary rather than three steps later.
 → [agents.md](docs/design/agents.md)
 
+**A model call answered by an agent CLI.** `sic run p.sic --llm tmux:claude`
+puts the prompt in front of a real coding agent in a tmux pane and reads the
+answer back, instead of stopping so a person can paste one in. The multiplexer
+lives in the broker rather than in the language: a program granted
+`process.exec "/usr/bin/tmux"` could reach every pane on the machine. Nothing
+answers unless it was asked for by name.
+→ [driving.md](docs/design/driving.md)
+
 **Trust and provenance.** `LLM<T>` is attached by an agent, `HumanApproved<T>`
 by `approve`, and a model's answer cannot reach a capability that changes
 something. Reading a field keeps the label. It is all erased before the bytecode:
@@ -205,7 +213,7 @@ compares - which is a check on determinism, and calls nothing.
 ## Commands
 
 ```text
-sic run <FILE.sic> [--journal P] [--checkpoint P] [--record]
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC]
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
 sic attach <RUN-ID> [--value V] [--because WHY]
@@ -233,6 +241,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
 | [plan.md](docs/design/plan.md) | `sic plan` |
+| [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |

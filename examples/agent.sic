@@ -4,12 +4,14 @@
 // `Diagnosis` before the program can read `d.cause`. Nothing in the VM knows
 // what an agent is - the declaration lowers to CALL_CAP and FROM_JSON.
 //
-// This broker defers a model call, because calling one means TLS. So the run
-// stops and continues when the answer arrives:
+// A model call with no driver named defers, so the run stops and continues when
+// the answer arrives:
 //
 //     sic run examples/agent.sic --checkpoint ask.sicc
 //     sic resume ask.sicc examples/agent.sic \
 //         --value '{"cause": "disk full", "confidence": 0.9}'
+//
+// `examples/driven.sic` is the same shape with an agent CLI answering it.
 //
 // `budget` is how many model calls this agent may make in a whole run.
 type Diagnosis {

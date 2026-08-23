@@ -552,3 +552,223 @@ fn capture_refuses_a_deadline_it_cannot_honour() {
         .expect_err("a deadline nothing enforces is refused");
     assert!(err.message.contains("timeout"), "{}", err.message);
 }
+
+// ---- driving an agent CLI: docs/design/driving.md ----
+
+use crate::agent::{
+    AgentDriver, DriverInfo, answer_from, ask_text, begin_marker, check_size, end_marker,
+    new_marker_id,
+};
+
+/// A driver that answers from a script, so that everything except the pane can
+/// be tested.
+#[derive(Debug)]
+struct FakeAgent {
+    name: String,
+    info: DriverInfo,
+    said: Vec<String>,
+    asked: Vec<String>,
+}
+
+impl FakeAgent {
+    fn new(name: &str, said: &[&str]) -> FakeAgent {
+        FakeAgent {
+            name: name.into(),
+            info: DriverInfo {
+                driver: format!("fake:{name}"),
+                command: format!("/nowhere/{name}"),
+                agent: format!("{name} 0.0.0"),
+                multiplexer: "none".into(),
+            },
+            said: said.iter().map(|s| (*s).to_string()).collect(),
+            asked: Vec::new(),
+        }
+    }
+}
+
+impl AgentDriver for FakeAgent {
+    fn agent_name(&self) -> &str {
+        &self.name
+    }
+    fn info(&self) -> &DriverInfo {
+        &self.info
+    }
+    fn ask(&mut self, prompt: &str) -> Result<String, CapError> {
+        self.asked.push(prompt.to_string());
+        match self.said.is_empty() {
+            true => Err(CapError::new("the agent has nothing left to say")),
+            false => Ok(self.said.remove(0)),
+        }
+    }
+}
+
+fn invoke(prompt: &str) -> CapRequest {
+    request(0, "llm.invoke", &[prompt])
+}
+
+#[test]
+fn a_broker_with_no_driver_still_defers() {
+    let mut broker = Broker::new(vec![grant("llm.invoke", CapKind::Invoke, "claude")]);
+    let answer = broker.call(&invoke("why is it slow?"));
+    assert_eq!(
+        answer,
+        Ok(CapOutcome::Deferred {
+            question: "[claude] why is it slow?".into()
+        })
+    );
+}
+
+#[test]
+fn a_driver_answers_within_the_call() {
+    let mut broker = Broker::with_driver(
+        vec![grant("llm.invoke", CapKind::Invoke, "claude")],
+        Box::new(FakeAgent::new("claude", &["{\"cause\":\"disk full\"}"])),
+    );
+    let answer = broker.call(&invoke("why is it slow?"));
+    assert_eq!(
+        answer,
+        Ok(CapOutcome::Value(CapValue::Str(
+            "{\"cause\":\"disk full\"}".into()
+        )))
+    );
+}
+
+#[test]
+fn a_grant_naming_another_agent_is_refused() {
+    // Answering with whatever happened to be installed would leave the
+    // manifest recording a claim that was not true.
+    let mut broker = Broker::with_driver(
+        vec![grant("llm.invoke", CapKind::Invoke, "gpt-5")],
+        Box::new(FakeAgent::new("claude", &["anything"])),
+    );
+    let error = broker
+        .call(&invoke("hello"))
+        .expect_err("the grant disagrees");
+    assert!(error.message.contains("gpt-5"), "{}", error.message);
+    assert!(error.message.contains("claude"), "{}", error.message);
+}
+
+#[test]
+fn a_driven_call_still_refuses_a_deadline() {
+    let mut broker = Broker::with_driver(
+        vec![grant("llm.invoke", CapKind::Invoke, "claude")],
+        Box::new(FakeAgent::new("claude", &["anything"])),
+    );
+    let mut request = invoke("hello");
+    request.timeout_ms = 10;
+    let error = broker.call(&request).expect_err("a deadline is refused");
+    assert!(error.message.contains("cannot honour a timeout"));
+}
+
+#[test]
+fn the_instructions_never_contain_the_marker_they_describe() {
+    // The whole protocol rests on this. Whatever is typed into a pane is echoed
+    // back into it, so instructions holding the literal marker would put a
+    // complete-looking answer on screen before the agent had answered anything.
+    let id = "9f2c1a4b";
+    let text = ask_text("why is it slow?", id);
+    assert!(!text.contains(&begin_marker(id)), "{text}");
+    assert!(!text.contains(&end_marker(id)), "{text}");
+    // And it is not because the id is missing: the pieces are all there.
+    assert!(text.contains(id));
+    assert!(answer_from(&text, id).is_none());
+}
+
+#[test]
+fn an_answer_is_what_lies_between_the_markers() {
+    let id = "abc123";
+    let screen = format!(
+        "some banner\n{}\n{{\"cause\": \"disk full\"}}\n{}\n",
+        begin_marker(id),
+        end_marker(id)
+    );
+    assert_eq!(
+        answer_from(&screen, id).as_deref(),
+        Some("{\"cause\": \"disk full\"}")
+    );
+}
+
+#[test]
+fn an_unfinished_answer_is_not_one() {
+    let id = "abc123";
+    let screen = format!("{}\n{{\"cause\": \"disk", begin_marker(id));
+    assert_eq!(answer_from(&screen, id), None);
+    assert_eq!(answer_from("nothing at all", id), None);
+}
+
+#[test]
+fn the_last_answer_on_the_screen_is_the_one_that_counts() {
+    // An agent that answered twice - a retry inside its own conversation - has
+    // the answer that counts last.
+    let id = "abc123";
+    let screen = format!(
+        "{b}\nfirst\n{e}\nthinking again\n{b}\nsecond\n{e}\n",
+        b = begin_marker(id),
+        e = end_marker(id)
+    );
+    assert_eq!(answer_from(&screen, id).as_deref(), Some("second"));
+}
+
+#[test]
+fn a_marker_from_another_call_does_not_end_this_one() {
+    let screen = format!(
+        "{}\nan older answer\n{}\n",
+        begin_marker("old00000"),
+        end_marker("old00000")
+    );
+    assert_eq!(answer_from(&screen, "new00000"), None);
+}
+
+#[test]
+fn the_interface_is_stripped_from_the_answer() {
+    // What `capture-pane` gives back: bullets on the agent's lines, the input
+    // box drawn underneath, and every line padded out to the pane's width.
+    let id = "abc123";
+    let screen = format!(
+        "⏺ Reading the logs…                    \n\
+         ⏺ {b}                                  \n\
+         \x20 {{                                \n\
+         \x20   \"cause\": \"disk full\"         \n\
+         \x20 }}                                \n\
+         \x20 {e}                               \n\
+         ╭──────────────────────────────────────╮\n\
+         │ >                                    │\n\
+         ╰──────────────────────────────────────╯\n",
+        b = begin_marker(id),
+        e = end_marker(id)
+    );
+    assert_eq!(
+        answer_from(&screen, id).as_deref(),
+        Some("{\n\"cause\": \"disk full\"\n}")
+    );
+}
+
+#[test]
+fn two_ids_are_not_the_same_id() {
+    assert_ne!(new_marker_id(), new_marker_id());
+}
+
+#[test]
+fn a_pane_too_large_to_be_an_answer_is_refused() {
+    assert!(check_size("small").is_ok());
+    let huge = "x".repeat(crate::agent::MAX_ANSWER + 1);
+    let error = check_size(&huge).expect_err("over the limit");
+    assert!(error.message.contains("over the"), "{}", error.message);
+}
+
+#[test]
+fn a_driver_spec_says_what_drives_what() {
+    // These fail on the spec, before anything is looked for on the machine.
+    let error = crate::TmuxDriver::open("claude").expect_err("no multiplexer");
+    assert!(error.message.contains("tmux:claude"), "{}", error.message);
+
+    let error = crate::TmuxDriver::open("screen:claude").expect_err("not tmux");
+    assert!(error.message.contains("only one"), "{}", error.message);
+
+    let error = crate::TmuxDriver::open("tmux:").expect_err("no agent");
+    assert!(
+        error.message.contains("names no agent"),
+        "{}",
+        error.message
+    );
+}

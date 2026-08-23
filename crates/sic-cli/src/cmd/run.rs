@@ -7,7 +7,7 @@
 
 use std::process::ExitCode;
 
-use sic_broker::Broker;
+use sic_broker::{AgentDriver, Broker};
 use sic_bytecode::Program;
 use sic_core::Digest;
 use sic_journal::Journal;
@@ -25,6 +25,9 @@ pub struct RunOptions<'a> {
     /// Keep the whole run - bytecode, journal, and what the broker answered -
     /// so it can be explained and replayed later.
     pub record: bool,
+    /// What is to answer `llm.invoke`, as `<multiplexer>:<agent>`. Without one
+    /// a model call defers, which is what it has always done.
+    pub llm: Option<&'a str>,
 }
 
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
@@ -100,8 +103,18 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         None => Journal::new(run_id, Box::new(sic_journal::NullSink)),
     };
 
+    // Opened before the run starts, so a run that is going to fail for want of
+    // a tool fails before it has done anything.
+    let mut broker = match open_driver(options.llm, recording.as_deref()) {
+        Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
+        Ok(None) => Broker::new(manifest(&program)),
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
+
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
-    let mut broker = Broker::new(manifest(&program));
     let status = vm.run(entry, &[]);
     let outcome = drive_recording(&mut vm, &mut broker, status, recording.as_deref());
 
@@ -123,6 +136,31 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         checkpoint.as_deref(),
         hint.as_deref(),
     )
+}
+
+/// Opens the driver a run was told to use, and records what it turned out to
+/// be.
+///
+/// Nothing is chosen here. A driver that started answering model calls because
+/// it happened to be installed would make what a run did depend on what was
+/// lying around, which is the same argument as refusing to search `PATH`.
+pub fn open_driver(
+    spec: Option<&str>,
+    recording: Option<&std::path::Path>,
+) -> Result<Option<Box<dyn sic_broker::AgentDriver>>, String> {
+    let Some(spec) = spec else {
+        return Ok(None);
+    };
+    let driver = sic_broker::TmuxDriver::open(spec).map_err(|e| e.message)?;
+    let info = driver.info().clone();
+    if let Some(dir) = recording {
+        store::record_driver(dir, &info)?;
+    }
+    eprintln!(
+        "llm.invoke answered by {} - {}, {}",
+        info.driver, info.agent, info.multiplexer
+    );
+    Ok(Some(Box::new(driver)))
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.

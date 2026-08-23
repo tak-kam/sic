@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 416 tests.
+Last updated at 433 tests.
 
 ---
 
@@ -33,6 +33,7 @@ Last updated at 416 tests.
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `update`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan` | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
+| - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring | `docs/design/driving.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
@@ -40,10 +41,14 @@ Last updated at 416 tests.
 
 ## Partly built
 
-**§17, agents.** An agent is a model call and a validation, with a budget. Tools,
-memory and execution history are not there: an agent that can call tools is an
-agent that can loop, and a loop whose stopping condition is a model's output
-needs a budget that counts more than calls.
+**§17, agents.** An agent is a model call and a validation, with a budget. A
+driver can now put that call in front of a real agent CLI
+(`docs/design/driving.md`), which is where the rest of the section starts to
+cost something: the agent runs its own loop of tool uses inside one call, so the
+driver counts 1 where the machine did 200, and the grant that let the program
+ask says nothing about what the agent did while answering. `sic plan` prints
+that as a warning rather than leaving it out. Memory - one conversation for as
+long as a task - is the other half of the driving work.
 
 **§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
 `HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because

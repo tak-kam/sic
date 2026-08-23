@@ -78,7 +78,7 @@ The journal records digests, never values. A checkpoint and a recorded run's
 ## Commands
 
 ```text
-sic run <FILE.sic> [--journal P] [--checkpoint P] [--record]
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC]
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic plan <FILE.sic|FILE.sicb>     what a program may do, running nothing
 sic runs [--waiting] | attach <ID> [--value V] [--because WHY]

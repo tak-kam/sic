@@ -2359,3 +2359,66 @@ fn resume_says_it_cannot_record_a_reason() {
     assert!(stderr.contains("cannot record a reason"), "{stderr}");
     std::fs::remove_file(checkpoint).ok();
 }
+
+// ---- driving an agent CLI: docs/design/driving.md ----
+
+/// Nothing answers a model call because it happened to be installed, so the
+/// spec has to say what drives what.
+#[test]
+fn a_driver_spec_names_a_multiplexer_and_an_agent() {
+    let src = example("driven.sic");
+
+    let (_, stderr, code) = sic(&["run", &src, "--llm", "claude"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("tmux:claude"), "{stderr}");
+
+    let (_, stderr, code) = sic(&["run", &src, "--llm", "screen:claude"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("only one"), "{stderr}");
+
+    // A driver that cannot be opened stops the run before it has done
+    // anything, rather than at the first model call.
+    let (_, stderr, code) = sic(&["run", &src, "--llm", "tmux:no-such-agent-exists"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("no `no-such-agent-exists`"), "{stderr}");
+}
+
+/// A replay answers from what was recorded. Reaching a live agent would make it
+/// something else.
+#[test]
+fn replay_takes_no_driver() {
+    let (_, stderr, code) = sic(&["replay", "0000", "--llm", "tmux:claude"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("takes no driver"), "{stderr}");
+}
+
+/// Without a driver a model call defers, which is what it has always done.
+#[test]
+fn without_a_driver_a_model_call_still_waits() {
+    let checkpoint = write_temp("driven.sicc", "");
+    let (_, stderr, code) = sic(&[
+        "run",
+        &example("driven.sic"),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(stderr.contains("[claude]"), "{stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}
+
+/// The plan has to say what a grant of `llm.invoke` does not cover, because
+/// saying nothing would be the manifest quiet about the largest thing in it.
+#[test]
+fn a_plan_says_what_a_model_grant_does_not_cover() {
+    let (stdout, stderr, code) = sic(&["plan", &example("driven.sic")]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("what the agent may do while answering"),
+        "{stdout}"
+    );
+    // And not on a grant answered by a person, who does not edit files while
+    // they think.
+    let (stdout, _, _) = sic(&["plan", &example("decision.sic")]);
+    assert!(!stdout.contains("while answering"), "{stdout}");
+}

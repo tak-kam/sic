@@ -1,0 +1,36 @@
+// Answering a model call by driving an agent CLI in a pane.
+//
+//     sic run examples/driven.sic --llm tmux:claude --record
+//
+// Without `--llm` this run stops and waits for a person to paste the answer in,
+// exactly as `examples/agent.sic` does. That is not a fallback: it is what
+// `llm.invoke` means when nobody named a driver. Nothing starts answering model
+// calls because it happened to be installed.
+//
+// The grant names the agent that will answer, and the driver has to be the same
+// one. A program that asks for something else fails the call rather than being
+// answered by whatever was there - see docs/design/driving.md.
+//
+// What this grant does *not* say is what the agent may do while it is
+// answering. `sic plan examples/driven.sic` prints that as a warning, because a
+// plan that left it out would be the manifest quiet about the largest thing in
+// it.
+type Ticket {
+    title: String,
+    severity: Int,
+}
+
+allow {
+    llm.invoke "claude";
+}
+
+agent triage {
+    input: String,
+    output: Ticket,
+    budget: 1,
+}
+
+fn main() -> LLM<String> {
+    let t = triage("the deploy job has been queued for an hour");
+    return t.title;
+}

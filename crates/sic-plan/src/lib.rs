@@ -360,6 +360,18 @@ pub fn render(plan: &Plan, source: &str) -> String {
             out.push_str(&format!("  sha256:{}", grant.pin));
         }
         out.push('\n');
+        // The one grant whose answer comes from something that acts on its own.
+        // `human.approve` and `human.choose` are the same kind, but a person
+        // answering a question does not edit files while they think, and an
+        // agent does - so a plan that printed one confident line here would be
+        // the manifest lying about the most important thing in it. See
+        // `docs/design/driving.md` §7.
+        if grant.name == "llm.invoke" {
+            out.push_str(
+                "    warning: this grant says what the program may ask for, not\n\
+                 \x20            what the agent may do while answering\n",
+            );
+        }
         if plan.multi_file && !grant.called_from.is_empty() {
             out.push_str(&format!(
                 "    called from {}\n",
