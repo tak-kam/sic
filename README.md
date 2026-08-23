@@ -55,7 +55,21 @@ written by hand.
 
 ## Install
 
-Rust 1.85 or newer, and a C linker.
+From a release, which publishes a static Linux binary, both macOS
+architectures, and Windows, with a `SHA256SUMS` beside them:
+
+```console
+$ tar xzf sic-v0.1.0-x86_64-unknown-linux-musl.tar.gz
+$ ./sic-v0.1.0-x86_64-unknown-linux-musl/sic version
+```
+
+Or with cargo, which needs Rust 1.85 or newer:
+
+```console
+$ cargo install --git https://github.com/tak-kam/sic sic-cli
+```
+
+Or from source:
 
 ```console
 $ git clone https://github.com/tak-kam/sic

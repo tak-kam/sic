@@ -1,0 +1,106 @@
+# Builds and publishes binaries when a version tag is pushed.
+#
+# `actions/checkout` is again the only third-party action: `gh` is already on
+# every runner, so the release itself is made with it rather than with an action
+# that would have to be trusted.
+#
+# Every artifact is listed in SHA256SUMS. That is not decoration - `sic` pins
+# executables by digest, and an update mechanism would check one, so a release
+# that does not publish its own digests would be asking for trust it has not
+# earned.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Draft the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --draft \
+            --title "${{ github.ref_name }}" \
+            --notes "See the commit history for what changed. Binaries and SHA256SUMS are attached below."
+
+  build:
+    needs: create
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # musl, so one Linux binary runs anywhere. Nothing here links a C
+          # library, so it is a static build with no cross toolchain.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          name="sic-${{ github.ref_name }}-${{ matrix.target }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            7z a "$name.zip" "./target/${{ matrix.target }}/release/sic.exe" \
+              LICENSE-MIT LICENSE-APACHE README.md
+          else
+            mkdir -p "$name"
+            cp "target/${{ matrix.target }}/release/sic" "$name/"
+            cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
+            tar czf "$name.tar.gz" "$name"
+          fi
+
+      - name: Upload
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          name="sic-${{ github.ref_name }}-${{ matrix.target }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            gh release upload "${{ github.ref_name }}" "$name.zip"
+          else
+            gh release upload "${{ github.ref_name }}" "$name.tar.gz"
+          fi
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist && cd dist
+          gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}"
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          gh release upload "${{ github.ref_name }}" SHA256SUMS --repo "${{ github.repository }}"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${{ github.ref_name }}" --draft=false
