@@ -1179,6 +1179,178 @@ fn a_program_with_no_effects_plans_to_nothing() {
     assert!(stdout.contains("No capability calls."), "{stdout}");
 }
 
+// ---- the plan against the run ----
+//
+// `sic plan` says what a program may do, and the decision it exists for is made
+// before the run. A plan that names a capability too many is a nuisance; a plan
+// that misses one is a false statement made to whoever is deciding. Every other
+// plan test asserts what the plan says against what the test built, which cannot
+// catch a plan that misses something. These two compare it to a different
+// source: what a recorded run actually asked the broker for.
+
+/// The verbs a plan leads a capability call with. `VERIFY`, `SPAWN` and `AWAIT`
+/// are steps too, and none of them reaches outside.
+const CAPABILITY_VERBS: &[&str] = &[
+    "READ", "WRITE", "EXEC", "INVOKE", "CAPTURE", "CHOOSE", "APPROVE",
+];
+
+/// The capabilities a rendered plan names at a call site.
+///
+/// Read from the steps rather than from the `Capabilities:` section, because the
+/// section is the manifest read back and the steps are what the plan's walker
+/// found in the code. A walker that skipped a `CALL_CAP` would still print the
+/// manifest entry for it, so a test that read the section would pass while the
+/// plan under-reported.
+fn capabilities_a_plan_names(stdout: &str) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for line in stdout.lines() {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        // `    1. READ     fs.read   "./examples/greeting.txt"   ; 12:12`
+        let [index, verb, name, ..] = fields.as_slice() else {
+            continue;
+        };
+        if index.ends_with('.') && CAPABILITY_VERBS.contains(verb) {
+            names.insert((*name).to_string());
+        }
+    }
+    names
+}
+
+/// The capabilities a recorded run asked for, from the run's own journal.
+///
+/// `CapabilityRequested` is emitted where the VM suspends to have a call
+/// performed, so this is what the program reached for, not what it was allowed
+/// to reach for.
+fn capabilities_a_run_requested(store: &std::path::Path) -> std::collections::BTreeSet<String> {
+    let dir = std::fs::read_dir(store)
+        .expect("the run store should exist")
+        .flatten()
+        .next()
+        .expect("the run should have been recorded")
+        .path();
+    let journal = std::fs::read_to_string(dir.join("journal.jsonl")).expect("a recorded journal");
+
+    let mut names = std::collections::BTreeSet::new();
+    for line in journal.lines() {
+        if !line.contains("\"event\":\"capability_requested\"") {
+            continue;
+        }
+        let Some(at) = line.find("\"cap\":\"") else {
+            continue;
+        };
+        let rest = &line[at + "\"cap\":\"".len()..];
+        let Some(end) = rest.find('"') else { continue };
+        names.insert(rest[..end].to_string());
+    }
+    names
+}
+
+/// Asserts the one direction that matters, and says which way it is.
+fn the_plan_does_not_under_report(
+    planned: &std::collections::BTreeSet<String>,
+    requested: &std::collections::BTreeSet<String>,
+) {
+    let missing: Vec<&String> = requested.difference(planned).collect();
+    assert!(
+        missing.is_empty(),
+        "the run called {missing:?}, which the plan did not name. A plan may \
+         over-report - a grant that is never spent is a warning, not a lie - \
+         and may never under-report, because the decision it is read for is \
+         made before the run. Planned: {planned:?}. Called: {requested:?}"
+    );
+}
+
+#[test]
+fn a_plan_names_the_capabilities_a_run_reaches_behind_a_branch() {
+    // A call inside an `if`, in a function other than `main`, is one of the two
+    // shapes a plan that walked only the obvious path would miss.
+    let store = temp_store("plan-branch");
+    let target = write_temp("plan-run-target.txt", "");
+    let target = target.to_str().unwrap().to_string();
+    let src = write_temp(
+        "plan-branch.sic",
+        &format!(
+            "allow {{\n\
+             \x20   fs.read \"./examples/greeting.txt\";\n\
+             \x20   fs.write {target:?};\n\
+             }}\n\
+             \n\
+             fn pick(n: Int) -> String {{\n\
+             \x20   if n > 0 {{\n\
+             \x20       return fs.read(\"./examples/greeting.txt\");\n\
+             \x20   }}\n\
+             \x20   return \"nothing\";\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   let text = pick(1);\n\
+             \x20   fs.write({target:?}, \"done\");\n\
+             \x20   return len(text);\n\
+             }}\n"
+        ),
+    );
+
+    let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let planned = capabilities_a_plan_names(&stdout);
+
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let requested = capabilities_a_run_requested(&store);
+
+    // Both calls happen on the path this run takes, so an empty set would mean
+    // the test proved nothing rather than that the plan was right.
+    assert_eq!(
+        requested,
+        ["fs.read".to_string(), "fs.write".to_string()].into(),
+        "the run did not reach what this program was written to reach"
+    );
+    the_plan_does_not_under_report(&planned, &requested);
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(target).ok();
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn a_plan_names_a_capability_a_run_reaches_through_an_imported_module() {
+    // The other shape: the call is in a file the command line never names, and
+    // the grant is in the file that is run. `examples/import.sic` is the
+    // program this is true of, so the test plans and runs the real one.
+    //
+    // What this comparison cannot catch is worth writing down. A capability call
+    // in an imported module is also where a real miscompile lives (#36), and a
+    // program it hits never asks for the capability at all - so the journal is
+    // empty, and an empty set is a subset of anything. Ground truth here is what
+    // a run did, which says nothing about a call that was compiled away before
+    // the run began.
+    let store = temp_store("plan-import");
+
+    let (stdout, stderr, code) = sic(&["plan", &example("import.sic")]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let planned = capabilities_a_plan_names(&stdout);
+
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("import.sic"), "--record"],
+    );
+    // The program runs `/bin/echo`, and a machine without one should say so
+    // rather than skip quietly: a test that passes by not running is worse than
+    // one that fails.
+    assert_eq!(code, 0, "stderr: {stderr}");
+    let requested = capabilities_a_run_requested(&store);
+
+    assert_eq!(requested, ["process.exec".to_string()].into());
+    the_plan_does_not_under_report(&planned, &requested);
+
+    std::fs::remove_dir_all(store).ok();
+}
+
 // ---- trust and provenance ----
 
 #[test]
