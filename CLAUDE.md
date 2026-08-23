@@ -114,6 +114,30 @@ Keep an issue in the register of the design documents: prose that argues, a
 table where a table earns its place, and a section on what is deliberately not
 in it.
 
+## One issue, one worktree
+
+Work on an issue in a git worktree of its own, not in the checkout you happen to
+be standing in:
+
+```console
+$ git worktree add ../sic-19 -b issue-19
+$ cd ../sic-19
+```
+
+Two reasons, and the first is the one that decides. **More than one piece of
+work runs at a time here** - a fix, a survey, a documentation pass - and they
+share a filesystem. Two of them editing one checkout means `git add -A` stages
+somebody else's half-finished change, `cargo fmt --all` reformats a file being
+written, and a test failure belongs to whoever ran it last. None of that is
+recoverable from the commit history, because it happens before the commit.
+
+The second: a worktree makes abandoning a line of work free. Delete it. The
+alternative is a stash nobody remembers the reason for.
+
+Branch per issue, named for it (`issue-19`), merged to `main` when it is done
+and the worktree removed with `git worktree remove`. `main` refuses force
+pushes, so the branch is where a history is still allowed to be untidy.
+
 ## CI
 
 `.github/workflows/ci.yml` runs formatting, clippy with warnings denied, the
