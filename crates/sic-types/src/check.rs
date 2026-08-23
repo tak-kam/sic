@@ -380,6 +380,23 @@ impl Checker {
                     Some(pin) => pin.text.to_ascii_lowercase(),
                     None => String::new(),
                 };
+                // Only a capability that takes an argument vector can pin
+                // what that vector starts with.
+                let takes_args = sig.params.last() == Some(&Types::LIST_STR);
+                let mut args = Vec::new();
+                for arg in &grant.args {
+                    if takes_args {
+                        args.push(arg.text.clone());
+                    } else {
+                        self.error(
+                            "E0328",
+                            format!("`{full}` does not take arguments"),
+                            arg.span,
+                            "only `process.exec` runs something that can be given any",
+                        );
+                        break;
+                    }
+                }
                 let id = CapId(self.caps.len() as u32);
                 self.cap_ids.insert(full.clone(), id);
                 self.caps.push(CapEntry {
@@ -387,7 +404,9 @@ impl Checker {
                     kind: sig.kind,
                     constraint,
                     pin,
+                    args,
                     params: sig.params.to_vec(),
+                    optional_tail: sig.optional_tail,
                     ret: sig.ret,
                 });
             }
@@ -1182,15 +1201,21 @@ impl Checker {
 
         let entry = &self.caps[id.index()];
         let (params, ret) = (entry.params.clone(), entry.ret);
-        if args.len() != params.len() {
+        // An optional tail means the call may stop one short of the signature.
+        let least = params.len() - usize::from(entry.optional_tail);
+        if args.len() < least || args.len() > params.len() {
             for a in args {
                 self.check_expr(a);
             }
+            let wanted = if least == params.len() {
+                format!("{least}")
+            } else {
+                format!("{least} or {}", params.len())
+            };
             self.error(
                 "E0302",
                 format!(
-                    "`{full}` takes {} argument(s) but {} were given",
-                    params.len(),
+                    "`{full}` takes {wanted} argument(s) but {} were given",
                     args.len()
                 ),
                 span,

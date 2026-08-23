@@ -208,6 +208,13 @@ fn answer_to_json(value: &sic_core::CapValue) -> String {
         CapValue::I64(v) => v.to_string(),
         CapValue::F64(v) => format!("{v:?}"),
         CapValue::Str(s) => json_string(s),
+        // No capability answers with one yet; an argument vector goes the
+        // other way. Recording it as an array keeps the file readable if one
+        // ever does.
+        CapValue::List(items) => {
+            let parts: Vec<String> = items.iter().map(|i| json_string(i)).collect();
+            format!("[{}]", parts.join(","))
+        }
     };
     format!("{{\"value\":{rendered}}}")
 }

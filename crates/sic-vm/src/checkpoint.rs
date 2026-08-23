@@ -26,7 +26,8 @@ pub const MAGIC: [u8; 4] = *b"SICC";
 pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 1 for tasks: a phase 5 checkpoint holds one implicit task and
 /// cannot be read as this. Refusing it is better than half-understanding it.
-pub const VERSION_MINOR: u16 = 2;
+/// Bumped from 2 for argument vectors, which a suspended call may carry.
+pub const VERSION_MINOR: u16 = 3;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -603,6 +604,13 @@ fn write_cap_value(w: &mut Writer, value: &CapValue) {
             w.u8(3);
             w.f64(*v);
         }
+        CapValue::List(items) => {
+            w.u8(5);
+            w.u32(items.len() as u32);
+            for item in items {
+                w.str(item);
+            }
+        }
         CapValue::Str(s) => {
             w.u8(4);
             w.str(s);
@@ -617,10 +625,41 @@ fn read_cap_value(r: &mut Reader<'_>) -> Result<CapValue> {
         2 => CapValue::I64(r.i64()?),
         3 => CapValue::F64(r.f64()?),
         4 => CapValue::Str(r.str()?),
+        5 => {
+            let n = r.count(1)?;
+            let mut items = Vec::with_capacity(n);
+            for _ in 0..n {
+                items.push(r.str()?);
+            }
+            CapValue::List(items)
+        }
         other => {
             return Err(CheckpointError::new(format!(
                 "unknown capability value tag {other} in a checkpoint"
             )));
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Nothing that suspends takes an argument vector yet, so this pair is not
+    /// reachable through a run. The format still has to hold every `CapValue`,
+    /// and a format is checked rather than assumed.
+    #[test]
+    fn an_argument_vector_survives_the_format() {
+        for value in [
+            CapValue::List(Vec::new()),
+            CapValue::List(vec!["send-keys".into(), "-t".into(), "sic:0".into()]),
+            CapValue::List(vec![String::new(), "  ".into(), "\u{3053}".into()]),
+        ] {
+            let mut w = Writer::new();
+            write_cap_value(&mut w, &value);
+            let bytes = w.finish();
+            let mut r = Reader::new(&bytes);
+            assert_eq!(read_cap_value(&mut r).unwrap(), value);
+        }
+    }
 }

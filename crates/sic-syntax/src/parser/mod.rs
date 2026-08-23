@@ -460,6 +460,15 @@ impl Parser {
             }
             _ => None,
         };
+        // `args ["send-keys", "-t", "sic:0"]` pins what the argument vector
+        // has to start with. Like `sha256`, it is an ordinary identifier.
+        let args = match self.peek().clone() {
+            TokenKind::Ident(name) if name == "args" => {
+                self.bump();
+                self.parse_grant_args()
+            }
+            _ => Vec::new(),
+        };
         // `sha256 "..."` pins what may run. It is an ordinary identifier, so
         // nothing is reserved for it.
         let sha256 = match self.peek().clone() {
@@ -492,7 +501,42 @@ impl Parser {
             path,
             constraint,
             sha256,
+            args,
             span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// `["send-keys", "-t", "sic:0"]`: the strings a call's arguments have to
+    /// start with. Only literals, because a grant is read before anything runs.
+    fn parse_grant_args(&mut self) -> Vec<Ident2> {
+        let mut out = Vec::new();
+        if !self.expect(&TokenKind::LBracket, "after `args`") {
+            return out;
+        }
+        loop {
+            match self.peek().clone() {
+                TokenKind::RBracket => {
+                    self.bump();
+                    return out;
+                }
+                TokenKind::Str(text) => {
+                    let span = self.bump().span;
+                    out.push(Ident2 { text, span });
+                    if self.at(&TokenKind::Comma) {
+                        self.bump();
+                    }
+                }
+                other => {
+                    let span = self.span();
+                    self.error(
+                        "E0213",
+                        "`args` takes a list of strings",
+                        span,
+                        format!("found {}", other.describe()),
+                    );
+                    return out;
+                }
+            }
         }
     }
 

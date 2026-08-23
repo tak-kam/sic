@@ -8,12 +8,14 @@ fn grant(name: &str, kind: CapKind, constraint: &str) -> CapGrant {
         kind,
         constraint: constraint.into(),
         pin: String::new(),
+        args: Vec::new(),
     }
 }
 
 fn pinned(name: &str, kind: CapKind, constraint: &str, pin: &str) -> CapGrant {
     CapGrant {
         pin: pin.into(),
+        args: Vec::new(),
         ..grant(name, kind, constraint)
     }
 }
@@ -369,4 +371,89 @@ fn a_pin_is_checked_on_every_call() {
     );
 
     std::fs::remove_file(&script).ok();
+}
+
+// ---- argument vectors ----
+
+/// A grant with `args [...]`.
+fn with_args(name: &str, kind: CapKind, constraint: &str, args: &[&str]) -> CapGrant {
+    CapGrant {
+        args: args.iter().map(|a| (*a).to_string()).collect(),
+        ..grant(name, kind, constraint)
+    }
+}
+
+/// A call that passes an argument vector.
+fn exec_request(path: &str, args: &[&str]) -> CapRequest {
+    let mut request = request(0, "process.exec", &[path]);
+    request.args.push(CapValue::List(
+        args.iter().map(|a| (*a).to_string()).collect(),
+    ));
+    request
+}
+
+#[test]
+fn arguments_reach_the_program() {
+    let path = temp_path("args-out.txt");
+    let mut broker = Broker::new(vec![
+        with_args("process.exec", CapKind::Exec, "/bin/sh", &["-c"]),
+        grant("fs.read", CapKind::Read, &path),
+    ]);
+    let outcome = broker
+        .call(&exec_request(
+            "/bin/sh",
+            &["-c", &format!("printf ok > {path}")],
+        ))
+        .expect("the call should be allowed");
+    assert_eq!(outcome, CapOutcome::Value(CapValue::I64(0)));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "ok");
+    std::fs::remove_file(&path).ok();
+}
+
+#[test]
+fn a_call_has_to_start_with_what_the_grant_pins() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.exec",
+        CapKind::Exec,
+        "/bin/echo",
+        &["sic:"],
+    )]);
+    let err = broker
+        .call(&exec_request("/bin/echo", &["elsewhere"]))
+        .expect_err("a different first argument is a different call");
+    assert!(err.message.contains("starting"), "{}", err.message);
+}
+
+/// A prefix bounds the start of the vector and nothing after it. That is the
+/// claim `docs/design/arguments.md` makes, so it is the claim a test makes.
+#[test]
+fn what_follows_the_prefix_is_free() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.exec",
+        CapKind::Exec,
+        "/bin/echo",
+        &["sic:"],
+    )]);
+    assert!(
+        broker
+            .call(&exec_request("/bin/echo", &["sic:", "anything at all"]))
+            .is_ok()
+    );
+}
+
+/// Every grant written before arguments existed keeps exactly the authority it
+/// had: it may run the file, and may not tell it anything.
+#[test]
+fn a_grant_that_pins_no_arguments_allows_none() {
+    let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, "/bin/echo")]);
+    let err = broker
+        .call(&exec_request("/bin/echo", &["surprise"]))
+        .expect_err("an empty prefix is not a wildcard");
+    assert!(err.message.contains("no arguments"), "{}", err.message);
+    assert!(
+        broker
+            .call(&request(0, "process.exec", &["/bin/echo"]))
+            .is_ok(),
+        "leaving the vector off passes an empty one"
+    );
 }

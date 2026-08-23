@@ -110,6 +110,10 @@ pub struct Grant {
     pub constraint: String,
     /// The digest the file has to have, if the grant pins what runs.
     pub pin: String,
+    /// What a call's arguments have to start with. The arguments themselves
+    /// are runtime values a plan cannot know, so this prefix is the only part
+    /// of them it can report.
+    pub args: Vec<String>,
     /// The files whose code calls it. Derived from the call sites rather than
     /// from a declaration, so it says where a grant is really used.
     pub called_from: Vec<String>,
@@ -206,6 +210,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             kind: c.kind,
             constraint: c.constraints.clone(),
             pin: c.pin.clone(),
+            args: c.args.clone(),
             called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
@@ -286,6 +291,10 @@ pub fn render(plan: &Plan, source: &str) -> String {
             grant.kind.name(),
             grant.constraint
         ));
+        if !grant.args.is_empty() {
+            let quoted: Vec<String> = grant.args.iter().map(|a| format!("{a:?}")).collect();
+            out.push_str(&format!("  args [{}]", quoted.join(", ")));
+        }
         // Whether a grant pins what runs is what a reader most wants to know
         // about it, so it is on the same line.
         if grant.pin.is_empty() {

@@ -254,6 +254,9 @@ pub struct CapDecl {
     /// The digest the file has to have, or empty for a grant that does not pin
     /// what runs.
     pub pin: String,
+    /// What the argument vector has to start with. Empty means a call passes
+    /// no arguments at all.
+    pub args: Vec<String>,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

@@ -17,7 +17,10 @@ use crate::program::*;
 
 pub const MAGIC: [u8; 4] = *b"SICB";
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 2;
+/// Bumped from 2 for argument vectors: a manifest entry now carries the prefix
+/// a call's arguments have to start with, and a reader that does not know that
+/// would mistake it for the parameter count.
+pub const VERSION_MINOR: u16 = 3;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -101,6 +104,10 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u8(c.kind as u8);
         w.str(&c.constraints);
         w.str(&c.pin);
+        w.u8(c.args.len() as u8);
+        for a in &c.args {
+            w.str(a);
+        }
         w.u8(c.params.len() as u8);
         for t in &c.params {
             w.u32(*t);
@@ -322,6 +329,11 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             .ok_or_else(|| DecodeError::new(format!("unknown capability kind {raw}")))?;
         let constraints = r.str()?;
         let pin = r.str()?;
+        let arg_count = r.u8()? as usize;
+        let mut args = Vec::with_capacity(arg_count);
+        for _ in 0..arg_count {
+            args.push(r.str()?);
+        }
         let param_count = r.u8()? as usize;
         let mut params = Vec::with_capacity(param_count);
         for _ in 0..param_count {
@@ -332,6 +344,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             kind,
             constraints,
             pin,
+            args,
             params,
             ret_type: r.u32()?,
         });
@@ -414,6 +427,7 @@ mod tests {
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
                 pin: "a".repeat(64),
+                args: Vec::new(),
                 params: vec![4],
                 ret_type: 2,
             }],

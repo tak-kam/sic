@@ -47,6 +47,12 @@ pub enum CapValue {
     I64(i64),
     F64(f64),
     Str(String),
+    /// An argument vector, and nothing more general than one.
+    ///
+    /// Strings rather than values: nesting would buy a depth limit, a recursive
+    /// encoder and a decoder that has to refuse a hostile depth, and nothing
+    /// that exists needs any of it. See `docs/design/arguments.md`.
+    List(Vec<String>),
 }
 
 impl CapValue {
@@ -57,6 +63,15 @@ impl CapValue {
             CapValue::I64(_) => "Int",
             CapValue::F64(_) => "Float",
             CapValue::Str(_) => "String",
+            CapValue::List(_) => "List<String>",
+        }
+    }
+
+    /// The strings behind a `List`, for a broker that expects one.
+    pub fn as_list(&self) -> Option<&[String]> {
+        match self {
+            CapValue::List(items) => Some(items),
+            _ => None,
         }
     }
 
@@ -82,6 +97,10 @@ pub struct CapGrant {
     /// The digest the file has to have, or empty for a grant that does not pin
     /// what runs.
     pub pin: String,
+    /// What the argument vector has to start with. Empty means the call may
+    /// pass no arguments at all, which is what every grant meant before
+    /// arguments existed.
+    pub args: Vec<String>,
 }
 
 /// What the VM asks the broker to do.

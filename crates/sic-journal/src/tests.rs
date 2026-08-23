@@ -100,3 +100,29 @@ fn a_digest_does_not_reveal_the_value() {
     });
     assert!(!line.contains("hunter2"), "{line}");
 }
+
+/// An argument vector is one value, and the journal has to be able to tell one
+/// from another: a run that ran `git commit` and one that ran `git push` are
+/// not the same run.
+#[test]
+fn digests_distinguish_argument_vectors() {
+    let commit = digest_values(&[
+        CapValue::Str("/usr/bin/git".into()),
+        CapValue::List(vec!["commit".into()]),
+    ]);
+    let push = digest_values(&[
+        CapValue::Str("/usr/bin/git".into()),
+        CapValue::List(vec!["push".into()]),
+    ]);
+    assert_ne!(commit, push);
+
+    // And a vector is not the strings it holds, laid out flat.
+    assert_ne!(
+        digest_values(&[CapValue::List(vec!["a".into(), "b".into()])]),
+        digest_values(&[CapValue::Str("a".into()), CapValue::Str("b".into())])
+    );
+    assert_ne!(
+        digest_values(&[CapValue::List(vec!["ab".into()])]),
+        digest_values(&[CapValue::List(vec!["a".into(), "b".into()])])
+    );
+}

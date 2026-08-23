@@ -26,6 +26,12 @@ pub struct CapSig {
     /// and accepting the syntax while ignoring it would be worse than refusing
     /// it.
     pub accepts_pin: bool,
+    /// Whether the last parameter may be left off at the call site.
+    ///
+    /// Only `process.exec` has one: a call that passes no argument vector
+    /// means an empty one, so every program written before arguments existed
+    /// keeps saying what it said.
+    pub optional_tail: bool,
 }
 
 /// What v0.1 can do. Nothing here needs a credential or a socket.
@@ -37,6 +43,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         ret: Types::STR,
         requires_constraint: true,
         accepts_pin: false,
+        optional_tail: false,
     },
     CapSig {
         name: "fs.write",
@@ -45,6 +52,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         ret: Types::UNIT,
         requires_constraint: true,
         accepts_pin: false,
+        optional_tail: false,
     },
     CapSig {
         name: "llm.invoke",
@@ -57,6 +65,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         // module may talk to.
         requires_constraint: true,
         accepts_pin: false,
+        optional_tail: false,
     },
     CapSig {
         name: "human.approve",
@@ -68,17 +77,19 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         // grant has to say what it covers.
         requires_constraint: true,
         accepts_pin: false,
+        optional_tail: false,
     },
     CapSig {
         name: "process.exec",
         kind: CapKind::Exec,
-        // No argument vector until there is a list type; the result is the
-        // exit code.
-        params: &[Types::STR],
+        // The path, then what to pass it. The vector may be left off, and
+        // leaving it off means passing nothing.
+        params: &[Types::STR, Types::LIST_STR],
         ret: Types::INT,
         requires_constraint: true,
         // An absolute path says where to look, not what is there.
         accepts_pin: true,
+        optional_tail: true,
     },
 ];
 
@@ -99,6 +110,11 @@ pub struct CapEntry {
     pub constraint: String,
     /// The digest the file has to have, or empty for a grant that does not pin.
     pub pin: String,
+    /// What the argument vector has to start with, from `args [...]` on the
+    /// grant. Empty means the call passes no arguments.
+    pub args: Vec<String>,
     pub params: Vec<TypeId>,
+    /// From the signature: whether the last parameter may be left off.
+    pub optional_tail: bool,
     pub ret: TypeId,
 }

@@ -114,6 +114,9 @@ impl Types {
     pub const FLOAT: TypeId = TypeId(3);
     pub const STR: TypeId = TypeId(4);
     pub const ERROR: TypeId = TypeId(5);
+    /// An argument vector. Interned here so that a builtin capability
+    /// signature, which is a `const`, can name it.
+    pub const LIST_STR: TypeId = TypeId(6);
 
     pub fn new() -> Self {
         let mut t = Self {
@@ -129,6 +132,7 @@ impl Types {
         assert_eq!(t.intern(Type::Float), Self::FLOAT);
         assert_eq!(t.intern(Type::Str), Self::STR);
         assert_eq!(t.intern(Type::Error), Self::ERROR);
+        assert_eq!(t.intern(Type::List(Self::STR)), Self::LIST_STR);
         t
     }
 

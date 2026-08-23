@@ -1296,9 +1296,23 @@ impl<'a> Vm<'a> {
             Value::I64(v) => CapValue::I64(*v),
             Value::F64(v) => CapValue::F64(*v),
             Value::Str(h) => CapValue::Str(self.arena.str(*h).to_string()),
+            // A list of strings is copied out of the arena, because an
+            // argument vector has to survive leaving it. A list of anything
+            // else does not cross: `docs/design/arguments.md` says why the
+            // boundary carries argument vectors rather than values.
+            Value::List(h) => {
+                let mut items = Vec::new();
+                for item in self.arena.list(*h) {
+                    match item {
+                        Value::Str(s) => items.push(self.arena.str(*s).to_string()),
+                        _ => return None,
+                    }
+                }
+                CapValue::List(items)
+            }
             // A handle means nothing outside this arena, and a task means
             // nothing outside this run.
-            Value::Task(_) | Value::List(_) | Value::Object(_) => return None,
+            Value::Task(_) | Value::Object(_) => return None,
         })
     }
 
@@ -1310,6 +1324,13 @@ impl<'a> Vm<'a> {
             CapValue::I64(v) => Value::I64(v),
             CapValue::F64(v) => Value::F64(v),
             CapValue::Str(s) => Value::Str(self.arena.alloc_str(s)),
+            CapValue::List(items) => {
+                let values = items
+                    .into_iter()
+                    .map(|item| Value::Str(self.arena.alloc_str(item)))
+                    .collect();
+                Value::List(self.arena.alloc_list(values))
+            }
         }
     }
 

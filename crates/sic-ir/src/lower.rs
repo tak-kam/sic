@@ -314,19 +314,40 @@ impl<'a> FnLower<'a> {
                         },
                         e.span,
                     ),
-                    Some(Res::Cap(cap)) => self.emit(
-                        InstKind::CallCap {
-                            dst,
-                            cap,
-                            args,
-                            policy: crate::hir::CallPolicy {
-                                attempts: policy.attempts,
-                                timeout_ms: policy.timeout_ms,
-                                ..Default::default()
+                    Some(Res::Cap(cap)) => {
+                        // An omitted argument vector is an empty one. Filling
+                        // it in here means everything downstream - the
+                        // verifier, the VM, the broker - sees calls of one
+                        // shape. See `docs/design/arguments.md`.
+                        let mut args = args;
+                        let entry = &self.typed.caps[cap.index()];
+                        if args.len() + 1 == entry.params.len() {
+                            let ty = entry.params[args.len()];
+                            let empty = self.temp(ty);
+                            self.emit(
+                                InstKind::MakeList {
+                                    dst: empty,
+                                    ty,
+                                    elements: Vec::new(),
+                                },
+                                e.span,
+                            );
+                            args.push(empty);
+                        }
+                        self.emit(
+                            InstKind::CallCap {
+                                dst,
+                                cap,
+                                args,
+                                policy: crate::hir::CallPolicy {
+                                    attempts: policy.attempts,
+                                    timeout_ms: policy.timeout_ms,
+                                    ..Default::default()
+                                },
                             },
-                        },
-                        e.span,
-                    ),
+                            e.span,
+                        )
+                    }
                     _ => unreachable!("a call must resolve to a function or a capability"),
                 }
                 dst

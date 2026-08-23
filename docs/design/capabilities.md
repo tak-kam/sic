@@ -27,12 +27,13 @@ v0.1 ships three, chosen because they need no credentials and no network:
 |---|---|---|
 | `fs.read` | `(path: String) -> String` | read |
 | `fs.write` | `(path: String, data: String) -> Unit` | write |
-| `process.exec` | `(path: String) -> Int` | exec |
+| `process.exec` | `(path: String, args: List<String>) -> Int` | exec |
 | `human.approve` | `(question: String) -> Bool` | invoke |
 
-`process.exec` takes no arguments for the process it runs, because there is no
-`List<String>` yet. Adding one is what unblocks a real argument vector, and it
-belongs with the phase that introduces list types rather than here.
+`process.exec` is the only one whose last parameter may be left off:
+`process.exec("/usr/bin/true")` passes an empty vector, so a program written
+before arguments existed still says what it said. What a grant may pin about
+those arguments is in `docs/design/arguments.md`.
 
 ---
 
@@ -53,7 +54,8 @@ allow {
 
 The constraint's meaning is per capability: for `fs.read` and `fs.write` it is
 the exact path that may be touched; for `process.exec` it is the absolute path
-of the executable.
+of the executable, and `args [...]` after it pins what the argument vector has
+to start with.
 
 **A grant is not optional.** Calling a capability the module did not declare is
 a compile error, not a runtime failure, so the manifest of a compiled module is
@@ -169,8 +171,10 @@ Rules in v0.1:
 - `fs.read` and `fs.write` accept exactly the path the grant names.
 - `process.exec` requires an absolute path and refuses anything else, so an
   executable is never resolved through `PATH` (section 10 of the specification).
-- The process inherits no environment and no arguments; its exit code is the
-  result. A signal is a failure, not an exit code.
+- The process inherits no environment. It is given the argument vector the
+  call passed, which has to start with what the grant pinned; a grant that
+  pins nothing allows no arguments at all. Its exit code is the result, and a
+  signal is a failure rather than an exit code.
 
 ### Pinning what runs
 

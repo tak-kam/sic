@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 377 tests.
+Last updated at 397 tests.
 
 ---
 
@@ -18,7 +18,7 @@ Last updated at 377 tests.
 | 6, 7 | A register VM, 30 instructions | `sic-vm`, `sic-bytecode` |
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
-| 10 | Absolute paths, no PATH search, binary hash pinning | `sic-broker` |
+| 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix | `sic-broker`, `docs/design/arguments.md` |
 | 11 | `import`, local files only | `docs/design/modules.md` |
 | 12 | Bytecode verifier | `sic-verify`, `docs/design/v0.1.md` §9 |
 | 13 | Bytecode format with a capability manifest | `.sicb`, `sic verify` reports it |

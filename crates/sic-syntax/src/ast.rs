@@ -125,6 +125,9 @@ pub struct CapGrant {
     pub constraint: Option<String>,
     /// The digest the file has to have, for a grant that pins what runs.
     pub sha256: Option<Ident2>,
+    /// What the argument vector has to start with, from `args ["a", "b"]`.
+    /// Absent and empty mean the same thing: the call passes no arguments.
+    pub args: Vec<Ident2>,
     pub span: Span,
 }
 

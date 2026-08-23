@@ -72,6 +72,7 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
             kind: c.kind,
             constraints: c.constraint.clone(),
             pin: c.pin.clone(),
+            args: c.args.clone(),
             params: c
                 .params
                 .iter()

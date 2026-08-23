@@ -1978,3 +1978,99 @@ fn a_binary_a_package_manager_installed_is_left_alone() {
 fn leftovers(dir: &std::path::Path) -> usize {
     std::fs::read_dir(dir).unwrap().count()
 }
+
+// ---- arguments ----
+
+#[test]
+fn a_program_can_pass_arguments() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/arguments.sic");
+    let (stdout, stderr, code) = sic(&["run", path]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("sic: arguments arrived"), "{stdout}");
+}
+
+#[test]
+fn a_plan_shows_the_arguments_a_grant_pins() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/arguments.sic");
+    let (stdout, stderr, code) = sic(&["plan", path]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains(r#"args ["sic:"]"#), "{stdout}");
+}
+
+/// The prefix is the whole point: a grant on `tmux` that cannot say which pane
+/// is a grant to drive every pane on the machine.
+#[test]
+fn arguments_outside_the_pinned_prefix_are_refused() {
+    let entry = write_temp_program(
+        "args-prefix",
+        &[(
+            "main.sic",
+            "allow {\n    process.exec \"/bin/echo\" args [\"sic:\"];\n}\n\
+             fn main() -> Int {\n    return process.exec(\"/bin/echo\", [\"elsewhere\"]);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("arguments starting"), "{stderr}");
+}
+
+/// A grant written before arguments existed keeps the authority it had: none
+/// beyond running the file.
+#[test]
+fn a_grant_without_args_allows_none() {
+    let entry = write_temp_program(
+        "args-empty",
+        &[(
+            "main.sic",
+            "allow {\n    process.exec \"/bin/echo\";\n}\n\
+             fn main() -> Int {\n    return process.exec(\"/bin/echo\", [\"anything\"]);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("no arguments"), "{stderr}");
+}
+
+/// Leaving the vector off is passing an empty one, so every program written
+/// before this change still says what it said.
+#[test]
+fn the_argument_vector_may_be_left_off() {
+    let entry = write_temp_program(
+        "args-omitted",
+        &[(
+            "main.sic",
+            "allow {\n    process.exec \"/usr/bin/true\";\n}\n\
+             fn main() -> Int {\n    return process.exec(\"/usr/bin/true\");\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+}
+
+#[test]
+fn only_a_capability_that_takes_arguments_can_pin_them() {
+    let entry = write_temp_program(
+        "args-wrong-cap",
+        &[(
+            "main.sic",
+            "allow {\n    fs.read \"./x\" args [\"a\"];\n}\nfn main() -> Int {\n    return 1;\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0328"), "{stderr}");
+}
+
+#[test]
+fn args_needs_a_list_of_strings() {
+    let entry = write_temp_program(
+        "args-malformed",
+        &[(
+            "main.sic",
+            "allow {\n    process.exec \"/bin/echo\" args [3];\n}\nfn main() -> Int {\n    return 1;\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0213"), "{stderr}");
+}

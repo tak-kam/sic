@@ -110,7 +110,8 @@ fn fs_write(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapErr
 }
 
 fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
-    let path = allowed_path(grant, string_arg(request, 0, 1)?)?;
+    let args = exec_args(request)?;
+    let path = allowed_path(grant, string_arg(request, 0, request.args.len())?)?;
 
     // An executable is never resolved through PATH: what runs is decided by the
     // grant, not by the environment the run happens to have.
@@ -135,7 +136,30 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
         }
     }
 
+    // Two rules, and the difference between them is the point. A grant that
+    // names a prefix allows anything starting with it. A grant that names
+    // nothing allows nothing: an empty prefix is not "anything", it is a grant
+    // written before arguments existed, still meaning what it meant then.
+    let allowed = if grant.args.is_empty() {
+        args.is_empty()
+    } else {
+        args.len() >= grant.args.len() && args[..grant.args.len()] == grant.args[..]
+    };
+    if !allowed {
+        return Err(CapError::new(format!(
+            "`{}` was called with {}, but the grant allows {}",
+            path.display(),
+            render_args(&args),
+            if grant.args.is_empty() {
+                "no arguments".to_string()
+            } else {
+                format!("only arguments starting {}", render_args(&grant.args))
+            }
+        )));
+    }
+
     let mut command = std::process::Command::new(&path);
+    command.args(&args);
     command.env_clear();
     let status = if request.timeout_ms == 0 {
         command
@@ -292,6 +316,39 @@ fn allowed_path(grant: &CapGrant, requested: &str) -> Result<PathBuf, CapError> 
 ///
 /// The verifier already checked the types, but the broker re-checks them: it is
 /// on the other side of a boundary from whoever produced that bytecode.
+/// The argument vector a call passed, which may not be there at all.
+///
+/// Leaving it off means passing nothing, so that a program written before
+/// arguments existed says exactly what it said then.
+fn exec_args(request: &CapRequest) -> Result<Vec<String>, CapError> {
+    match request.args.len() {
+        1 => Ok(Vec::new()),
+        2 => request.args[1]
+            .as_list()
+            .map(|a| a.to_vec())
+            .ok_or_else(|| {
+                CapError::new(format!(
+                    "argument 1 of `{}` must be a List<String>, got {}",
+                    request.name,
+                    request.args[1].type_name()
+                ))
+            }),
+        n => Err(CapError::new(format!(
+            "`{}` takes 1 or 2 argument(s), got {n}",
+            request.name
+        ))),
+    }
+}
+
+/// An argument vector as a person reads it in an error.
+fn render_args(args: &[String]) -> String {
+    if args.is_empty() {
+        return "no arguments".to_string();
+    }
+    let quoted: Vec<String> = args.iter().map(|a| format!("{a:?}")).collect();
+    format!("[{}]", quoted.join(", "))
+}
+
 fn string_arg(request: &CapRequest, index: usize, expected: usize) -> Result<&str, CapError> {
     if request.args.len() != expected {
         return Err(CapError::new(format!(

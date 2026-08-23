@@ -300,6 +300,14 @@ pub fn digest_values(values: &[CapValue]) -> Digest {
                 h.update(&(s.len() as u64).to_le_bytes());
                 h.update(s.as_bytes());
             }
+            CapValue::List(items) => {
+                h.update(&[5]);
+                h.update(&(items.len() as u64).to_le_bytes());
+                for item in items {
+                    h.update(&(item.len() as u64).to_le_bytes());
+                    h.update(item.as_bytes());
+                }
+            }
         }
     }
     h.finish()

@@ -26,6 +26,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
             kind: CapKind::Read,
             constraints: "./a.txt".into(),
             pin: String::new(),
+            args: Vec::new(),
             params: vec![4],
             ret_type: 4,
         }],
@@ -175,6 +176,7 @@ fn a_granted_but_uncalled_capability_is_named() {
         kind: CapKind::Exec,
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
+        args: Vec::new(),
         params: vec![4],
         ret_type: 2,
     });

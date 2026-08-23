@@ -47,6 +47,7 @@ reason.
 | E0210 | a word reserved for a later phase |
 | E0211 | `sha256` without a digest |
 | E0212 | `import` without a path |
+| E0213 | `args` without a list of strings |
 
 ## E03xx — names, types and effects
 
@@ -79,6 +80,7 @@ reason.
 | E0325 | using a capability as a value |
 | E0326 | a pin that is not a sha256 digest |
 | E0327 | pinning a capability that cannot be pinned |
+| E0328 | pinning arguments on a capability that takes none |
 
 ### Tasks and policies
 

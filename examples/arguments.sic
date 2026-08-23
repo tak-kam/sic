@@ -1,0 +1,22 @@
+// What a program may be told, and what a grant may pin about it.
+//
+// `args` on a grant fixes what the argument vector has to start with. Here
+// that is `echo sic:`, so this program can make `echo` say things, and cannot
+// make it say them under another name - and it cannot run `echo` bare either.
+//
+//     sic plan examples/arguments.sic
+//     sic run examples/arguments.sic
+//
+// The arguments themselves are runtime values, so a plan cannot know them. The
+// prefix is in the manifest, so it can: see docs/design/arguments.md.
+allow {
+    process.exec "/bin/echo" args ["sic:"];
+}
+
+fn say(what: String) -> Int {
+    return process.exec("/bin/echo", ["sic:", what]);
+}
+
+fn main() -> Int {
+    return say("arguments arrived");
+}

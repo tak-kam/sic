@@ -374,6 +374,7 @@ fn exec_program() -> Program {
         kind: sic_core::CapKind::Exec,
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
+        args: Vec::new(),
         params: vec![4],
         ret_type: 2,
     });
