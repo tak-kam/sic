@@ -105,6 +105,51 @@ pub fn load_program(path: &str) -> Result<Loaded, ExitCode> {
     })
 }
 
+/// Where bytecode about to be run came from.
+///
+/// It decides what a verification failure means, and nothing else. Bytecode
+/// this process compiled failing to verify is a bug in the compiler; a file
+/// failing to verify is a file that must not run, and might have been written
+/// by anybody.
+pub enum From<'a> {
+    Compiler(&'a str),
+    File(&'a str),
+}
+
+/// The one door into the VM.
+///
+/// Every path that builds or restores a VM goes through this, including the one
+/// that just compiled the program itself. "The VM only ever runs verified
+/// bytecode" is worth something exactly as long as it has no exceptions, and it
+/// had three - `resume`, `attach` and `replay` each reached the VM through
+/// `decode` alone, which establishes that a `Program` can exist and says
+/// nothing about jump targets, register initialization, operand types, or
+/// whether a `CALL_CAP` names a capability the manifest declares.
+///
+/// Being one function is the point. The invariant was not lost by anybody
+/// deciding to skip the check; it was lost by three call sites being written
+/// without it, which is what happens when the check is something a caller has
+/// to remember.
+pub fn verified(program: &Program, from: From<'_>) -> Result<(), ExitCode> {
+    let report = sic_verify::verify(program);
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if report.ok() {
+        return Ok(());
+    }
+    match from {
+        From::Compiler(path) => {
+            eprintln!("internal error: the bytecode compiled from `{path}` did not verify")
+        }
+        From::File(path) => eprintln!("error: `{path}` does not verify, so it will not be run"),
+    }
+    for error in &report.errors {
+        eprintln!("  {error}");
+    }
+    Err(ExitCode::from(EXIT_FAILURE))
+}
+
 /// Loads and decodes a bytecode file.
 pub fn load_bytecode(path: &str) -> Result<Program, ExitCode> {
     let bytes = read_bytes(path).map_err(|msg| {

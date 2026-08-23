@@ -53,6 +53,12 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         None => Box::new(NullSink),
     };
 
+    // A checkpoint is state, not a program: what runs after it is resumed is
+    // this bytecode, and it has to have been checked like any other.
+    if let Err(code) = super::verified(&program, super::From::Compiler(source_path)) {
+        return code;
+    }
+
     let (mut vm, question) = match Vm::restore(&program, &bytes, digest, sink) {
         Ok(v) => v,
         Err(e) => {

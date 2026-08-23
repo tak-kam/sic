@@ -136,6 +136,13 @@ pub fn attach(
             }
         };
 
+    // A recorded program is a file with ordinary permissions, so it is checked
+    // before it is picked up again - the run that wrote it proves nothing about
+    // what is in it now.
+    if let Err(code) = super::verified(&program, super::From::File(&program_path)) {
+        return code;
+    }
+
     let (mut vm, question) = match Vm::restore(&program, &checkpoint, digest, sink) {
         Ok(v) => v,
         Err(e) => {
@@ -374,10 +381,17 @@ pub fn replay(prefix: &str) -> ExitCode {
     };
     let summary = store::summarize(&recorded);
 
-    let program = match super::load_bytecode(&dir.join(store::PROGRAM).to_string_lossy()) {
+    let program_path = dir.join(store::PROGRAM).to_string_lossy().into_owned();
+    let program = match super::load_bytecode(&program_path) {
         Ok(p) => p,
         Err(code) => return code,
     };
+    // The same check the run itself passed. A replay reads the program back off
+    // a disk anybody could have written to since, so passing it once is not a
+    // fact about the file being read now.
+    if let Err(code) = super::verified(&program, super::From::File(&program_path)) {
+        return code;
+    }
     let answers = match read_responses(&dir) {
         Ok(answers) => answers,
         Err(msg) => {

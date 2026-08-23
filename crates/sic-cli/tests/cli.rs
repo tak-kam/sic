@@ -2507,3 +2507,88 @@ fn resume_will_not_pretend_to_continue_a_conversation() {
     assert_eq!(code, 3, "{stderr}");
     std::fs::remove_file(checkpoint).ok();
 }
+
+/// Bytecode that decodes and does not verify, written where a recorded run
+/// keeps its program.
+///
+/// An unknown opcode, because decoding a code section is reading `u32`s and
+/// says nothing about what they mean. That is the whole distinction this tests:
+/// `decode` establishes that a `Program` can exist, and the verifier is what
+/// establishes that it is safe to run.
+fn temp_dir(name: &str) -> std::path::PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("sic-test-{}-{name}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(&dir).expect("a writable temporary directory");
+    dir
+}
+
+fn corrupt_program(dir: &std::path::Path) {
+    let path = dir.join("program.sicb");
+    let bytes = std::fs::read(&path).expect("the recorded program");
+    let mut program = sic_bytecode::decode(&bytes).expect("it decoded when it was written");
+    program.code[0] = sic_bytecode::inst::Inst(0xFFFF_FFFF);
+    std::fs::write(&path, sic_bytecode::encode(&program)).expect("writable");
+}
+
+/// A recorded program is a file with ordinary permissions. The run that wrote
+/// it proves nothing about what is in it now, so every path that picks it up
+/// again checks it.
+#[test]
+fn nothing_runs_bytecode_that_does_not_verify() {
+    let store = temp_dir("unverified-store");
+    let (stdout, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("milestone.sic"), "--record"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    let _ = stdout;
+
+    let dir = std::fs::read_dir(&store)
+        .expect("the store")
+        .next()
+        .expect("one run")
+        .expect("readable")
+        .path();
+    let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+    corrupt_program(&dir);
+
+    let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+    assert_eq!(code, 1, "replay ran it anyway: {stderr}");
+    assert!(stderr.contains("does not verify"), "{stderr}");
+    assert!(stderr.contains("unknown opcode"), "{stderr}");
+
+    std::fs::remove_dir_all(&store).ok();
+}
+
+/// The same door, on the path a waiting run comes back through.
+#[test]
+fn attach_will_not_pick_up_bytecode_that_does_not_verify() {
+    let store = temp_dir("unverified-attach");
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("approval.sic"), "--record"],
+    );
+    assert_eq!(code, 3, "{stderr}");
+
+    let dir = std::fs::read_dir(&store)
+        .expect("the store")
+        .next()
+        .expect("one run")
+        .expect("readable")
+        .path();
+    let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+    corrupt_program(&dir);
+
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["attach", &id, "--value", "true"],
+    );
+    assert_eq!(code, 1, "attach ran it anyway: {stderr}");
+    assert!(stderr.contains("does not verify"), "{stderr}");
+
+    std::fs::remove_dir_all(&store).ok();
+}

@@ -25,5 +25,11 @@ sic-json = { path = "../sic-json" }
 sic-otel = { path = "../sic-otel" }
 sic-broker = { path = "../sic-broker" }
 
+# The CLI is a binary, so its integration tests cannot reach its own
+# dependencies. This one needs to build a program that decodes and does not
+# verify, which is the only way to test that nothing runs unverified bytecode.
+[dev-dependencies]
+sic-bytecode = { path = "../sic-bytecode" }
+
 [lints]
 workspace = true
