@@ -76,6 +76,10 @@ pub enum FailKind {
     /// The instruction budget ran out.
     OutOfFuel,
     CallStackTooDeep,
+    /// The task table is full. A run may have `MAX_TASKS` tasks at once, and
+    /// this is a separate thing from a call stack that is too deep: the frames
+    /// are fine, there is nowhere left to put another task.
+    TooManyTasks,
     /// A list index was outside the list.
     IndexOutOfRange,
     /// A document did not parse, or did not fit the type it was checked
@@ -107,6 +111,7 @@ impl FailKind {
             FailKind::Capability => "a capability call failed",
             FailKind::OutOfFuel => "ran out of fuel",
             FailKind::CallStackTooDeep => "call stack too deep",
+            FailKind::TooManyTasks => "too many tasks",
             FailKind::IndexOutOfRange => "the index is outside the list",
             FailKind::Schema => "the document does not fit the type",
             FailKind::OutOfBudget => "the call site is out of budget",
@@ -329,8 +334,8 @@ impl<'a> Vm<'a> {
             },
         );
 
-        if self.spawn_task(func, args.to_vec()).is_none() {
-            return self.fail_now(FailKind::Internal("cannot start the entry task"));
+        if let Err(kind) = self.spawn_task(func, args.to_vec()) {
+            return self.fail_now(kind);
         }
         let status = self.schedule();
         self.record_end(&status);
@@ -665,11 +670,24 @@ impl<'a> Vm<'a> {
     }
 
     /// Starts a task running `func`, and returns its id.
-    fn spawn_task(&mut self, func: u32, args: Vec<Value>) -> Option<u32> {
+    ///
+    /// The two ways this fails are different failures, and saying so is the
+    /// point of returning the kind rather than `None`: a full task table is
+    /// something the program did, and a function index that is not in the
+    /// program is something the bytecode is.
+    fn spawn_task(&mut self, func: u32, args: Vec<Value>) -> Result<u32, FailKind> {
         if self.tasks.len() >= MAX_TASKS {
-            return None;
+            return Err(FailKind::TooManyTasks);
         }
-        let def = self.program.funcs.get(func as usize)?;
+        let Some(def) = self.program.funcs.get(func as usize) else {
+            // The verifier checks every `SPAWN` operand against the function
+            // table, so reaching this means bytecode was run without being
+            // verified, or the verifier has a hole. It is not a limit the
+            // program hit, and it must not be reported as one.
+            return Err(FailKind::Internal(
+                "spawn of a function that does not exist",
+            ));
+        };
         let (reg_count, code_off, name) = (def.reg_count as usize, def.code_off, def.name.clone());
 
         let id = self.tasks.len() as u32;
@@ -708,7 +726,7 @@ impl<'a> Vm<'a> {
             span,
             func_name: name,
         });
-        Some(id)
+        Ok(id)
     }
 
     /// Moves a task to a terminal state and wakes whatever was waiting on it.
@@ -917,8 +935,9 @@ impl<'a> Vm<'a> {
                     let args: Vec<Value> = (0..def.param_count())
                         .map(|i| self.get(index, base + c + i))
                         .collect();
-                    let Some(id) = self.spawn_task(b as u32, args) else {
-                        die!(FailKind::CallStackTooDeep, None, None);
+                    let id = match self.spawn_task(b as u32, args) {
+                        Ok(id) => id,
+                        Err(kind) => die!(kind, None, None),
                     };
                     self.set(index, base + a, Value::Task(id));
                 }

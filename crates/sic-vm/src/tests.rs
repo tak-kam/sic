@@ -1072,6 +1072,110 @@ fn the_journal_names_the_task_each_event_belongs_to() {
     assert!(tasks.contains(&0) && tasks.contains(&1), "{tasks:?}");
 }
 
+#[test]
+fn spawning_past_the_task_limit_says_the_table_is_full() {
+    // A program that spawns its way past `MAX_TASKS` used to be told its call
+    // stack was too deep, which sent whoever read it to look at recursion. The
+    // frames are fine; there is nowhere to put another task.
+    //
+    // Reaching the limit costs one `SPAWN` per task and nothing runs them,
+    // because the task that spawns them fails before it yields.
+    let mut p = program(
+        vec![
+            (
+                "main",
+                &[],
+                TypeDesc::Unit,
+                1,
+                vec![
+                    Inst::abc(Op::Spawn, 0, 1, 0), // r0 = spawn work()
+                    Inst::asbx(Op::Jump, 0, -2),   // and again
+                ],
+            ),
+            (
+                "work",
+                &[],
+                TypeDesc::Int,
+                1,
+                vec![
+                    Inst::abx(Op::LoadConst, 0, 0),
+                    Inst::abc(Op::Return, 0, 0, 0),
+                ],
+            ),
+        ],
+        vec![Const::I64(1)],
+    );
+    p.types.push(TypeDesc::Task(index_of(TypeDesc::Int)));
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::TooManyTasks);
+            assert!(info.describe().contains("tasks"), "{info:?}");
+        }
+        other => panic!("expected a failure, got {other:?}"),
+    }
+    // The entry task is one of them, so the limit is reached exactly.
+    assert_eq!(vm.task_count(), MAX_TASKS);
+}
+
+#[test]
+fn spawning_a_function_that_does_not_exist_is_not_reported_as_a_limit() {
+    // The other way a spawn fails. It is a statement about the bytecode rather
+    // than about the program's behaviour, and the two must not share a message.
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Unit,
+            1,
+            vec![Inst::abc(Op::Spawn, 0, 7, 0)],
+        )],
+        vec![],
+    );
+    p.types.push(TypeDesc::Task(index_of(TypeDesc::Int)));
+
+    match fail_kind(&p, &[]) {
+        FailKind::Internal(what) => assert!(what.contains("does not exist"), "{what}"),
+        other => panic!("expected an internal failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_call_chain_can_run_out_of_registers_before_it_runs_out_of_frames() {
+    // `countdown` in `recursion_unwinds_correctly` needs four registers, so it
+    // reaches `MAX_FRAMES` first and the register window check never fires.
+    // This one needs 255 per activation, so the window is full after 258 calls
+    // - a quarter of the frame limit - and that check is the only one that can
+    // end this run.
+    let p = program(
+        vec![(
+            "deep",
+            &[TypeDesc::Int],
+            TypeDesc::Int,
+            255,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0), // zero
+                Inst::abc(Op::Eq, 2, 0, 1),
+                Inst::asbx(Op::JumpIfNot, 2, 1),
+                Inst::abc(Op::Return, 1, 0, 0), // return 0
+                Inst::abx(Op::LoadConst, 2, 1), // one
+                Inst::abc(Op::SubI64, 3, 0, 2), // n - 1
+                Inst::abc(Op::Call, 1, 0, 3),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::I64(0), Const::I64(1)],
+    );
+    // Raising either limit could make the frame count fire first and quietly
+    // turn this test into a second copy of `recursion_unwinds_correctly`.
+    const { assert!(255 * MAX_FRAMES > MAX_REGS) };
+    assert_eq!(
+        fail_kind(&p, &[Value::I64(100_000)]),
+        FailKind::CallStackTooDeep
+    );
+}
+
 // ---- retry ----
 
 #[test]
