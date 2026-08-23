@@ -2764,3 +2764,66 @@ fn attach_will_not_pick_up_bytecode_that_does_not_verify() {
 
     std::fs::remove_dir_all(&store).ok();
 }
+
+/// A program built from two files is one module, and its node ids used to
+/// restart at zero in each file. The checker keys `res_of` and `type_of` by
+/// them, so the second file's entries overwrote the first's - and what came out
+/// was not a diagnostic.
+///
+/// The shape matters: a collision does damage only when the two nodes sharing
+/// an id resolved to different things, which is why the imported module's
+/// capability call has to line up with a name in `main`. `examples/import.sic`
+/// went on compiling correctly throughout, which is how this survived.
+#[test]
+fn a_program_in_two_files_keeps_the_capability_call_its_source_has() {
+    let main = write_temp_program(
+        "two-file-ids",
+        &[
+            (
+                "main.sic",
+                "import \"lib/reader.sic\";\n\
+                 \n\
+                 allow {\n\
+                 \x20   fs.read \"./secret.txt\";\n\
+                 }\n\
+                 \n\
+                 fn main() -> String {\n\
+                 \x20   let a = 0;\n\
+                 \x20   let b = a;\n\
+                 \x20   let c = b;\n\
+                 \x20   let d = c;\n\
+                 \x20   return contents(\"./secret.txt\");\n\
+                 }\n",
+            ),
+            (
+                "lib/reader.sic",
+                "requires {\n\
+                 \x20   fs.read;\n\
+                 }\n\
+                 \n\
+                 fn contents(path: String) -> String {\n\
+                 \x20   return fs.read(path);\n\
+                 }\n",
+            ),
+        ],
+    );
+    let path = main.to_str().unwrap();
+
+    // It used to reach `unreachable!` in the lowering: a call that resolved to
+    // neither a function nor a capability, because the other file had claimed
+    // the id.
+    let (stdout, stderr, code) = sic(&["plan", path]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("READ"), "{stdout}");
+    assert!(stdout.contains("fs.read"), "{stdout}");
+    assert!(!stdout.contains("no external effects"), "{stdout}");
+    assert!(!stdout.contains("never called"), "{stdout}");
+
+    // And it runs, reading the file the plan said it would.
+    let dir = main.parent().unwrap().to_path_buf();
+    std::fs::write(dir.join("secret.txt"), "kept").unwrap();
+    let (stdout, stderr, code) = sic_in(dir.clone(), &["run", path]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "\"kept\"\n");
+    std::fs::remove_dir_all(&dir).ok();
+}

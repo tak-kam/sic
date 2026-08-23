@@ -36,6 +36,7 @@ pub fn load(
         diags: Vec::new(),
         loaded: HashMap::new(),
         stack: Vec::new(),
+        ids: sic_syntax::NodeIds::new(),
     };
     let entry = ld.file_key(Path::new(path));
     let text = (ld.read)(path)?;
@@ -66,6 +67,8 @@ struct Loader<'a> {
     /// The chain of files currently being loaded, which is what makes a cycle
     /// visible.
     stack: Vec<PathBuf>,
+    /// Node ids, carried across every file so that no two share one.
+    ids: sic_syntax::NodeIds,
 }
 
 impl Loader<'_> {
@@ -76,7 +79,9 @@ impl Loader<'_> {
 
         let base = self.sources.add(file);
         let text = self.sources.files().last().unwrap().text().to_string();
-        let (module, diags) = sic_syntax::parse_at(&text, base);
+        // One supply of ids for the whole program: two files that each numbered
+        // from zero would collide in the checker's tables. See `NodeIds`.
+        let (module, diags) = sic_syntax::parse_at(&text, base, &mut self.ids);
         self.diags.extend(diags);
 
         self.check_one_role(&module);

@@ -124,6 +124,26 @@ The bytecode's debug section gains the same distinction: it lists the files, and
 a position names one. Without that, a failure in an imported file would be
 reported against the wrong source, which is worse than reporting nothing.
 
+### Node ids across files
+
+The same is true of `NodeId`, and this section said so a phase too late: it was
+written when a file's ids were numbered from zero, and §4's own first sentence -
+imports are resolved into one module - is what makes that wrong. The checker
+keys `res_of` and `type_of` by id, so two files that both started at zero put
+two entries under one key and the second overwrote the first.
+
+Nothing reported it. A capability call resolved to whatever the other file's
+node of the same id had been, so `CALL_CAP` lowered to `CALL`, `sic plan` said
+a program that reads a file has no external effects, and some shapes reached
+`unreachable!` in the lowering instead. Whether a collision did damage depended
+on what the two nodes happened to resolve to, which is why the example program
+went on compiling correctly.
+
+The fix is the offset argument again, in the other units: the parser takes the
+first id it may use and reports where it stopped, and the loader carries that
+from file to file. Ids stay dense and stay a `u32`; nothing downstream indexes
+an array by one, so a file starting at a large number costs nothing.
+
 ## 5. What a plan shows
 
 ```text

@@ -482,3 +482,54 @@ fn a_file_that_nests_too_deeply_does_not_hang() {
     let src = format!("fn f() {{ return {deep}1; }}\nfn g() {{ return 2; }}");
     assert_eq!(codes(&src), vec!["E0214"]);
 }
+
+/// Node ids have to be unique across a whole program, not within one file.
+///
+/// The checker keys its tables by `NodeId` and a program is one module merged
+/// from all its files, so two files that each numbered from zero put two
+/// entries under one key and the second won. `Parser::id` is the only place an
+/// id is minted and it only ever counts up, so a supply carried from file to
+/// file is enough: what has to be true is that the second file starts where the
+/// first stopped.
+#[test]
+fn two_files_do_not_share_node_ids() {
+    use super::{NodeIds, parse_at};
+
+    let src = "fn f(x: Int) -> Int { return x + 1; }";
+    let mut ids = NodeIds::new();
+
+    let (first, diags) = parse_at(src, 0, &mut ids);
+    assert!(diags.is_empty(), "{diags:#?}");
+    let boundary = ids.peek();
+    assert!(boundary > 0, "the first file used some ids");
+
+    let (second, diags) = parse_at(src, 0, &mut ids);
+    assert!(diags.is_empty(), "{diags:#?}");
+    assert!(ids.peek() > boundary, "the second file used some too");
+
+    // Same source, so anything that matches between them would have collided.
+    assert_ne!(fn_of(&first).id, fn_of(&second).id);
+    assert!(fn_of(&second).id.0 >= boundary);
+    assert!(return_id(fn_of(&second)).0 >= boundary);
+
+    // And a parse on its own still starts from zero, because a single file is
+    // the whole program.
+    let (alone, _) = super::parse(src);
+    assert_eq!(fn_of(&alone).id, fn_of(&first).id);
+}
+
+fn fn_of(m: &crate::ast::Module) -> &crate::ast::FnDecl {
+    match &m.items[0] {
+        crate::ast::Item::Fn(f) => f,
+        other => panic!("not a function: {other:?}"),
+    }
+}
+
+/// The id of the expression a function returns - one the checker keys `res_of`
+/// and `type_of` by, which is where a collision did its damage.
+fn return_id(f: &crate::ast::FnDecl) -> sic_core::NodeId {
+    match &f.body.stmts[0] {
+        crate::ast::Stmt::Return { value: Some(e), .. } => e.id,
+        other => panic!("not a return: {other:?}"),
+    }
+}

@@ -44,17 +44,51 @@ use crate::ast::*;
 use crate::lexer::tokenize_at;
 use crate::token::{Keyword, Token, TokenKind};
 
+/// A running supply of node ids.
+///
+/// Ids have to be unique across every file a program is built from, not only
+/// within one. The checker keys `res_of` and `type_of` by `NodeId` and a
+/// program is one module merged from all its files, so two files that each
+/// numbered from zero give those tables two entries under one key - and the
+/// second silently wins. What that produced was not a diagnostic: a capability
+/// call lowered to a call of whatever the other file's node of the same id had
+/// resolved to, and `sic plan` reported a program with no external effects, or
+/// the lowering reached `unreachable!`.
+///
+/// So the supply is a value the caller carries from file to file, rather than
+/// something each parse starts over.
+#[derive(Debug, Default)]
+pub struct NodeIds(u32);
+
+impl NodeIds {
+    pub fn new() -> NodeIds {
+        NodeIds(0)
+    }
+
+    /// The next id that has not been handed out. For a test that wants to say
+    /// where one file's ids stopped and the next file's began.
+    pub fn peek(&self) -> u32 {
+        self.0
+    }
+}
+
 /// Parses a source text as a single module. The diagnostics include the lexer's.
 pub fn parse(src: &str) -> (Module, Vec<Diagnostic>) {
-    parse_at(src, 0)
+    parse_at(src, 0, &mut NodeIds::new())
 }
 
 /// The same, for a file at `base` in a `SourceMap`'s offset space.
-pub fn parse_at(src: &str, base: u32) -> (Module, Vec<Diagnostic>) {
+/// Parses one file of a program.
+///
+/// `base` puts this file's spans in the whole program's offset space; `ids`
+/// does the same for its node ids, and is advanced by however many this file
+/// needed.
+pub fn parse_at(src: &str, base: u32, ids: &mut NodeIds) -> (Module, Vec<Diagnostic>) {
     let (tokens, mut diags) = tokenize_at(src, base);
-    let mut p = Parser::new(tokens);
+    let mut p = Parser::new(tokens, ids.0);
     let module = p.parse_module();
     diags.append(&mut p.diags);
+    ids.0 = p.next_id;
     (module, diags)
 }
 
@@ -73,11 +107,11 @@ struct Parser {
 }
 
 impl Parser {
-    fn new(tokens: Vec<Token>) -> Self {
+    fn new(tokens: Vec<Token>, first_id: u32) -> Self {
         Self {
             tokens,
             pos: 0,
-            next_id: 0,
+            next_id: first_id,
             diags: Vec::new(),
             no_struct: 0,
             depth: 0,

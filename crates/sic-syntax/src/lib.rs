@@ -11,4 +11,4 @@ pub mod token;
 
 pub use ast::Module;
 pub use lexer::{tokenize, tokenize_at};
-pub use parser::{parse, parse_at};
+pub use parser::{NodeIds, parse, parse_at};
