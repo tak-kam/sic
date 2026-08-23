@@ -11,7 +11,7 @@ use sic_bytecode::file::section;
 use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::*;
 use sic_bytecode::{DecodeError, decode, encode};
-use sic_verify::{VerifyReport, verify};
+use sic_verify::{MAX_CODE_LEN, MAX_CONSTS, MAX_FUNCS, VerifyReport, verify};
 
 /// A module shaped like something `sic compile` emits: one function that calls
 /// a granted capability, a policy on the call site, a debug table, and a type
@@ -216,4 +216,208 @@ fn corrupting_a_byte_anywhere_never_gets_past_the_pair() {
             }
         }
     }
+}
+
+// ---- the module-level pass: a file that decodes and lies ----
+//
+// Everything below is a well-formed module with one thing changed, so what each
+// test says is exactly the lie the verifier has to catch. These are the checks
+// that exist because a file might be hostile rather than merely wrong, which is
+// why they are stated as files rather than as `Program` values.
+
+#[test]
+fn more_functions_than_the_limit_are_refused() {
+    // Cheap: every added function points at the three instructions that are
+    // already there, so the file grows by one table entry each rather than by a
+    // body. Nothing here allocates the limit in anything but names.
+    //
+    // The second assertion answers a question the limit left open. `check_module`
+    // does not return after reporting it, so all 257 functions are verified
+    // anyway; they pass, and the report is the one error. A limit that fires and
+    // then lets the pass it was protecting run to completion is worth knowing
+    // about either way.
+    let report = verify_corrupted(|p| {
+        let template = p.funcs[0].clone();
+        for i in 0..MAX_FUNCS {
+            p.funcs.push(FuncDef {
+                name: format!("f{i}"),
+                ..template.clone()
+            });
+        }
+    });
+    assert_rejects(
+        &report,
+        &format!(
+            "{} functions exceed the limit of {MAX_FUNCS}",
+            MAX_FUNCS + 1
+        ),
+    );
+    assert_eq!(report.errors.len(), 1, "{:#?}", report.errors);
+}
+
+#[test]
+fn more_constants_than_the_limit_are_refused() {
+    // `Const::Unit` is one byte on the wire and no bytes of payload, so the
+    // whole constant section here is 64 KiB of tags.
+    let report = verify_corrupted(|p| p.consts.resize(MAX_CONSTS + 1, Const::Unit));
+    assert_rejects(
+        &report,
+        &format!(
+            "{} constants exceed the limit of {MAX_CONSTS}",
+            MAX_CONSTS + 1
+        ),
+    );
+    assert_eq!(report.errors.len(), 1, "{:#?}", report.errors);
+}
+
+#[test]
+fn more_code_than_the_limit_is_refused() {
+    // The one test here that pays for itself in memory: a megabyte of
+    // instructions is four megabytes of file, encoded and decoded once. It is
+    // worth paying, because the limit is on the size of the code section and
+    // there is no way to exceed it without a code section that large.
+    //
+    // What is avoided is the expensive half. The function still covers three
+    // instructions, so the data-flow pass - the part whose cost is what the
+    // limit exists to bound - never walks the padding.
+    let report = verify_corrupted(|p| {
+        p.code
+            .resize(MAX_CODE_LEN + 1, Inst::abc(Op::Halt, 0, 0, 0))
+    });
+    assert_rejects(
+        &report,
+        &format!(
+            "{} instructions exceed the limit of {MAX_CODE_LEN}",
+            MAX_CODE_LEN + 1
+        ),
+    );
+    assert_eq!(report.errors.len(), 1, "{:#?}", report.errors);
+}
+
+#[test]
+fn a_type_section_that_does_not_begin_with_the_primitives_is_refused() {
+    // The load-bearing one. Everything after this check assumes that type index
+    // 2 is `Int` and 4 is `String` - the verifier's own `INT` and `STR` are
+    // those numbers - so a file that renames an entry of the prefix makes every
+    // later type comparison a comparison of something else.
+    let report = verify_corrupted(|p| p.types[2] = TypeDesc::Str);
+    assert_rejects(&report, "must begin with the primitive types in tag order");
+}
+
+#[test]
+fn a_type_that_names_a_type_outside_the_section_is_refused() {
+    // v0.1 section 9 item 5. `List<t99>` in a section with six entries: the
+    // verifier answers "what does indexing this produce" out of the section, so
+    // an index it cannot follow has to stop here.
+    let report = verify_corrupted(|p| p.types[5] = TypeDesc::List(99));
+    assert_rejects(&report, "type 5 refers to type 99, which is out of range");
+}
+
+#[test]
+fn a_capability_that_names_a_type_outside_the_section_is_refused() {
+    // The manifest is the contract with the broker, and a parameter type is
+    // half of what a call site is checked against.
+    let report = verify_corrupted(|p| p.caps[0].params[0] = 99);
+    assert_rejects(&report, "capability c0 names type index 99");
+}
+
+#[test]
+fn an_empty_list_constant_that_names_a_type_outside_the_section_is_refused() {
+    // An empty list carries the type it is empty of, because it has no elements
+    // to carry it. That makes a constant a place a type index can hide.
+    let report = verify_corrupted(|p| {
+        p.consts[2] = Const::EmptyList(99);
+        p.code[0] = Inst::abx(Op::LoadConst, 1, 2);
+    });
+    assert_rejects(&report, "constant k2 names type 99, which is out of range");
+}
+
+#[test]
+fn two_functions_with_one_name_are_refused() {
+    // A name is how `sic run` finds `main` and how a checkpoint names the frame
+    // it was taken in, so two functions answering to one name is a file where
+    // those questions have no single answer.
+    let report = verify_corrupted(|p| {
+        let clone = p.funcs[0].clone();
+        p.funcs.push(clone);
+    });
+    assert_rejects(&report, "function name is also used by function 0");
+}
+
+#[test]
+fn a_debug_entry_that_names_a_pc_past_the_code_is_refused() {
+    // The debug table is what a failure and a trace are rendered through, so an
+    // entry pointing outside the code is a lie told at the moment something has
+    // already gone wrong.
+    let report = verify_corrupted(|p| p.debug.lines.push((9999, 0, 1, 1)));
+    assert_rejects(&report, "the debug table names pc 9999");
+}
+
+#[test]
+fn a_policy_on_something_that_is_not_a_capability_call_is_refused() {
+    // A policy is retries, a deadline and a budget for one call site. Attached
+    // to an instruction that performs no effect it is a grant with nothing to
+    // grant, and the pc is the only thing tying the two together.
+    let report = verify_corrupted(|p| p.policies[0].pc = 2);
+    assert_rejects(
+        &report,
+        "a policy names instruction 2, which is not a capability call",
+    );
+}
+
+#[test]
+fn a_policy_that_allows_no_attempts_is_refused() {
+    // `attempts` is total attempts, not extra ones, so zero is not "do not
+    // retry" - it is a call site that can never run, written where a reader
+    // would see a retry policy.
+    let report = verify_corrupted(|p| p.policies[0].attempts = 0);
+    assert_rejects(&report, "the policy at 1 allows zero attempts");
+}
+
+#[test]
+fn a_function_whose_code_runs_past_the_code_section_is_refused() {
+    // v0.1 section 9 item 6, and the check the whole per-function pass is
+    // indexed behind: everything after it reads `code[code_off + i]` directly.
+    let report = verify_corrupted(|p| p.funcs[0].code_off = 9999);
+    assert_rejects(&report, "the function's code runs past the code section");
+}
+
+#[test]
+fn a_function_with_no_instructions_is_refused() {
+    // An empty function has no last instruction, so it cannot end in RETURN,
+    // and control would leave it by falling off the end into whatever follows
+    // in the code section.
+    let report = verify_corrupted(|p| p.funcs[0].code_len = 0);
+    assert_rejects(&report, "the function has no instructions");
+}
+
+#[test]
+fn parameters_that_do_not_fit_in_the_registers_are_refused() {
+    // v0.1 section 9 item 7. The entry frame is `reg_count` registers with the
+    // parameters written into the first of them, so a function claiming more
+    // parameters than registers describes a frame that cannot be built.
+    let report = verify_corrupted(|p| p.funcs[0].params = vec![2, 2, 2, 2]);
+    assert_rejects(&report, "4 parameters do not fit in 3 registers");
+}
+
+#[test]
+fn a_function_whose_return_type_is_outside_the_section_is_refused() {
+    // v0.1 section 9 item 5 again, on the signature rather than inside the
+    // body: a caller is checked against these indices.
+    let report = verify_corrupted(|p| p.funcs[0].ret_type = 99);
+    assert_rejects(&report, "type index 99 is out of range");
+}
+
+#[test]
+fn a_call_to_a_function_that_does_not_exist_is_refused() {
+    // The last of section 9 item 5's four index kinds. The callee decides how
+    // many argument registers a call site needs, so an index out of range is
+    // also a frame nobody can size.
+    let report = verify_corrupted(|p| {
+        p.code[1] = Inst::abc(Op::Call, 0, 7, 1);
+        // The policy named that instruction while it was a capability call, and
+        // a policy on anything else is a different error in a different test.
+        p.policies.clear();
+    });
+    assert_rejects(&report, "function index f7 is out of range");
 }
