@@ -49,14 +49,29 @@ fn crate_sources() -> Vec<(String, Vec<PathBuf>)> {
 }
 
 /// Reading external state, or changing it.
+///
+/// `std::{` is here because a grouped import contains none of the module paths
+/// above: `use std::{fs, process};` is the ordinary way to write that line, not
+/// a contrived bypass. Spelling the imports out one per line is the price of
+/// having this check mean something.
+///
+/// The macros reach outside while a crate is built rather than while it runs,
+/// which is no less outside: a file read at compile time is still a file the
+/// manifest never named.
 const EXTERNAL: &[&str] = &[
     "std::fs",
     "std::net",
     "std::process",
     "std::env",
     "std::time",
+    "std::io",
+    "std::{",
     "SystemTime",
     "Instant",
+    "include_str!",
+    "include_bytes!",
+    "env!",
+    "option_env!",
 ];
 
 /// The crates that are allowed to reach outside.
@@ -82,14 +97,22 @@ fn only_the_broker_and_the_cli_touch_the_outside_world() {
                     continue;
                 }
                 for pattern in EXTERNAL {
-                    if line.contains(pattern) {
-                        findings.push(format!(
-                            "{name}: {}:{}: {}",
-                            file.display(),
-                            number + 1,
-                            line.trim()
-                        ));
+                    if !line.contains(pattern) {
+                        continue;
                     }
+                    // `env!("CARGO_PKG_VERSION")` is Cargo substituting the
+                    // manifest into the build. The crate is not reading the
+                    // environment a run happens in, which is what the rule is
+                    // about.
+                    if pattern.ends_with("env!") && line.contains("env!(\"CARGO_") {
+                        continue;
+                    }
+                    findings.push(format!(
+                        "{name}: {}:{}: {}",
+                        file.display(),
+                        number + 1,
+                        line.trim()
+                    ));
                 }
             }
         }
@@ -99,6 +122,53 @@ fn only_the_broker_and_the_cli_touch_the_outside_world() {
         "only {} may reach outside:\n{}",
         MAY_REACH_OUTSIDE.join(" and "),
         findings.join("\n")
+    );
+}
+
+#[test]
+fn sic_core_depends_on_nothing_else_in_the_workspace() {
+    // The third of the three boundaries. `sic-core` is what every other crate
+    // depends on, so a dependency it takes is one the whole workspace takes,
+    // whether or not any of them asked for it - and it is the crate a supply
+    // chain attack would most want. The manifest is right today; a check is
+    // what keeps it right, which is the difference between a rule and a
+    // description of the current state.
+    let manifest = workspace().join("crates/sic-core/Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).expect("sic-core should have a manifest");
+
+    // No section at all would satisfy the rule too, so its absence is not a
+    // failure.
+    let declared: Vec<&str> = match text.split("[dependencies]").nth(1) {
+        Some(section) => section
+            .lines()
+            .map(str::trim)
+            // Entries run until the next section header.
+            .take_while(|line| !line.starts_with('['))
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .collect(),
+        None => Vec::new(),
+    };
+    assert!(
+        declared.is_empty(),
+        "sic-core must depend on nothing: every other crate depends on it, so a \
+         dependency here is one the whole workspace has. {} declares:\n{}",
+        manifest.display(),
+        declared.join("\n")
+    );
+
+    // A dev-dependency or a build-dependency on a workspace crate would make
+    // the bottom of the graph point back up into it, so the whole manifest is
+    // checked rather than one section of it.
+    let upward: Vec<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("path = \"../sic-"))
+        .collect();
+    assert!(
+        upward.is_empty(),
+        "sic-core must not depend on another workspace crate in any section, \
+         including dev-dependencies: {}",
+        upward.join(", ")
     );
 }
 

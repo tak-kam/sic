@@ -15,8 +15,16 @@ const FORBIDDEN: &[&str] = &[
     "std::env",
     "std::time",
     "std::io",
+    // A grouped import contains none of the paths above: `use std::{fs,
+    // process};` is how a person writes that line without thinking about it.
+    "std::{",
     "SystemTime",
     "Instant",
+    // Reaching outside while the crate is built is no less outside.
+    "include_str!",
+    "include_bytes!",
+    "env!",
+    "option_env!",
 ];
 
 fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
