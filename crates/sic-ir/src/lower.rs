@@ -288,6 +288,13 @@ impl<'a> FnLower<'a> {
                     Some(Res::Agent(agent)) => {
                         let info = self.typed.agents[agent.index()].clone();
                         let raw = self.temp(sic_types::Types::STR);
+                        // The declaration is the only place the shape of the
+                        // answer is written down, so it travels with the
+                        // prompt. Without it whoever answers has been asked a
+                        // question and not told what an answer looks like.
+                        let shape = self.typed.types.shape(info.output);
+                        let mut args = args;
+                        args.push(self.constant(Const::Str(shape), sic_types::Types::STR, e.span));
                         self.emit(
                             InstKind::CallCap {
                                 dst: raw,
@@ -326,15 +333,21 @@ impl<'a> FnLower<'a> {
                         let entry = &self.typed.caps[cap.index()];
                         if args.len() + 1 == entry.params.len() {
                             let ty = entry.params[args.len()];
-                            let empty = self.temp(ty);
-                            self.emit(
-                                InstKind::MakeList {
-                                    dst: empty,
-                                    ty,
-                                    elements: Vec::new(),
-                                },
-                                e.span,
-                            );
+                            let empty = match ty == sic_types::Types::STR {
+                                true => self.constant(Const::Str(String::new()), ty, e.span),
+                                false => {
+                                    let empty = self.temp(ty);
+                                    self.emit(
+                                        InstKind::MakeList {
+                                            dst: empty,
+                                            ty,
+                                            elements: Vec::new(),
+                                        },
+                                        e.span,
+                                    );
+                                    empty
+                                }
+                            };
                             args.push(empty);
                         }
                         self.emit(

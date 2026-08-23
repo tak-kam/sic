@@ -299,6 +299,55 @@ impl Types {
         }
     }
 
+    /// How a type is spelled to whatever has to produce a value of it.
+    ///
+    /// An `agent` declares its output type once, and that declaration is the
+    /// only place the shape of the answer is written down. Something being
+    /// asked for one has to be told, or it answers with prose and the run fails
+    /// at the validation - correctly, and for the wrong reason. So the shape
+    /// travels with the prompt: see `docs/design/driving.md`.
+    ///
+    /// It is a sketch rather than JSON Schema. A schema document would be
+    /// larger than the prompt it decorates, and the thing reading it is not a
+    /// validator - the validator is `FROM_JSON`, and it already exists.
+    pub fn shape(&self, id: TypeId) -> String {
+        self.shape_at(id, &mut Vec::new())
+    }
+
+    /// `open` holds the records being described further up, so a type that
+    /// contains a list of itself names itself instead of recurring forever.
+    fn shape_at(&self, id: TypeId, open: &mut Vec<ObjectId>) -> String {
+        match self.get(id) {
+            Type::Unit => "null".into(),
+            Type::Bool => "boolean".into(),
+            Type::Int => "integer".into(),
+            Type::Float => "number".into(),
+            Type::Str => "string".into(),
+            Type::List(inner) => format!("[{}]", self.shape_at(*inner, open)),
+            // Trust is a claim about where a value came from, which is not
+            // something whoever answers can produce or would know what to do
+            // with.
+            Type::Trust(_, inner) => self.shape_at(*inner, open),
+            Type::Object(object) => {
+                let def = self.object(*object);
+                if open.contains(object) {
+                    return def.name.clone();
+                }
+                open.push(*object);
+                let fields: Vec<String> = def
+                    .fields
+                    .iter()
+                    .map(|(name, ty)| format!("{name:?}: {}", self.shape_at(*ty, open)))
+                    .collect();
+                open.pop();
+                format!("{{{}}}", fields.join(", "))
+            }
+            // Neither can cross a capability boundary, so neither can be asked
+            // for. Naming the type is more use than an empty string.
+            Type::Task(_) | Type::Fn(_) | Type::Error => self.name(id),
+        }
+    }
+
     /// The type of a task producing `inner`.
     pub fn task(&mut self, inner: TypeId) -> TypeId {
         self.intern(Type::Task(inner))
@@ -335,6 +384,53 @@ mod tests {
         assert_eq!(t.get(Types::INT), &Type::Int);
         assert_eq!(t.by_name("String"), Some(Types::STR));
         assert_eq!(t.by_name("Nope"), None);
+    }
+
+    /// The shape is what whoever answers is told, so it has to say what JSON
+    /// they should write, not what sic calls the type.
+    #[test]
+    fn a_shape_is_the_json_that_would_fit() {
+        let mut t = Types::new();
+        assert_eq!(t.shape(Types::STR), "string");
+        assert_eq!(t.shape(Types::INT), "integer");
+        assert_eq!(t.shape(Types::FLOAT), "number");
+        assert_eq!(t.shape(Types::BOOL), "boolean");
+
+        let strings = t.intern(Type::List(Types::STR));
+        assert_eq!(t.shape(strings), "[string]");
+
+        let ticket = t.declare_object("Ticket");
+        t.set_object_fields(
+            ticket,
+            vec![
+                ("title".into(), Types::STR),
+                ("severity".into(), Types::INT),
+            ],
+        );
+        let ticket_ty = t.intern(Type::Object(ticket));
+        assert_eq!(
+            t.shape(ticket_ty),
+            "{\"title\": string, \"severity\": integer}"
+        );
+
+        // Trust says where a value came from, which is not something whoever
+        // answers can produce.
+        let trusted = t.trust(TrustKind::Llm, ticket_ty);
+        assert_eq!(t.shape(trusted), t.shape(ticket_ty));
+    }
+
+    /// A record may hold a list of itself, so the renderer has to stop.
+    #[test]
+    fn a_type_containing_itself_names_itself() {
+        let mut t = Types::new();
+        let node = t.declare_object("Node");
+        let node_ty = t.intern(Type::Object(node));
+        let children = t.intern(Type::List(node_ty));
+        t.set_object_fields(
+            node,
+            vec![("name".into(), Types::STR), ("children".into(), children)],
+        );
+        assert_eq!(t.shape(node_ty), "{\"name\": string, \"children\": [Node]}");
     }
 
     #[test]

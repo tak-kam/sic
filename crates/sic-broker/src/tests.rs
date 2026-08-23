@@ -562,16 +562,23 @@ use crate::agent::{
 
 /// A driver that answers from a script, so that everything except the pane can
 /// be tested.
+type Heard = std::rc::Rc<std::cell::RefCell<Vec<String>>>;
+
 #[derive(Debug)]
 struct FakeAgent {
     name: String,
     info: DriverInfo,
     said: Vec<String>,
-    asked: Vec<String>,
+    /// What it was asked, so a test can read the question the broker composed.
+    asked: Heard,
 }
 
 impl FakeAgent {
     fn new(name: &str, said: &[&str]) -> FakeAgent {
+        FakeAgent::listening(name, said, Heard::default())
+    }
+
+    fn listening(name: &str, said: &[&str], asked: Heard) -> FakeAgent {
         FakeAgent {
             name: name.into(),
             info: DriverInfo {
@@ -581,7 +588,7 @@ impl FakeAgent {
                 multiplexer: "none".into(),
             },
             said: said.iter().map(|s| (*s).to_string()).collect(),
-            asked: Vec::new(),
+            asked,
         }
     }
 }
@@ -594,7 +601,7 @@ impl AgentDriver for FakeAgent {
         &self.info
     }
     fn ask(&mut self, prompt: &str) -> Result<String, CapError> {
-        self.asked.push(prompt.to_string());
+        self.asked.borrow_mut().push(prompt.to_string());
         match self.said.is_empty() {
             true => Err(CapError::new("the agent has nothing left to say")),
             false => Ok(self.said.remove(0)),
@@ -604,6 +611,10 @@ impl AgentDriver for FakeAgent {
 
 fn invoke(prompt: &str) -> CapRequest {
     request(0, "llm.invoke", &[prompt])
+}
+
+fn invoke_shaped(prompt: &str, shape: &str) -> CapRequest {
+    request(0, "llm.invoke", &[prompt, shape])
 }
 
 #[test]
@@ -770,5 +781,60 @@ fn a_driver_spec_says_what_drives_what() {
         error.message.contains("names no agent"),
         "{}",
         error.message
+    );
+}
+
+/// An `agent` declares the shape of its answer once. Whoever answers has to be
+/// told, or the run fails at the validation for the wrong reason.
+#[test]
+fn the_shape_of_the_answer_is_part_of_what_is_asked() {
+    let heard = Heard::default();
+    let mut broker = Broker::with_driver(
+        vec![grant("llm.invoke", CapKind::Invoke, "claude")],
+        Box::new(FakeAgent::listening(
+            "claude",
+            &["{\"title\": \"disk\"}"],
+            heard.clone(),
+        )),
+    );
+    let answered = broker.call(&invoke_shaped(
+        "the deploy job is stuck",
+        "{\"title\": string}",
+    ));
+    assert!(answered.is_ok(), "{answered:?}");
+
+    let heard = heard.borrow();
+    let asked = heard.first().expect("the driver was asked something");
+    assert!(asked.contains("the deploy job is stuck"), "{asked}");
+    assert!(asked.contains("{\"title\": string}"), "{asked}");
+}
+
+/// A person answering a deferred call is told exactly what a model would have
+/// been told. They are answering the same question.
+#[test]
+fn a_deferred_call_carries_the_shape_too() {
+    let mut broker = Broker::new(vec![grant("llm.invoke", CapKind::Invoke, "claude")]);
+    let CapOutcome::Deferred { question } = broker
+        .call(&invoke_shaped("why is it slow?", "{\"cause\": string}"))
+        .expect("deferred")
+    else {
+        panic!("a model call with no driver defers");
+    };
+    assert!(question.contains("why is it slow?"), "{question}");
+    assert!(question.contains("{\"cause\": string}"), "{question}");
+    assert!(question.contains("Reply with JSON"), "{question}");
+}
+
+/// A call that wants prose leaves the shape off, and is not decorated with an
+/// empty one.
+#[test]
+fn no_shape_means_nothing_is_added() {
+    let mut broker = Broker::new(vec![grant("llm.invoke", CapKind::Invoke, "claude")]);
+    let answered = broker.call(&invoke_shaped("summarize this", ""));
+    assert_eq!(
+        answered,
+        Ok(CapOutcome::Deferred {
+            question: "[claude] summarize this".into()
+        })
     );
 }

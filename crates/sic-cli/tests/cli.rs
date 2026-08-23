@@ -2407,6 +2407,36 @@ fn without_a_driver_a_model_call_still_waits() {
     std::fs::remove_file(checkpoint).ok();
 }
 
+/// The shape an `agent` declares reaches whoever answers - including a person
+/// answering a deferred call, who is told exactly what a model would be told.
+#[test]
+fn a_deferred_model_call_says_what_shape_the_answer_takes() {
+    let checkpoint = write_temp("shape.sicc", "");
+    let (_, stderr, code) = sic(&[
+        "run",
+        &example("driven.sic"),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("{\"title\": string, \"severity\": integer}"),
+        "{stderr}"
+    );
+
+    // And the answer of that shape is accepted.
+    let (stdout, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &example("driven.sic"),
+        "--value",
+        "{\"title\": \"stuck deploy\", \"severity\": 2}",
+    ]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "\"stuck deploy\"\n");
+    std::fs::remove_file(checkpoint).ok();
+}
+
 /// The plan has to say what a grant of `llm.invoke` does not cover, because
 /// saying nothing would be the manifest quiet about the largest thing in it.
 #[test]

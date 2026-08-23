@@ -121,7 +121,7 @@ whatever the multiplexer picked would leave that to chance.
 because the agent runs tools with it. `HOME` also means the agent reads its own
 configuration - its instructions, its permissions, its memory - so two machines
 can answer the same prompt differently. That is a property of driving a tool
-that belongs to somebody rather than an API, and it is another reason §7 matters. **No credential variable is passed** - not
+that belongs to somebody rather than an API, and it is another reason §8 matters. **No credential variable is passed** - not
 `ANTHROPIC_API_KEY`, not anything else. The agent authenticates as itself, and
 sic never holds the secret it uses; "no implicit credential access" means the
 same thing here that it means everywhere else in this project. An agent that is
@@ -187,7 +187,63 @@ must not become a hung run with no explanation.
 
 ---
 
-## 5. Reading a TUI is version-dependent, so the version is recorded
+## 5. An answer has to be told what shape it must have
+
+The first run that reached a real agent came back as three paragraphs of prose
+about the repository, and `from_json` refused it - correctly, and for the wrong
+reason. Nothing had told the agent what an answer looked like.
+
+An `agent` declaration is the only place the shape is written down:
+
+```sic
+agent triage {
+    input: String,
+    output: Ticket,     // <- here, and nowhere else
+    budget: 1,
+}
+```
+
+So the shape travels with the prompt. `llm.invoke` takes a second argument for
+it, optional exactly as `process.exec`'s argument vector is:
+
+```text
+llm.invoke(prompt: String, shape: String) -> String
+```
+
+An `agent` fills it in; a direct call that wants prose leaves it off. The
+compiler renders it from the declared type:
+
+```text
+the deploy job has been queued for an hour
+
+Reply with JSON of this shape, and nothing else:
+{"title": string, "severity": integer}
+```
+
+### Why an argument rather than a longer prompt
+
+The compiler cannot build the text, because the prompt is a runtime value and
+the language has no string concatenation. Adding one for this would be adding an
+instruction to the VM to make a capability more convenient.
+
+Passing it separately is also better than the string would have been: the
+journal digests the two arguments as they are, so two runs that asked for
+different shapes do not look alike afterwards, and the broker composes the
+question - which means **a person answering a deferred call is told exactly what
+a model would have been told**. They are answering the same question, and before
+this they were not.
+
+### The sketch, not a schema
+
+`{"title": string, "severity": integer}`, with `[...]` for a list and the
+record's own name where a type contains a list of itself. Not JSON Schema: that
+document would be larger than the prompt it decorates, and the thing reading it
+is not a validator. The validator is `FROM_JSON`, which already exists, runs in
+the VM, and does not have to trust anything the agent was told.
+
+---
+
+## 6. Reading a TUI is version-dependent, so the version is recorded
 
 Everything in §4 is a bet on what a particular version of a particular agent CLI
 prints. A recorded run therefore keeps what answered it, beside the responses
@@ -208,14 +264,14 @@ that line for what the broker answered.
 
 ---
 
-## 6. `sic replay` never reaches the agent
+## 7. `sic replay` never reaches the agent
 
 Replay re-runs a recorded run against its recorded answers. If it can reach a
 live session it is not a replay, so `--llm` is not accepted there at all.
 
 ---
 
-## 7. The manifest under-reports, and the plan says so
+## 8. The manifest under-reports, and the plan says so
 
 ```sic
 allow {
@@ -246,7 +302,7 @@ true: an answer pasted in by a person also came from outside the manifest.
 
 ---
 
-## 8. Part two: memory, sessions, resume
+## 9. Part two: memory, sessions, resume
 
 Split off so that this part is one mechanism rather than four.
 
@@ -304,10 +360,10 @@ records digests.
 
 ---
 
-## 9. Not here
+## 10. Not here
 
-- **Everything in §8**, which is the second half of this work.
-- **Making the grant reach the agent** (§7): permission translation, capabilities
+- **Everything in §9**, which is the second half of this work.
+- **Making the grant reach the agent** (§8): permission translation, capabilities
   offered back to the agent through the broker, a hook that puts tool uses in the
   journal, and a `budget` that counts something an agent with tools can exceed.
 - **A general terminal capability** - `term.open`, `term.send`, `term.read`.
@@ -324,7 +380,7 @@ records digests.
 
 ---
 
-## 10. Units of work
+## 11. Units of work
 
 | # | Unit | Done when |
 |---|------|-----------|
@@ -332,6 +388,7 @@ records digests.
 | 2 | The marker protocol and extraction | the instructions do not contain the marker they describe |
 | 3 | The tmux driver | a call opens a pane, asks, reads the answer back, and closes it |
 | 4 | `--llm` on `run`, refused on `replay` | an unknown spec is a usage error |
-| 5 | What answered, recorded and explained | `sic explain` names the version of the agent |
-| 6 | The plan's warning | `sic plan` says what a grant of `llm.invoke` does not cover |
-| 7 | §8 | a second commit |
+| 5 | The shape of the answer, carried with the prompt | an `agent` call asks for JSON of its `output` type |
+| 6 | What answered, recorded and explained | `sic explain` names the version of the agent |
+| 7 | The plan's warning | `sic plan` says what a grant of `llm.invoke` does not cover |
+| 8 | §9 | a second commit |

@@ -20,7 +20,7 @@ pub const PROGRAM: &str = "program.sicb";
 pub const RESPONSES: &str = "responses.jsonl";
 pub const CHECKPOINT: &str = "checkpoint.sicc";
 /// What answered the run's model calls, when anything did - see
-/// docs/design/driving.md §5.
+/// docs/design/driving.md §6.
 pub const DRIVER: &str = "driver.json";
 
 pub fn store_root() -> PathBuf {

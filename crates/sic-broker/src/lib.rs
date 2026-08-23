@@ -411,10 +411,36 @@ fn reject_timeout(request: &CapRequest) -> Result<(), CapError> {
 /// later or in another process.
 fn llm_invoke(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     reject_timeout(request)?;
-    let prompt = string_arg(request, 0, 1)?;
+    let asked = asked_for(request)?;
     Ok(CapOutcome::Deferred {
-        question: format!("[{}] {prompt}", grant.constraint),
+        question: format!("[{}] {asked}", grant.constraint),
     })
+}
+
+/// The whole of what is being asked: the prompt, and the shape the answer has
+/// to take when the caller said one.
+///
+/// Composed here rather than in the driver so that a person answering a
+/// deferred call is told exactly what a model would have been told. They are
+/// answering the same question.
+fn asked_for(request: &CapRequest) -> Result<String, CapError> {
+    let prompt = string_arg_of(request, 0)?;
+    let shape = match request.args.len() {
+        1 => "",
+        2 => string_arg_of(request, 1)?,
+        n => {
+            return Err(CapError::new(format!(
+                "`{}` takes 1 or 2 argument(s), got {n}",
+                request.name
+            )));
+        }
+    };
+    if shape.is_empty() {
+        return Ok(prompt.to_string());
+    }
+    Ok(format!(
+        "{prompt}\n\nReply with JSON of this shape, and nothing else:\n{shape}"
+    ))
 }
 
 /// Asking a model that is running in a pane.
@@ -429,7 +455,7 @@ fn llm_driven(
     driver: &mut dyn AgentDriver,
 ) -> Result<CapOutcome, CapError> {
     reject_timeout(request)?;
-    let prompt = string_arg(request, 0, 1)?.to_string();
+    let asked = asked_for(request)?;
     if grant.constraint != driver.agent_name() {
         return Err(CapError::new(format!(
             "the grant asks `{}` to answer, but the driver runs `{}`",
@@ -437,7 +463,7 @@ fn llm_driven(
             driver.agent_name()
         )));
     }
-    let answer = driver.ask(&prompt)?;
+    let answer = driver.ask(&asked)?;
     Ok(CapOutcome::Value(CapValue::Str(answer)))
 }
 
@@ -515,6 +541,12 @@ fn string_arg(request: &CapRequest, index: usize, expected: usize) -> Result<&st
             request.args.len()
         )));
     }
+    string_arg_of(request, index)
+}
+
+/// The argument at `index`, which must be a string, without saying how many
+/// there should have been.
+fn string_arg_of(request: &CapRequest, index: usize) -> Result<&str, CapError> {
     request.args[index].as_str().ok_or_else(|| {
         CapError::new(format!(
             "argument {index} of `{}` must be a String, got {}",

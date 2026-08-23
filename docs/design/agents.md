@@ -166,8 +166,14 @@ FROM_JSON   a, b, c   ; R[a] = the value of type T[b] parsed from the string R[c
 ## 5. The `llm.invoke` capability
 
 ```text
-llm.invoke(prompt: String) -> String
+llm.invoke(prompt: String, shape: String) -> String
 ```
+
+The second argument is the shape the answer has to take, and it may be left off
+- a direct call that wants prose passes nothing. An `agent` fills it in from its
+own `output` type, because that declaration is the only place the shape is
+written down, and whoever answers has to be told: see
+`docs/design/driving.md` §5.
 
 The broker **defers** it, as it does `human.approve`. Calling a model means
 HTTPS, which means TLS, which is not something to write by hand for this - and
@@ -206,7 +212,7 @@ An agent declaration is a **function the compiler writes**. `diagnose(x)`
 becomes:
 
 ```text
-CALL_CAP  llm.invoke(prompt)   ; the prompt is built from the input
+CALL_CAP  llm.invoke(prompt, shape) ; the shape comes from `output`
 FROM_JSON Diagnosis            ; parse and validate the answer
 ```
 

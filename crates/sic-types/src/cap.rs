@@ -58,14 +58,17 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         name: "llm.invoke",
         kind: CapKind::Invoke,
         // The prompt in, the raw answer out. Turning that answer into a value
-        // is `from_json`, which is what an agent declaration wires up.
-        params: &[Types::STR],
+        // is `from_json`, which is what an agent declaration wires up - and the
+        // second argument is the shape that validation will insist on, so that
+        // whoever answers is told what it has to be. An `agent` fills it in;
+        // a direct call may leave it off.
+        params: &[Types::STR, Types::STR],
         ret: Types::STR,
         // The constraint names the model, so a manifest says which one a
         // module may talk to.
         requires_constraint: true,
         accepts_pin: false,
-        optional_tail: false,
+        optional_tail: true,
     },
     CapSig {
         name: "human.approve",

@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 433 tests.
+Last updated at 439 tests.
 
 ---
 
@@ -33,7 +33,7 @@ Last updated at 433 tests.
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `update`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan` | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
-| - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring | `docs/design/driving.md` |
+| - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take | `docs/design/driving.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
