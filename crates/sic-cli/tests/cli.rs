@@ -992,6 +992,112 @@ fn an_agent_is_a_capability_call_in_the_bytecode() {
     std::fs::remove_file(out).ok();
 }
 
+// ---- exporting ----
+
+#[test]
+fn a_journal_exports_to_opentelemetry() {
+    let src = write_temp("export.sic", "fn main() -> Int { return 1; }\n");
+    let journal = src.with_extension("jsonl");
+    let traces = src.with_extension("traces.json");
+    let metrics = src.with_extension("metrics.json");
+
+    let (_, stderr, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (_, stderr, code) = sic(&[
+        "export",
+        journal.to_str().unwrap(),
+        "--traces",
+        traces.to_str().unwrap(),
+        "--metrics",
+        metrics.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let traces_text = std::fs::read_to_string(&traces).unwrap();
+    assert!(traces_text.contains("resourceSpans"), "{traces_text}");
+    assert!(traces_text.contains("\"name\":\"main\""), "{traces_text}");
+    assert!(traces_text.contains("service.name"), "{traces_text}");
+
+    let metrics_text = std::fs::read_to_string(&metrics).unwrap();
+    assert!(metrics_text.contains("sic.workflow.runs"), "{metrics_text}");
+
+    for path in [src, journal, traces, metrics] {
+        std::fs::remove_file(path).ok();
+    }
+}
+
+#[test]
+fn a_truncated_journal_still_exports_what_it_has() {
+    let src = write_temp("export-cut.sic", "fn main() -> Int { return 1; }\n");
+    let journal = src.with_extension("jsonl");
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+
+    // Cut the last line in half, as a killed run would leave it.
+    let text = std::fs::read_to_string(&journal).unwrap();
+    let cut = &text[..text.len() - 20];
+    std::fs::write(&journal, cut).unwrap();
+
+    let (stdout, stderr, code) = sic(&["export", journal.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stderr.contains("skipped line"), "{stderr}");
+    assert!(stdout.contains("resourceSpans"), "{stdout}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_file(journal).ok();
+}
+
+#[test]
+fn a_resumed_run_exports_as_one_trace() {
+    let src = write_temp("export-resume.sic", APPROVAL_SRC);
+    let checkpoint = src.with_extension("sicc");
+    let journal = src.with_extension("jsonl");
+
+    let (_, _, code) = sic(&[
+        "run",
+        src.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+    let (_, _, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+        "--journal",
+        journal.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+
+    let (stdout, _, code) = sic(&["export", journal.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    // One run, so one trace id, even though it took two processes.
+    let ids: std::collections::HashSet<&str> = stdout
+        .match_indices("\"traceId\":\"")
+        .map(|(i, m)| &stdout[i + m.len()..i + m.len() + 32])
+        .collect();
+    assert_eq!(ids.len(), 1, "{ids:?}");
+
+    for path in [src, checkpoint, journal] {
+        std::fs::remove_file(path).ok();
+    }
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

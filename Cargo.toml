@@ -11,6 +11,7 @@ members = [
     "crates/sic-vm",
     "crates/sic-journal",
     "crates/sic-json",
+    "crates/sic-otel",
     "crates/sic-broker",
     "crates/sic-cli",
 ]

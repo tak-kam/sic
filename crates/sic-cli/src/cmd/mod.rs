@@ -1,6 +1,7 @@
 pub mod compile;
 pub mod disasm;
 pub mod drive;
+pub mod export;
 pub mod hir;
 pub mod journal;
 pub mod parse;

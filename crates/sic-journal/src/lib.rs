@@ -20,6 +20,9 @@
 //! business of a `Sink`.
 
 pub mod json;
+pub mod read;
+
+pub use read::{ReadResult, TimedEvent, read_jsonl};
 
 use sic_core::{CapValue, Digest, Sha256};
 

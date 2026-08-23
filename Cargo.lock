@@ -26,6 +26,7 @@ dependencies = [
  "sic-core",
  "sic-ir",
  "sic-journal",
+ "sic-otel",
  "sic-syntax",
  "sic-types",
  "sic-verify",
@@ -60,11 +61,20 @@ name = "sic-journal"
 version = "0.1.0"
 dependencies = [
  "sic-core",
+ "sic-json",
 ]
 
 [[package]]
 name = "sic-json"
 version = "0.1.0"
+
+[[package]]
+name = "sic-otel"
+version = "0.1.0"
+dependencies = [
+ "sic-core",
+ "sic-journal",
+]
 
 [[package]]
 name = "sic-syntax"

@@ -18,6 +18,7 @@ sic-compile = { path = "../sic-compile" }
 sic-verify = { path = "../sic-verify" }
 sic-vm = { path = "../sic-vm" }
 sic-journal = { path = "../sic-journal" }
+sic-otel = { path = "../sic-otel" }
 sic-broker = { path = "../sic-broker" }
 
 [lints]

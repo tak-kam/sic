@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 7 (agents and structured output)
+## Status: phase 8 (OpenTelemetry)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -218,6 +218,30 @@ error: the document does not fit the type: evidence[0].weight: expected Int, fou
 caps on document size and nesting because its input is untrusted text from a
 model. See [docs/design/agents.md](docs/design/agents.md).
 
+### Telemetry is a view of the journal
+
+```console
+$ sic run app.sic --journal run.jsonl
+$ sic export run.jsonl --traces traces.json --metrics metrics.json
+```
+
+The journal is the canonical record; OpenTelemetry is an external interface. The
+arrow points one way, and none of the OTel vocabulary reaches back into the
+event model.
+
+The exporter **converts and does not send**. Sending telemetry is an external
+effect, and an external effect is a capability - a VM that could quietly post
+spans somewhere would be the exfiltration path the journal was careful not to
+build. It is also a pure function of the journal, so it can run long after the
+run finished, on a machine that never saw it.
+
+Spans come from events that already carry a span and a parent, so a trace is
+pairing starts with ends rather than reconstructing a tree. A span that never
+closed - a run that was killed - is exported with an error status rather than
+dropped, since those are the runs worth looking at. **Digests stay digests**:
+converting to another format is not a reason to start including values. See
+[docs/design/observability.md](docs/design/observability.md).
+
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode
 this process just produced.
@@ -258,6 +282,7 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 | `sic-vm` | the register VM |
 | `sic-journal` | the execution journal: events, digests, JSONL |
 | `sic-json` | a JSON parser, for what a model answers with |
+| `sic-otel` | turns a journal into OTLP traces and metrics |
 | `sic-broker` | performs capability calls; the only crate with external effects |
 | `sic-cli` | the `sic` command |
 

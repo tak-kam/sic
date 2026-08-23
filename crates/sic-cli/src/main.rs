@@ -21,6 +21,8 @@ Usage:
   sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH]
                                   continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
+  sic export <JOURNAL> [--traces PATH] [--metrics PATH]
+                                  convert an execution journal to OpenTelemetry
   sic verify <FILE.sicb>          check that bytecode is safe to run
   sic disasm <FILE.sicb>          print bytecode as instructions
   sic parse <FILE.sic>            print the AST
@@ -68,6 +70,16 @@ fn main() -> ExitCode {
         },
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
         "hir" => with_one_file(rest, "hir", cmd::hir::run),
+        "export" => match parse_flags(rest, &["--traces", "--metrics"], 1) {
+            Ok((files, flags)) => cmd::export::run(
+                &files[0],
+                cmd::export::ExportOptions {
+                    traces: flags[0].as_deref(),
+                    metrics: flags[1].as_deref(),
+                },
+            ),
+            Err(msg) => usage_error(msg),
+        },
         "verify" => with_one_file(rest, "verify", cmd::verify::run),
         "disasm" => with_one_file(rest, "disasm", cmd::disasm::run),
         "compile" => match parse_compile_args(rest) {

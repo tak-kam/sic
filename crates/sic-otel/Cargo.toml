@@ -1,12 +1,12 @@
 [package]
-name = "sic-journal"
+name = "sic-otel"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [dependencies]
 sic-core = { path = "../sic-core" }
-sic-json = { path = "../sic-json" }
+sic-journal = { path = "../sic-journal" }
 
 [lints]
 workspace = true
