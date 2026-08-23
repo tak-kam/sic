@@ -1,0 +1,65 @@
+# The checks that have to pass on main.
+#
+# `actions/checkout` is the only third-party action here. The zero-dependency
+# rule is about the crates the compiler links, not about CI, but the same
+# instinct applies: rustup is already on the runner, so nothing else is pulled
+# in to set up a toolchain.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # A warning that nobody has to fix is a warning nobody reads.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup component add rustfmt clippy
+          rustc --version
+
+      - name: Formatting
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+
+      - name: Tests
+        run: cargo test --workspace
+
+      # The rule the whole project is arranged around, checked rather than
+      # trusted. `[dependencies]` names only paths inside the workspace.
+      - name: No external dependencies
+        run: |
+          external=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c "
+          import json, sys
+          names = {
+              d['name']
+              for p in json.load(sys.stdin)['packages']
+              for d in p['dependencies']
+              if d.get('path') is None
+          }
+          print(' '.join(sorted(names)))
+          ")
+          if [ -n "$external" ]; then
+            echo "external dependencies found: $external"
+            exit 1
+          fi
+          echo "no external dependencies"
+
+      # A committed lockfile that disagrees with the manifests would mean the
+      # tree does not build from a clean checkout.
+      - name: Lockfile is current
+        run: cargo metadata --format-version 1 --locked > /dev/null

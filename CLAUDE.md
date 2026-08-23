@@ -95,6 +95,14 @@ out and why. `docs/status.md` says where each section of the specification
 stands - read it before deciding what to work on. `docs/diagnostics.md` indexes
 every diagnostic code, and a test fails if it drifts from the source.
 
+## CI
+
+`.github/workflows/ci.yml` runs formatting, clippy with warnings denied, the
+tests, a check that `[dependencies]` names only workspace paths, and a check
+that `Cargo.lock` agrees with the manifests. `main` refuses force pushes and
+deletion, so a mistake in a commit message is fixed by another commit rather
+than by rewriting history.
+
 ## Building
 
 `cargo test` needs a C linker (`cc`). On a machine without one, link with the
