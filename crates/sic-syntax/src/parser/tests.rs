@@ -1,4 +1,4 @@
-use super::parse;
+use super::{MAX_DEPTH, parse};
 use crate::print::{dump, expr_str};
 
 /// Asserts that the source parses without diagnostics and returns its dump.
@@ -384,4 +384,101 @@ fn an_agent_may_keep_a_conversation() {
     assert!(codes("agent r { memory: 3 }\nfn main() { }").contains(&"E0210"));
     // An unknown setting still says what the settings are.
     assert!(codes("agent r { recall: task }\nfn main() { }").contains(&"E0209"));
+}
+
+/// One source file per shape the parser recurses on, each nested `n` deep.
+///
+/// The deep input is built here rather than kept as a fixture: a file of four
+/// thousand parentheses is not something a reader can check, and the number
+/// that matters is `MAX_DEPTH`, which a fixture would go stale against.
+fn nested(n: usize) -> Vec<(&'static str, String)> {
+    vec![
+        (
+            "parentheses",
+            format!("fn f() {{ return {}1{}; }}", "(".repeat(n), ")".repeat(n)),
+        ),
+        (
+            "unary `!`",
+            format!("fn f() {{ return {}true; }}", "!".repeat(n)),
+        ),
+        (
+            "unary `-`",
+            format!("fn f() {{ return {}1; }}", "-".repeat(n)),
+        ),
+        (
+            "`await`",
+            format!("fn f() {{ let x = {}y; }}", "await ".repeat(n)),
+        ),
+        (
+            "list literals",
+            format!("fn f() {{ let x = {}{}; }}", "[".repeat(n), "]".repeat(n)),
+        ),
+        (
+            "call arguments",
+            format!("fn f() {{ let x = {}{}; }}", "g(".repeat(n), ")".repeat(n)),
+        ),
+        (
+            "index expressions",
+            format!("fn f() {{ let x = a{}{}; }}", "[a".repeat(n), "]".repeat(n)),
+        ),
+        (
+            "struct literals",
+            format!(
+                "fn f() {{ let x = {}1{}; }}",
+                "P { v: ".repeat(n),
+                " }".repeat(n)
+            ),
+        ),
+        (
+            "type arguments",
+            format!(
+                "fn f() -> {}Int{} {{ return x; }}",
+                "List<".repeat(n),
+                ">".repeat(n)
+            ),
+        ),
+        (
+            "`if` blocks",
+            format!("fn f() {{ {}{} }}", "if true { ".repeat(n), "}".repeat(n)),
+        ),
+        (
+            "`else if` chains",
+            format!("fn f() {{ if true {{}} {}}}", "else if true {} ".repeat(n)),
+        ),
+    ]
+}
+
+/// Source is untrusted in the same way a model's answer is, so a file that
+/// nests too deeply has to be a diagnostic rather than a stack overflow. Every
+/// shape is checked, because a limit that counted only parentheses would leave
+/// the same hole open under a different shape of input.
+#[test]
+fn nesting_deeper_than_the_limit_is_reported_and_not_fatal() {
+    for (shape, src) in nested(MAX_DEPTH as usize + 1) {
+        // Exactly one code: the levels on the way out each have an unclosed
+        // delimiter to complain about, and a hundred of those would bury the
+        // line that says what is actually wrong.
+        assert_eq!(codes(&src), vec!["E0214"], "{shape}");
+    }
+}
+
+/// The other side of the boundary. The limit counts blocks, expressions and
+/// types against one budget, so a nested `if` spends two levels and a
+/// parenthesis one; what is promised is that nesting well inside the limit is
+/// accepted, not the exact level each shape turns over at.
+#[test]
+fn nesting_within_the_limit_still_parses() {
+    for (shape, src) in nested(MAX_DEPTH as usize / 4) {
+        let (_, diags) = parse(&src);
+        assert!(diags.is_empty(), "{shape}: {diags:#?}");
+    }
+}
+
+/// Hitting the limit ends the parse rather than derailing it: the parser stops
+/// where it is instead of looping on input it cannot make progress through.
+#[test]
+fn a_file_that_nests_too_deeply_does_not_hang() {
+    let deep = "(".repeat(MAX_DEPTH as usize * 4);
+    let src = format!("fn f() {{ return {deep}1; }}\nfn g() {{ return 2; }}");
+    assert_eq!(codes(&src), vec!["E0214"]);
 }

@@ -60,9 +60,25 @@ impl Parser {
         out
     }
 
+    /// One level of expression nesting.
+    ///
+    /// Every way an expression reaches another one - a parenthesis, a unary
+    /// operator, `await`, a call argument, a list element, an index, a struct
+    /// field, the right side of a binary operator - goes through here, so this
+    /// is the single place the depth has to be counted.
+    fn expr_bp(&mut self, min_bp: u8) -> Expr {
+        let at = Span::empty(self.span().lo);
+        if !self.enter() {
+            return self.error_expr(at);
+        }
+        let expr = self.expr_bp_within(min_bp);
+        self.leave();
+        expr
+    }
+
     /// Stops and returns the subexpression built so far as soon as it meets an
     /// operator whose binding power is below `min_bp`.
-    fn expr_bp(&mut self, min_bp: u8) -> Expr {
+    fn expr_bp_within(&mut self, min_bp: u8) -> Expr {
         let mut lhs = self.parse_prefix();
 
         loop {

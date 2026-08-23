@@ -5,8 +5,38 @@
 //! `}`, or a keyword that can start a statement or item) and keeps going.
 //! Recovery stays deliberately shallow, because inventing a plausible AST is
 //! worse than leaving a hole. Holes are `ExprKind::Error`.
+//!
+//! Recursive descent turns nesting in the source into depth on the stack, so
+//! the one thing recovery cannot help with is a file that nests too deeply:
+//! the process is gone before a diagnostic can be written. `MAX_DEPTH` is the
+//! limit that keeps that from happening.
 
 mod expr;
+
+/// How deeply blocks, expressions and types may nest.
+///
+/// A `.sic` file is untrusted input in exactly the way a model's answer is, and
+/// `sic-json` caps a document at 64 for the same reason. `sic plan` is the case
+/// that decides it: its whole justification is that it is safe to run on a
+/// program nobody has decided to trust yet, and safe has to include not dying
+/// on one. Without a limit, about two thousand `(` end the process with a
+/// segmentation fault rather than a diagnostic.
+///
+/// 128 is chosen from both sides. Above it, nothing a person writes: v0.1 has
+/// no loops, so the deepest a body can nest is `if` inside `if`, and a function
+/// that reached even twenty of those would be unreadable long before the parser
+/// minded. Generated source is the other case worth naming, and a generator
+/// that emits a hundred-deep expression has produced something no reviewer can
+/// read either. A nested `if` spends two levels, its own and its block's, so
+/// the limit is 64 of those; a parenthesis, a call argument, a list element, a
+/// struct field, a type argument and a unary operator spend one each.
+///
+/// Below it, the stack. The tightest shape measured on the musl build the
+/// release ships - nested struct literals - overflows at about 1800 levels, so
+/// 128 leaves better than a factor of ten, which is the room the passes that
+/// walk the same tree afterwards need: they recurse over the AST too, with
+/// fatter frames than the parser's.
+pub const MAX_DEPTH: u32 = 128;
 
 use sic_core::{Diagnostic, Label, NodeId, Span};
 
@@ -36,6 +66,10 @@ struct Parser {
     /// Non-zero while parsing somewhere a `{` would be read as the start of a
     /// block rather than of a struct literal.
     no_struct: u32,
+    /// How many levels of block, expression and type the parser is inside.
+    depth: u32,
+    /// Set when `MAX_DEPTH` was reached, which ends the parse.
+    stopped: bool,
 }
 
 impl Parser {
@@ -46,6 +80,8 @@ impl Parser {
             next_id: 0,
             diags: Vec::new(),
             no_struct: 0,
+            depth: 0,
+            stopped: false,
         }
     }
 
@@ -106,8 +142,43 @@ impl Parser {
         span: Span,
         label: impl Into<String>,
     ) {
-        self.diags
-            .push(Diagnostic::error(code, msg, Label::new(span, label)));
+        self.push(Diagnostic::error(code, msg, Label::new(span, label)));
+    }
+
+    /// Records a diagnostic, unless the depth limit has already ended the parse.
+    fn push(&mut self, diag: Diagnostic) {
+        if !self.stopped {
+            self.diags.push(diag);
+        }
+    }
+
+    /// Enters one level of nesting. `false` means the input nests deeper than
+    /// `MAX_DEPTH`: it has been reported, and the parse is over.
+    fn enter(&mut self) -> bool {
+        self.depth += 1;
+        if self.depth <= MAX_DEPTH {
+            return true;
+        }
+        let span = self.span();
+        self.error(
+            "E0214",
+            format!("nested more than {MAX_DEPTH} levels deep"),
+            span,
+            "the parser stops here",
+        );
+        // Nothing after this is worth reading. Every level on the way out is
+        // about to notice its own delimiter is unclosed, and a hundred of those
+        // hide the one line that says why; moving to the end of the input ends
+        // each of their loops, and `stopped` keeps what they would have said
+        // out of the output. One clear reason is the whole point.
+        self.stopped = true;
+        self.pos = self.tokens.len() - 1;
+        false
+    }
+
+    /// Leaves the level `enter` reported entering.
+    fn leave(&mut self) {
+        self.depth -= 1;
     }
 
     /// Requires a token. If it is not there, reports it and consumes nothing.
@@ -125,7 +196,7 @@ impl Parser {
             Span::empty(self.prev_end())
         };
         let text = kind_text(kind);
-        self.diags.push(
+        self.push(
             Diagnostic::error(
                 "E0200",
                 format!("expected `{text}` {ctx}"),
@@ -634,6 +705,10 @@ impl Parser {
     fn parse_type(&mut self) -> TypeExpr {
         let id = self.id();
         let start = self.span().lo;
+        // `List<List<List<...>>>` recurses once per argument list.
+        if !self.enter() {
+            return error_type(id, Span::empty(start));
+        }
         let name = self.expect_ident("a type name");
         let mut args = Vec::new();
         if self.eat(&TokenKind::Lt) {
@@ -649,6 +724,7 @@ impl Parser {
             }
             self.expect(&TokenKind::Gt, "after the type arguments");
         }
+        self.leave();
         TypeExpr {
             id,
             name,
@@ -662,12 +738,13 @@ impl Parser {
     fn parse_block(&mut self) -> Block {
         let id = self.id();
         let start = self.span().lo;
+        // A block reaches another block through the `if` inside it.
+        if !self.enter() {
+            return error_block(id, Span::empty(start));
+        }
         if !self.expect(&TokenKind::LBrace, "to open a block") {
-            return Block {
-                id,
-                stmts: Vec::new(),
-                span: Span::empty(start),
-            };
+            self.leave();
+            return error_block(id, Span::empty(start));
         }
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at_eof() {
@@ -680,6 +757,7 @@ impl Parser {
             }
         }
         self.expect(&TokenKind::RBrace, "to close the block");
+        self.leave();
         Block {
             id,
             stmts,
@@ -772,6 +850,18 @@ impl Parser {
     fn parse_if(&mut self) -> IfStmt {
         let id = self.id();
         let start = self.span().lo;
+        // An `else if` chain recurses here rather than through a block, so the
+        // guard on `parse_block` alone would not see it.
+        if !self.enter() {
+            let span = Span::empty(start);
+            return IfStmt {
+                id,
+                cond: self.error_expr(span),
+                then_block: error_block(self.id(), span),
+                else_branch: None,
+                span,
+            };
+        }
         self.bump(); // `if`
         // `if Point { .. }` would be ambiguous with the body that follows, so a
         // struct literal is not allowed here. Parentheses make it legal again.
@@ -786,6 +876,7 @@ impl Parser {
         } else {
             None
         };
+        self.leave();
         IfStmt {
             id,
             cond,
@@ -825,6 +916,30 @@ impl Parser {
             kind: ExprKind::Error,
             span,
         }
+    }
+}
+
+/// The hole left where a block could not be read. An empty body is what a
+/// block with no `{` already recovers to.
+fn error_block(id: NodeId, span: Span) -> Block {
+    Block {
+        id,
+        stmts: Vec::new(),
+        span,
+    }
+}
+
+/// The hole left where a type could not be read. An empty name is what a
+/// missing type name already recovers to.
+fn error_type(id: NodeId, span: Span) -> TypeExpr {
+    TypeExpr {
+        id,
+        name: Ident {
+            name: String::new(),
+            span,
+        },
+        args: Vec::new(),
+        span,
     }
 }
 
