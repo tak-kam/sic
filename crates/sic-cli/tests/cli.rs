@@ -1558,7 +1558,10 @@ fn every_example_compiles_verifies_and_plans() {
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);
     assert_eq!(code, 0);
-    assert!(stdout.starts_with("sic 0.1.0"), "{stdout}");
+    assert!(
+        stdout.starts_with(concat!("sic ", env!("CARGO_PKG_VERSION"))),
+        "{stdout}"
+    );
 
     let (stdout, _, code) = sic(&["help"]);
     assert_eq!(code, 0);
@@ -1828,7 +1831,11 @@ fn update_check_says_what_is_installed() {
     let (stdout, stderr, code) = sic(&["update", "--check"]);
     assert_eq!(code, 0, "stderr: {stderr}");
     assert!(
-        stdout.starts_with("  installed  0.1.0  sha256:"),
+        stdout.starts_with(concat!(
+            "  installed  ",
+            env!("CARGO_PKG_VERSION"),
+            "  sha256:"
+        )),
         "{stdout}"
     );
     assert!(stdout.contains("sic"), "{stdout}");
