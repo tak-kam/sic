@@ -8,7 +8,12 @@ pub use sic_core::CapKind;
 
 /// A decoded module. Producing one says nothing about whether it is safe to
 /// run; that is what `sic-verify` decides.
-#[derive(Debug, Clone, Default)]
+///
+/// `PartialEq` is derived so that a round-trip test can assert on the whole
+/// module rather than on the fields somebody remembered to list: a field added
+/// to the format and dropped by the encoder is then a failing test rather than
+/// a silent omission.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Program {
     pub consts: Vec<Const>,
     /// Type descriptors, referenced by index from the function and capability
@@ -214,7 +219,7 @@ impl TypeDesc {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FuncDef {
     pub name: String,
     /// The type of each parameter, as an index into `Program::types`.
@@ -249,7 +254,7 @@ impl FuncDef {
 /// The signature is in the file so that the verifier can check a `CALL_CAP`
 /// without trusting whoever produced the bytecode, and so that `sic verify` can
 /// report what a module may do with nothing executed.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapDecl {
     pub name: String,
     pub kind: CapKind,
@@ -268,7 +273,7 @@ pub struct CapDecl {
 }
 
 /// Source mapping, so a runtime error or a trace can name a line of source.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DebugInfo {
     /// Every file the program was built from, the one named on the command
     /// line first. A position names one of these by index, so a failure in an

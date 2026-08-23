@@ -468,6 +468,121 @@ mod tests {
         assert_eq!(back.debug.position(0), Some((2, 5)));
     }
 
+    /// A module that uses every tag the format defines, so that the round trip
+    /// below is a statement about the format rather than about one program.
+    ///
+    /// It is not meant to be a program that verifies - `EmptyList` names a type
+    /// nothing loads, and no function covers the code - because what is under
+    /// test here is only that bytes survive the journey.
+    fn everything() -> Program {
+        Program {
+            consts: vec![
+                Const::Unit,
+                Const::Bool(false),
+                Const::I64(i64::MIN),
+                // Not NaN: this is compared with `==`, and the point of the
+                // comparison is the bits that came back, not float equality.
+                Const::F64(f64::MIN_POSITIVE),
+                Const::Str(String::new()),
+                Const::EmptyList(6),
+            ],
+            types: vec![
+                TypeDesc::Unit,
+                TypeDesc::Bool,
+                TypeDesc::Int,
+                TypeDesc::Float,
+                TypeDesc::Str,
+                TypeDesc::Task(2),
+                TypeDesc::List(7),
+                TypeDesc::Object {
+                    name: "Answer".into(),
+                    fields: vec![("text".into(), 4), ("score".into(), 2)],
+                },
+            ],
+            funcs: vec![
+                FuncDef {
+                    name: "main".into(),
+                    params: Vec::new(),
+                    reg_count: 1,
+                    ret_type: 0,
+                    code_off: 0,
+                    code_len: 1,
+                },
+                FuncDef {
+                    name: "with_params".into(),
+                    params: vec![2, 4, 7],
+                    reg_count: 255,
+                    ret_type: 6,
+                    code_off: 1,
+                    code_len: 1,
+                },
+            ],
+            caps: vec![
+                CapDecl {
+                    name: "process.exec".into(),
+                    kind: CapKind::Exec,
+                    constraints: "/usr/bin/git".into(),
+                    pin: "b".repeat(64),
+                    args: vec!["status".into(), "--porcelain".into()],
+                    params: vec![4],
+                    ret_type: 2,
+                },
+                CapDecl {
+                    name: "fs.read".into(),
+                    kind: CapKind::Read,
+                    constraints: "./data.txt".into(),
+                    pin: String::new(),
+                    args: Vec::new(),
+                    params: Vec::new(),
+                    ret_type: 4,
+                },
+            ],
+            code: vec![Inst::abc(Op::Return, 0, 0, 0), Inst::abc(Op::Halt, 0, 0, 0)],
+            policies: vec![
+                PolicyEntry {
+                    pc: 0,
+                    attempts: 1,
+                    timeout_ms: 0,
+                    budget: 0,
+                    conversation: 0,
+                },
+                PolicyEntry {
+                    pc: 1,
+                    attempts: u32::MAX,
+                    timeout_ms: 30_000,
+                    budget: 4,
+                    conversation: 9,
+                },
+            ],
+            debug: DebugInfo {
+                sources: vec!["main.sic".into(), "lib/util.sic".into()],
+                lines: vec![(0, 0, 1, 1), (1, 1, 40, 12)],
+            },
+        }
+    }
+
+    /// The whole module, not the fields a test happened to list.
+    ///
+    /// `round_trip` above checks eight fields, and would not notice an encoder
+    /// that dropped a capability's argument prefix - which is a grant the broker
+    /// enforces. Comparing the programs makes every field of the format part of
+    /// the assertion, including the ones added after this test was written.
+    #[test]
+    fn every_tag_survives_the_round_trip() {
+        let p = everything();
+        assert_eq!(decode(&encode(&p)).expect("decodes"), p);
+    }
+
+    #[test]
+    fn rejects_flags_this_version_does_not_define() {
+        // Flags are how the format would say a file needs something this reader
+        // does not have, so an unknown one has to stop the read rather than be
+        // ignored.
+        let mut bytes = encode(&sample());
+        bytes[8] = 1;
+        assert!(decode(&bytes).unwrap_err().message.contains("flags"));
+    }
+
     #[test]
     fn rejects_bad_magic_and_version() {
         let mut bytes = encode(&sample());
