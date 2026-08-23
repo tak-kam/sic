@@ -1421,6 +1421,30 @@ fn inspect_run_prints_every_event() {
 }
 
 #[test]
+fn every_example_compiles_verifies_and_plans() {
+    // `plan` runs the whole front end and the verifier and executes nothing, so
+    // it is the cheapest way to say that every example in the repository still
+    // means something.
+    let dir = repo_root().join("examples");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir)
+        .expect("examples/ should exist")
+        .flatten()
+    {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "sic") {
+            continue;
+        }
+        let name = path.to_string_lossy().into_owned();
+        let (stdout, stderr, code) = sic(&["plan", &name]);
+        assert_eq!(code, 0, "{name} does not plan: {stderr}");
+        assert!(stdout.contains("Execution plan for"), "{name}: {stdout}");
+        checked += 1;
+    }
+    assert!(checked >= 8, "only {checked} examples were checked");
+}
+
+#[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);
     assert_eq!(code, 0);

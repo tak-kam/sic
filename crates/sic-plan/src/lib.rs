@@ -17,7 +17,7 @@
 //! worse than claiming none.
 
 use sic_bytecode::inst::Op;
-use sic_bytecode::program::{Program, TypeDesc};
+use sic_bytecode::program::Program;
 use sic_core::{CapKind, Digest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,16 +290,6 @@ pub fn render(plan: &Plan, source: &str) -> String {
         )),
     }
     out
-}
-
-/// The types a plan mentions, for a caller that wants to show them.
-pub fn verified_types(program: &Program) -> Vec<String> {
-    program
-        .types
-        .iter()
-        .filter(|t| matches!(t, TypeDesc::Object { .. }))
-        .map(|t| t.short_name().to_string())
-        .collect()
 }
 
 #[cfg(test)]

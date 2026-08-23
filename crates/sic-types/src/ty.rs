@@ -177,10 +177,6 @@ impl Types {
         &self.objects[id.index()]
     }
 
-    pub fn object_count(&self) -> usize {
-        self.objects.len()
-    }
-
     /// The record a type is, if it is one.
     pub fn as_object(&self, id: TypeId) -> Option<ObjectId> {
         match self.get(id) {

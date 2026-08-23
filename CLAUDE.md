@@ -38,18 +38,62 @@ Never add a crate because it is convenient. To propose one, first document in
 
 ## Structure
 
+```text
+Source -> Lexer -> Parser -> AST -> Type Checker -> IR
+       -> Bytecode -> Verifier -> VM -> Capability Broker
+```
+
 | crate | role |
 |-------|------|
-| `sic-core` | `Span`, `SourceFile`, `Diagnostic`, shared ID newtypes |
+| `sic-core` | `Span`, `SourceFile`, `Diagnostic`, IDs, SHA-256, the binary reader/writer, the capability value types |
 | `sic-syntax` | lexer, AST, parser (recursive descent; Pratt for expressions only) |
+| `sic-types` | interned types, type checking, name resolution, trust |
+| `sic-ir` | the high-level IR, where workflow semantics still exist |
+| `sic-bytecode` | instruction set, the `.sicb` format, disassembler |
+| `sic-compile` | HIR to bytecode |
+| `sic-verify` | the bytecode verifier |
+| `sic-vm` | the register VM, tasks, checkpoints |
+| `sic-broker` | performs capability calls |
+| `sic-journal` | the execution journal |
+| `sic-json` | a JSON parser, for what a model answers with |
+| `sic-otel` | journal to OTLP traces and metrics |
+| `sic-plan` | what a program may do, read from its bytecode |
 | `sic-cli` | the `sic` binary |
 
-Crates are added per phase (`sic-types`, `sic-ir`, `sic-bytecode`, `sic-verify`,
-`sic-vm`, `sic-journal`, `sic-broker`). Two boundaries must hold:
+Three boundaries must hold, and each is checked by a test rather than left as an
+intention:
 
-- `sic-vm` performs no external effects and never depends on `sic-broker`.
-  Effects go through capabilities; the VM holds no credentials.
-- `sic-core` depends on nothing else in the workspace.
+- **Only `sic-broker` and `sic-cli` touch the outside world.** Every other crate
+  is a pure function of its input; that is what makes the capability boundary
+  mean anything (`crates/sic-core/tests/workspace.rs`).
+- **`sic-vm` never depends on `sic-broker`.** The VM suspends at an effect, the
+  driver asks the broker. That boundary is where the two will later split into
+  separate processes (`crates/sic-vm/tests/isolation.rs`).
+- **`sic-core` depends on nothing else in the workspace.**
+
+The journal records digests, never values. A checkpoint and a recorded run's
+`responses.jsonl` hold values, and that difference is deliberate: see
+`docs/design/runs.md`.
+
+## Commands
+
+```text
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record]
+sic resume <CHECKPOINT> <FILE.sic> --value <V>
+sic plan <FILE.sic|FILE.sicb>     what a program may do, running nothing
+sic runs | explain <ID> | inspect-run <ID> | replay <ID>
+sic export <JOURNAL> [--traces P] [--metrics P]
+sic compile | verify | disasm | parse | hir
+```
+
+Exit code 3 means a run was suspended and checkpointed - waiting is not failing.
+
+## Design documents
+
+`docs/design/` holds one per phase, and each records what was deliberately left
+out and why. `docs/status.md` says where each section of the specification
+stands - read it before deciding what to work on. `docs/diagnostics.md` indexes
+every diagnostic code, and a test fails if it drifts from the source.
 
 ## Building
 

@@ -69,11 +69,6 @@ impl Diagnostic {
         }
     }
 
-    pub fn with_label(mut self, label: Label) -> Self {
-        self.secondary.push(label);
-        self
-    }
-
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
         self
