@@ -14,7 +14,7 @@ first-class concerns of the language and its runtime.
 The implementation is Rust with **zero external crates**, because supply chain
 attacks are treated as a primary risk.
 
-## Status: phase 6 (tasks, retry and timeout)
+## Status: phase 7 (agents and structured output)
 
 ```text
 Source -> Lexer -> Parser -> AST -> Type Checker -> IR
@@ -174,6 +174,50 @@ an audit shows what happened rather than only what worked; **timeout belongs to
 the broker**, the only side with a clock. See
 [docs/design/concurrency.md](docs/design/concurrency.md).
 
+### An agent is not a function that returns a string
+
+```text
+type Diagnosis { cause: String, confidence: Float }
+
+allow { llm.invoke "claude-opus-4"; }
+
+agent diagnose {
+    input: String,
+    output: Diagnosis,
+    budget: 2,
+}
+
+fn main() -> String {
+    let d = diagnose("disk usage is at 100%");
+    return d.cause;
+}
+```
+
+What comes back from a model is text; what a workflow needs is a value it can
+branch on. An `agent` declaration is a **function the compiler writes**: a
+capability call and a validation.
+
+```console
+$ sic run examples/agent.sic --checkpoint ask.sicc
+waiting: [claude-opus-4] disk usage is at 100%
+
+$ sic resume ask.sicc examples/agent.sic \
+    --value '{"cause": "disk full", "confidence": 0.9}'
+"disk full"
+```
+
+Nothing in the VM knows what an agent is - it sees `CALL_CAP` and `FROM_JSON` -
+and nothing reaches a model without a grant naming it. An answer that does not
+fit fails **at the boundary**, with the path that failed:
+
+```text
+error: the document does not fit the type: evidence[0].weight: expected Int, found a string
+```
+
+`sic-json` is a parser written by hand, accepting RFC 8259 and nothing more, with
+caps on document size and nesting because its input is untrusted text from a
+model. See [docs/design/agents.md](docs/design/agents.md).
+
 Every phase is verified: `sic run` compiles, verifies, and only then executes.
 The VM never runs bytecode that has not passed the verifier, including bytecode
 this process just produced.
@@ -213,6 +257,7 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 | `sic-verify` | the bytecode verifier |
 | `sic-vm` | the register VM |
 | `sic-journal` | the execution journal: events, digests, JSONL |
+| `sic-json` | a JSON parser, for what a model answers with |
 | `sic-broker` | performs capability calls; the only crate with external effects |
 | `sic-cli` | the `sic` command |
 

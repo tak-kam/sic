@@ -105,6 +105,14 @@ pub enum EventKind {
     /// The run ended while this task was still going.
     TaskAbandoned,
 
+    /// A budgeted call site was used once. `remaining` is what is left, which
+    /// is what makes a budget visible before it runs out rather than after.
+    BudgetConsumed {
+        kind: String,
+        amount: u64,
+        remaining: u64,
+    },
+
     /// The run stopped because a capability could not answer yet.
     RunSuspended {
         cap: String,
@@ -137,6 +145,7 @@ impl EventKind {
             EventKind::TaskCompleted { .. } => "task_completed",
             EventKind::TaskFailed { .. } => "task_failed",
             EventKind::TaskAbandoned => "task_abandoned",
+            EventKind::BudgetConsumed { .. } => "budget_consumed",
             EventKind::RunSuspended { .. } => "run_suspended",
             EventKind::RunResumed { .. } => "run_resumed",
             EventKind::CheckpointWritten { .. } => "checkpoint_written",

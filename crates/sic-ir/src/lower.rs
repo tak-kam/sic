@@ -277,6 +277,32 @@ impl<'a> FnLower<'a> {
                     Some(Res::Builtin(sic_types::Builtin::Len)) => {
                         self.emit(InstKind::Len { dst, src: args[0] }, e.span)
                     }
+                    // An agent is a model call and a validation. Nothing below
+                    // this point knows what an agent is.
+                    Some(Res::Agent(agent)) => {
+                        let info = self.typed.agents[agent.index()].clone();
+                        let raw = self.temp(sic_types::Types::STR);
+                        self.emit(
+                            InstKind::CallCap {
+                                dst: raw,
+                                cap: info.cap,
+                                args,
+                                policy: crate::hir::CallPolicy {
+                                    budget: info.budget,
+                                    ..Default::default()
+                                },
+                            },
+                            e.span,
+                        );
+                        self.emit(
+                            InstKind::FromJson {
+                                dst,
+                                ty: info.output,
+                                src: raw,
+                            },
+                            e.span,
+                        );
+                    }
                     Some(Res::Builtin(sic_types::Builtin::FromJson)) => self.emit(
                         InstKind::FromJson {
                             dst,

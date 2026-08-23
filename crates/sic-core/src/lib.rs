@@ -14,5 +14,5 @@ pub use bin::{BinError, Reader, Writer};
 pub use cap::{CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue};
 pub use diag::{Diagnostic, Label, Severity};
 pub use hash::{Digest, Sha256};
-pub use id::{BlockId, CapId, ConstIdx, FuncId, LocalId, NodeId, TypeId};
+pub use id::{AgentId, BlockId, CapId, ConstIdx, FuncId, LocalId, NodeId, TypeId};
 pub use span::{LineCol, SourceFile, Span};

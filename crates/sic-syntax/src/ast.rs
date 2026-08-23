@@ -20,6 +20,8 @@ pub enum Item {
     Allow(AllowDecl),
     /// A user-defined record type.
     Type(TypeDecl),
+    /// An agent: a model call and the shape its answer has to fit.
+    Agent(AgentDecl),
 }
 
 impl Item {
@@ -28,8 +30,27 @@ impl Item {
             Item::Fn(f) => f.span,
             Item::Allow(a) => a.span,
             Item::Type(t) => t.span,
+            Item::Agent(a) => a.span,
         }
     }
+}
+
+/// ```text
+/// agent diagnose {
+///     input: String,
+///     output: Diagnosis,
+///     budget: 8,
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct AgentDecl {
+    pub id: NodeId,
+    pub name: Ident,
+    pub input: Option<TypeExpr>,
+    pub output: Option<TypeExpr>,
+    /// How many times the agent may call its model in a whole run.
+    pub budget: Option<u32>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

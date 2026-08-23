@@ -215,10 +215,18 @@ agent is. What the declaration buys is that the output type is declared once, in
 one place, and the run fails at the model boundary rather than wherever the
 malformed value is first used.
 
-`budget` is a count of capability calls the agent may make. Exceeding it fails
-the run. Tokens and cost need the broker to report them, which needs a
-capability result richer than one value, and that is a later phase - counting
-calls is what can be enforced honestly today.
+`input` is `String` in v0.1: building a prompt from a value would need a way to
+render one, which the language does not have yet.
+
+`budget` is a count of capability calls the agent may make in a whole run.
+Exceeding it fails the run. It is enforced by the VM, which keeps a count per
+call site: a budget is attached to a pc in the policy table, so the VM enforces
+it **without knowing that some call sites are agents**. The count travels in
+checkpoints, because otherwise resuming would hand the run a fresh allowance.
+
+Tokens and cost need the broker to report them, which needs a capability result
+richer than one value, and that is a later phase - counting calls is what can be
+enforced honestly today.
 
 Tools, memory and execution history from section 17 of the specification are not
 in this phase. An agent that can call tools is an agent that can loop, and a loop
@@ -230,15 +238,23 @@ than a call count first.
 ## 7. What the journal records
 
 ```text
-AgentStarted   { agent, input digest }
-AgentCompleted { agent, output digest }
-AgentFailed    { agent, error }
 BudgetConsumed { kind, amount, remaining }
 ```
 
-`AgentFailed` covers both a model that answered with something invalid and an
-agent that ran out of budget. Both are the same thing to the workflow: no usable
-answer.
+and nothing else that is specific to agents, which is a change from the first
+draft of this design. `AgentStarted` and `AgentCompleted` would have to be
+emitted by something that knows what an agent is, and the whole point of the
+lowering is that nothing below the checker does. An agent's work already appears
+as what it is: a function activation, a capability request and completion, and -
+if the answer does not fit - a schema failure at the pc the debug section maps
+back to the agent call.
+
+Agent-specific events become worth their cost when an agent is more than one
+call: a loop with tools, where "the agent started" and "the agent finished" are
+not the same as "one capability call happened".
+
+`remaining` is on the budget event so that a budget is visible while it is being
+spent rather than only when it runs out.
 
 ---
 
@@ -280,5 +296,5 @@ answer.
 |---|------|-----------|
 | 7b-1 | `llm.invoke`, deferred by the broker | a model call suspends the run and resumes from a checkpoint |
 | 7b-2 | `agent` declarations, lowered to a capability call and a validation | nothing in the VM knows what an agent is |
-| 7b-3 | Budgets as a call count | exceeding one fails the run |
-| 7b-4 | Agent and budget events | a failed validation is recorded as an agent failure |
+| 7b-3 | Budgets as a call count, enforced per call site | exceeding one fails the run, and the count survives a checkpoint |
+| 7b-4 | The budget event | a budget is visible while it is spent |

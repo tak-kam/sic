@@ -856,6 +856,7 @@ fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
         strings: Vec::new(),
         lists: Vec::new(),
         objects: Vec::new(),
+        spent: Vec::new(),
     };
     // The honest one decodes.
     assert!(Checkpoint::decode(&base.encode()).is_ok());
@@ -937,6 +938,7 @@ fn a_checkpoint_frame_must_point_into_this_program() {
         strings: Vec::new(),
         lists: Vec::new(),
         objects: Vec::new(),
+        spent: Vec::new(),
     };
     let err = Vm::restore(
         &p,
@@ -1075,6 +1077,7 @@ fn a_failed_call_is_retried_up_to_the_policy() {
         pc: 1,
         attempts: 3,
         timeout_ms: 0,
+        budget: 0,
     });
 
     let sink = SharedSink::default();
@@ -1117,6 +1120,7 @@ fn the_timeout_travels_with_the_request() {
         pc: 1,
         attempts: 1,
         timeout_ms: 250,
+        budget: 0,
     });
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
     let Status::Suspended(request) = vm.run(0, &[]) else {
@@ -1366,4 +1370,77 @@ fn a_whole_number_fits_a_float_but_not_the_other_way() {
 
     // The reverse would change the value, so it is refused.
     assert!(schema_error(r#"{"value": 1.5}"#).contains("expected Int, found a number"));
+}
+
+// ---- budgets ----
+
+#[test]
+fn a_call_site_runs_out_of_budget() {
+    // The VM enforces the budget without knowing that this call site is an
+    // agent: a budget is attached to a pc, and that is all it needs.
+    let mut p = exec_program();
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 1,
+    });
+
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    // The budget is recorded as it is spent, so it is visible before it runs
+    // out rather than only after.
+    assert!(names(&sink).contains(&"budget_consumed"));
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::I64(0)),
+        Status::Finished(_)
+    ));
+}
+
+#[test]
+fn exceeding_a_budget_fails_the_run() {
+    // A loop back onto the same CALL_CAP: the second visit is over budget.
+    let mut p = exec_program();
+    let code_off = p.funcs[0].code_off as usize;
+    // main: LOAD_CONST, CALL_CAP, RETURN -> make the return jump back instead.
+    p.code[code_off + 2] = Inst::asbx(Op::Jump, 0, -2);
+    p.funcs[0].code_len = 3;
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 1,
+    });
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    match vm.resume(sic_core::CapValue::I64(0)) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::OutOfBudget);
+            assert!(
+                info.detail.as_deref().unwrap_or("").contains("1 time(s)"),
+                "{info:?}"
+            );
+        }
+        other => panic!("expected the budget to run out, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_budget_survives_a_checkpoint() {
+    // Otherwise resuming would hand the run a fresh allowance.
+    let mut p = exec_program();
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 3,
+    });
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+    let saved = Checkpoint::decode(&bytes).unwrap();
+    assert_eq!(saved.spent, vec![(1, 1)]);
 }

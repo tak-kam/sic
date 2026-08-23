@@ -178,12 +178,13 @@ impl Parser {
                 TokenKind::Kw(Keyword::Fn) => items.push(Item::Fn(self.parse_fn())),
                 TokenKind::Kw(Keyword::Allow) => items.push(Item::Allow(self.parse_allow())),
                 TokenKind::Kw(Keyword::Type) => items.push(Item::Type(self.parse_type_decl())),
+                TokenKind::Kw(Keyword::Agent) => items.push(Item::Agent(self.parse_agent())),
                 other => {
                     let span = self.span();
                     let found = other.describe();
                     self.error(
                         "E0202",
-                        "the top level holds `fn`, `type` and `allow` declarations",
+                        "the top level holds `fn`, `type`, `agent` and `allow` declarations",
                         span,
                         format!("found {found}"),
                     );
@@ -237,6 +238,85 @@ impl Parser {
             name,
             fields,
             span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// ```text
+    /// agent diagnose { input: String, output: Diagnosis, budget: 8 }
+    /// ```
+    fn parse_agent(&mut self) -> AgentDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `agent`
+        let name = self.expect_ident("an agent name");
+        let mut decl = AgentDecl {
+            id,
+            name,
+            input: None,
+            output: None,
+            budget: None,
+            span: Span::empty(start),
+        };
+        if self.expect(&TokenKind::LBrace, "to open an agent body") {
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let before = self.pos;
+                self.parse_agent_field(&mut decl);
+                if !self.eat(&TokenKind::Comma) {
+                    break;
+                }
+                if self.pos == before {
+                    self.bump();
+                }
+            }
+            self.expect(&TokenKind::RBrace, "to close the agent body");
+        }
+        decl.span = Span::new(start, self.prev_end());
+        decl
+    }
+
+    fn parse_agent_field(&mut self, decl: &mut AgentDecl) {
+        let key = self.expect_ident("an agent setting");
+        self.expect(&TokenKind::Colon, "after an agent setting");
+        match key.name.as_str() {
+            "input" => decl.input = Some(self.parse_type()),
+            "output" => decl.output = Some(self.parse_type()),
+            "budget" => match self.peek().clone() {
+                TokenKind::Int(value) => {
+                    let span = self.bump().span;
+                    match u32::try_from(value) {
+                        Ok(v) if v > 0 => decl.budget = Some(v),
+                        _ => self.error(
+                            "E0208",
+                            "`budget` needs a positive number of calls",
+                            span,
+                            "must fit in a 32-bit count",
+                        ),
+                    }
+                }
+                other => {
+                    let span = self.span();
+                    self.error(
+                        "E0208",
+                        "`budget` needs a number",
+                        span,
+                        format!("found {}", other.describe()),
+                    );
+                }
+            },
+            other => {
+                self.error(
+                    "E0209",
+                    format!("`{other}` is not an agent setting"),
+                    key.span,
+                    "expected `input`, `output` or `budget`",
+                );
+                // Skip whatever it was, so one unknown setting does not
+                // derail the rest of the body.
+                while !self.at_eof() && !matches!(self.peek(), TokenKind::Comma | TokenKind::RBrace)
+                {
+                    self.bump();
+                }
+            }
         }
     }
 

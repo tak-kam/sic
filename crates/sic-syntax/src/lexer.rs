@@ -497,12 +497,17 @@ mod tests {
 
     #[test]
     fn reserved_words_lex_as_keywords() {
-        assert_eq!(kinds("agent")[0], TokenKind::Kw(Keyword::Reserved("agent")));
+        assert_eq!(
+            kinds("import")[0],
+            TokenKind::Kw(Keyword::Reserved("import"))
+        );
         assert_eq!(
             kinds("parallel")[0],
             TokenKind::Kw(Keyword::Reserved("parallel"))
         );
-        // An identifier that merely starts with a reserved word stays an identifier.
+        // A word that has since become real lexes as itself.
+        assert_eq!(kinds("agent")[0], TokenKind::Kw(Keyword::Agent));
+        // An identifier that merely starts with a keyword stays an identifier.
         assert_eq!(kinds("agent_id")[0], TokenKind::Ident("agent_id".into()));
     }
 

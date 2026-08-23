@@ -312,7 +312,7 @@ fn top_level_junk_recovers_to_next_fn() {
 
 #[test]
 fn reserved_word_as_identifier() {
-    assert!(codes("fn f() { let agent = 1; }").contains(&"E0210"));
+    assert!(codes("fn f() { let import = 1; }").contains(&"E0210"));
     assert!(codes("fn f() { return parallel; }").contains(&"E0210"));
 }
 

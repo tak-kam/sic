@@ -17,6 +17,7 @@ pub fn dump(m: &Module) -> String {
             Item::Fn(f) => p.fn_decl(f),
             Item::Allow(a) => p.allow_decl(a),
             Item::Type(t) => p.type_decl(t),
+            Item::Agent(a) => p.agent_decl(a),
         }
     }
     p.depth -= 1;
@@ -87,6 +88,20 @@ impl Printer {
             .map(|f| format!("({} {})", f.name.name, type_str(&f.ty)))
             .collect();
         self.line(&format!("(type {} {})", t.name.name, fields.join(" ")));
+    }
+
+    fn agent_decl(&mut self, a: &AgentDecl) {
+        let mut parts = vec![format!("(agent {}", a.name.name)];
+        if let Some(input) = &a.input {
+            parts.push(format!("(input {})", type_str(input)));
+        }
+        if let Some(output) = &a.output {
+            parts.push(format!("(output {})", type_str(output)));
+        }
+        if let Some(budget) = a.budget {
+            parts.push(format!("(budget {budget})"));
+        }
+        self.line(&format!("{})", parts.join(" ")));
     }
 
     fn block(&mut self, b: &Block) {

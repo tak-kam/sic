@@ -177,9 +177,9 @@ pub struct CallPolicy {
     /// Total attempts, not extra ones.
     pub attempts: Option<u32>,
     pub timeout_ms: Option<u32>,
-    /// Phase 7.
-    pub budget: Option<BudgetSpec>,
-    /// Phase 7: what makes a retry safe to repeat.
+    /// How many times this call site may run in a whole run.
+    pub budget: Option<u32>,
+    /// Phase 8: what makes a retry safe to repeat.
     pub idempotency_key: Option<LocalId>,
 }
 
@@ -190,20 +190,6 @@ impl CallPolicy {
             && self.budget.is_none()
             && self.idempotency_key.is_none()
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BudgetSpec {
-    pub kind: BudgetKind,
-    pub limit: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BudgetKind {
-    Tokens,
-    Cost,
-    Calls,
-    Duration,
 }
 
 #[derive(Debug, Clone, Copy)]

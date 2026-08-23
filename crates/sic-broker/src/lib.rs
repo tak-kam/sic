@@ -50,6 +50,7 @@ impl Broker {
             "fs.write" => fs_write(&grant, request),
             "process.exec" => process_exec(&grant, request),
             "human.approve" => human_approve(&grant, request),
+            "llm.invoke" => llm_invoke(&grant, request),
             other => Err(CapError::new(format!(
                 "`{other}` is in the manifest but this broker cannot perform it"
             ))),
@@ -201,6 +202,22 @@ fn reject_timeout(request: &CapRequest) -> Result<(), CapError> {
         )));
     }
     Ok(())
+}
+
+/// Asking a model.
+///
+/// This broker defers it, as it does an approval. Calling a model means HTTPS,
+/// which means TLS, and writing one by hand is not the kind of
+/// dependency-freedom this project is after. The deferred mechanism already
+/// exists and is the right shape: the run suspends, something outside answers,
+/// the run continues - and a checkpoint means the answer can arrive minutes
+/// later or in another process.
+fn llm_invoke(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
+    let prompt = string_arg(request, 0, 1)?;
+    Ok(CapOutcome::Deferred {
+        question: format!("[{}] {prompt}", grant.constraint),
+    })
 }
 
 /// Resolves the path an argument names, refusing anything the grant does not

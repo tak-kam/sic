@@ -66,6 +66,15 @@ pub fn event_to_json(event: &Event) -> String {
         }
         EventKind::TaskFailed { error } => field_str(&mut out, "error", error, false),
         EventKind::TaskAbandoned => {}
+        EventKind::BudgetConsumed {
+            kind,
+            amount,
+            remaining,
+        } => {
+            field_str(&mut out, "budget", kind, false);
+            field_u64(&mut out, "amount", *amount, false);
+            field_u64(&mut out, "remaining", *remaining, false);
+        }
         EventKind::RunSuspended { cap } | EventKind::RunResumed { cap } => {
             field_str(&mut out, "cap", cap, false);
         }

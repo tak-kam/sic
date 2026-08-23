@@ -120,6 +120,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(policy.pc);
         w.u32(policy.attempts);
         w.u32(policy.timeout_ms);
+        w.u32(policy.budget);
     }
     sections.push((section::POLICIES, w.finish()));
 
@@ -346,13 +347,14 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 
 fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
     let mut r = Reader::new(body);
-    let n = r.count(12)?;
+    let n = r.count(16)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(PolicyEntry {
             pc: r.u32()?,
             attempts: r.u32()?,
             timeout_ms: r.u32()?,
+            budget: r.u32()?,
         });
     }
     r.expect_end("policies")?;
@@ -409,6 +411,7 @@ mod tests {
                 pc: 0,
                 attempts: 3,
                 timeout_ms: 500,
+                budget: 8,
             }],
             debug: DebugInfo {
                 source_name: "main.sic".into(),

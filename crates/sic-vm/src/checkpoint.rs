@@ -60,6 +60,9 @@ pub struct Checkpoint {
     pub strings: Vec<String>,
     pub lists: Vec<Vec<Value>>,
     pub objects: Vec<Vec<Value>>,
+    /// How many times each capability call site has run, for the budgets in the
+    /// policy table.
+    pub spent: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -167,6 +170,11 @@ impl Checkpoint {
         }
         write_value_lists(&mut w, &self.lists);
         write_value_lists(&mut w, &self.objects);
+        w.u32(self.spent.len() as u32);
+        for (pc, count) in &self.spent {
+            w.u32(*pc);
+            w.u32(*count);
+        }
         w.finish()
     }
 
@@ -242,6 +250,11 @@ impl Checkpoint {
         }
         let lists = read_value_lists(&mut r)?;
         let objects = read_value_lists(&mut r)?;
+        let spent_count = r.count(8)?;
+        let mut spent = Vec::with_capacity(spent_count);
+        for _ in 0..spent_count {
+            spent.push((r.u32()?, r.u32()?));
+        }
 
         r.expect_end("the checkpoint")?;
 
@@ -260,6 +273,7 @@ impl Checkpoint {
             strings,
             lists,
             objects,
+            spent,
         };
         checkpoint.check_consistency()?;
         Ok(checkpoint)

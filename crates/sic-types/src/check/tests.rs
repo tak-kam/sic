@@ -400,3 +400,59 @@ fn one_error_does_not_cascade() {
     let cs = codes("fn main() { return nope() + 1 * 2; }");
     assert_eq!(cs, vec!["E0300"]);
 }
+
+// ---- agents ----
+
+const AGENT: &str = "type Diagnosis { cause: String }\n\
+allow { llm.invoke \"a-model\"; }\n\
+agent diagnose { input: String, output: Diagnosis, budget: 2 }\n";
+
+#[test]
+fn an_agent_is_called_like_a_function_and_returns_its_output_type() {
+    let typed = ok(&format!(
+        "{AGENT}fn main() -> String {{ let d = diagnose(\"logs\"); return d.cause; }}"
+    ));
+    assert_eq!(typed.agents.len(), 1);
+    assert_eq!(typed.agents[0].name, "diagnose");
+    assert_eq!(typed.agents[0].budget, Some(2));
+    assert_eq!(typed.types.name(typed.agents[0].output), "Diagnosis");
+}
+
+#[test]
+fn an_agent_needs_the_capability_to_talk_to_a_model() {
+    // There is no path to an effect the manifest does not name.
+    let cs = codes(
+        "type D { cause: String }\nagent diagnose { input: String, output: D }\nfn main() { }",
+    );
+    assert!(cs.contains(&"E0362"), "{cs:?}");
+}
+
+#[test]
+fn an_agent_takes_a_prompt() {
+    assert!(codes(&format!("{AGENT}fn main() {{ let d = diagnose(1); }}")).contains(&"E0301"));
+    assert!(codes(&format!("{AGENT}fn main() {{ let d = diagnose(); }}")).contains(&"E0302"));
+    // A non-String input has no way to become a prompt yet.
+    assert!(
+        codes(
+            "allow { llm.invoke \"m\"; }\ntype D { c: String }\n\
+               agent a { input: Int, output: D }\nfn main() { }"
+        )
+        .contains(&"E0363")
+    );
+}
+
+#[test]
+fn an_agent_needs_both_an_input_and_an_output() {
+    assert!(
+        codes("allow { llm.invoke \"m\"; }\nagent a { input: String }\nfn main() { }")
+            .contains(&"E0364")
+    );
+}
+
+#[test]
+fn an_agent_cannot_share_a_name_with_a_function() {
+    let cs = codes(&format!(
+        "{AGENT}fn diagnose(s: String) -> String {{ return s; }}\nfn main() {{ }}"
+    ));
+    assert!(cs.contains(&"E0361"), "{cs:?}");
+}

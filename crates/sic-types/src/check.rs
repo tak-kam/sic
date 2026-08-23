@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use sic_core::{CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
+use sic_core::{AgentId, CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
 use sic_syntax::ast::*;
 
 use crate::cap::{self, CapEntry};
@@ -22,6 +22,8 @@ pub enum Res {
     Cap(CapId),
     /// A built-in function, which lowers to an instruction rather than a call.
     Builtin(Builtin),
+    /// An agent, which lowers to a model call and a validation.
+    Agent(AgentId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +47,23 @@ pub struct FnInfo {
     pub span: Span,
 }
 
+/// An agent: a model call and the shape its answer has to fit.
+///
+/// Nothing below this layer knows what an agent is. It lowers to a capability
+/// call and a `from_json`, which is the whole of what the declaration buys: the
+/// output type is written once, and the run fails at the model boundary rather
+/// than wherever the malformed value is first used.
+#[derive(Debug, Clone)]
+pub struct AgentInfo {
+    pub name: String,
+    pub input: TypeId,
+    pub output: TypeId,
+    /// How many model calls the agent may make in a whole run.
+    pub budget: Option<u32>,
+    /// The manifest entry for `llm.invoke`.
+    pub cap: CapId,
+}
+
 /// Everything the later phases need on top of the AST.
 #[derive(Debug)]
 pub struct Typed {
@@ -56,6 +75,8 @@ pub struct Typed {
     pub res: HashMap<NodeId, Res>,
     /// The capabilities the module granted itself, in manifest order.
     pub caps: Vec<CapEntry>,
+    /// The agents the module declares.
+    pub agents: Vec<AgentInfo>,
     /// The `main` function, if the module has one.
     pub entry: Option<FuncId>,
 }
@@ -76,6 +97,7 @@ pub fn check(module: &Module) -> (Typed, Vec<Diagnostic>) {
     c.collect_types(module);
     c.collect_capabilities(module);
     c.collect_signatures(module);
+    c.collect_agents(module);
     c.check_bodies(module);
     c.finish()
 }
@@ -103,6 +125,8 @@ struct Checker {
     cap_ids: HashMap<String, CapId>,
     /// User-defined record types, by name.
     type_ids: HashMap<String, ObjectId>,
+    agents: Vec<AgentInfo>,
+    agent_ids: HashMap<String, AgentId>,
 
     // State for the function currently being checked.
     scopes: Vec<Vec<(String, LocalId)>>,
@@ -126,6 +150,8 @@ impl Checker {
             caps: Vec::new(),
             cap_ids: HashMap::new(),
             type_ids: HashMap::new(),
+            agents: Vec::new(),
+            agent_ids: HashMap::new(),
             scopes: Vec::new(),
             locals: Vec::new(),
             ret_ty: None,
@@ -322,6 +348,94 @@ impl Checker {
                     ret: sig.ret,
                 });
             }
+        }
+    }
+
+    /// Declares the module's agents, after types, capabilities and functions.
+    fn collect_agents(&mut self, module: &Module) {
+        for item in &module.items {
+            let Item::Agent(decl) = item else {
+                continue;
+            };
+            if self.agent_ids.contains_key(&decl.name.name) {
+                self.error(
+                    "E0360",
+                    format!("agent `{}` is declared more than once", decl.name.name),
+                    decl.name.span,
+                    "redeclared here",
+                );
+                continue;
+            }
+            if self.fn_ids.contains_key(&decl.name.name) {
+                self.error(
+                    "E0361",
+                    format!("`{}` is already a function", decl.name.name),
+                    decl.name.span,
+                    "an agent is called like one, so the names would collide",
+                );
+                continue;
+            }
+
+            // An agent is a model call, and a model call is a capability. There
+            // is no path to an effect that the manifest does not name.
+            let Some(cap) = self.cap_ids.get("llm.invoke").copied() else {
+                self.error(
+                    "E0362",
+                    format!("agent `{}` needs `llm.invoke`", decl.name.name),
+                    decl.span,
+                    "no grant covers talking to a model",
+                );
+                self.note("declare it: allow { llm.invoke \"the-model\"; }");
+                continue;
+            };
+
+            let input = match &decl.input {
+                Some(ty) => {
+                    let resolved = self.resolve_type(ty);
+                    if resolved != Types::STR && !self.types.is_error(resolved) {
+                        let found = self.types.name(resolved);
+                        self.error(
+                            "E0363",
+                            format!("an agent takes a String, not {found}"),
+                            ty.span,
+                            "the prompt is text",
+                        );
+                        self.note("a prompt built from a value needs a way to render one, which v0.1 does not have");
+                    }
+                    Types::STR
+                }
+                None => {
+                    self.error(
+                        "E0364",
+                        format!("agent `{}` has no `input`", decl.name.name),
+                        decl.span,
+                        "add `input: String`",
+                    );
+                    Types::STR
+                }
+            };
+            let output = match &decl.output {
+                Some(ty) => self.resolve_type(ty),
+                None => {
+                    self.error(
+                        "E0364",
+                        format!("agent `{}` has no `output`", decl.name.name),
+                        decl.span,
+                        "add `output: SomeType`",
+                    );
+                    Types::ERROR
+                }
+            };
+
+            let id = AgentId(self.agents.len() as u32);
+            self.agent_ids.insert(decl.name.name.clone(), id);
+            self.agents.push(AgentInfo {
+                name: decl.name.name.clone(),
+                input,
+                output,
+                budget: decl.budget,
+                cap,
+            });
         }
     }
 
@@ -799,6 +913,9 @@ impl Checker {
             return Types::ERROR;
         }
 
+        if let Some(agent) = self.agent_ids.get(&name.name).copied() {
+            return self.check_agent_call(callee, agent, args, span);
+        }
         let Some(id) = self.fn_ids.get(&name.name).copied() else {
             // `len` is the only built-in function. It is looked up last, so a
             // module that defines its own `len` gets that one.
@@ -1038,6 +1155,37 @@ impl Checker {
         Types::INT
     }
 
+    /// An agent is called like a function: one argument in, its output type out.
+    fn check_agent_call(
+        &mut self,
+        callee: &Expr,
+        agent: AgentId,
+        args: &[Expr],
+        span: Span,
+    ) -> TypeId {
+        let info = self.agents[agent.index()].clone();
+        self.res.insert(callee.id, Res::Agent(agent));
+        if args.len() != 1 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!(
+                    "agent `{}` takes 1 argument but {} were given",
+                    info.name,
+                    args.len()
+                ),
+                span,
+                "wrong number of arguments",
+            );
+            return info.output;
+        }
+        let found = self.check_expr(&args[0]);
+        self.expect_type(info.input, found, args[0].span, "this prompt");
+        info.output
+    }
+
     /// `from_json(text)`, whose result type is the annotation on the binding.
     ///
     /// There is nothing in the call itself to infer a type from, and inventing
@@ -1228,6 +1376,7 @@ impl Checker {
                 node_types: self.node_types,
                 res: self.res,
                 caps: self.caps,
+                agents: self.agents,
                 entry,
             },
             self.diags,

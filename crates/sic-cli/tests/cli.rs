@@ -913,6 +913,85 @@ fn from_json_needs_to_know_its_type() {
     std::fs::remove_file(src).ok();
 }
 
+// ---- agents ----
+
+#[test]
+fn an_agent_suspends_at_the_model_and_validates_the_answer() {
+    let checkpoint = write_temp("agent.sicc", "");
+    let (_, stderr, code) = sic(&[
+        "run",
+        &example("agent.sic"),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    // Calling a model means TLS, so this broker defers it.
+    assert_eq!(code, 3, "stderr: {stderr}");
+    assert!(stderr.contains("[claude-opus-4]"), "{stderr}");
+
+    let (stdout, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &example("agent.sic"),
+        "--value",
+        r#"{"cause": "disk full", "confidence": 0.9}"#,
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "\"disk full\"\n");
+
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn an_answer_that_does_not_fit_fails_the_agent() {
+    let checkpoint = write_temp("agent-bad.sicc", "");
+    let (_, _, code) = sic(&[
+        "run",
+        &example("agent.sic"),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    // A model that answers with the wrong shape fails at the boundary.
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &example("agent.sic"),
+        "--value",
+        r#"{"cause": "disk full"}"#,
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("does not fit the type"), "{stderr}");
+    assert!(stderr.contains("needs a field `confidence`"), "{stderr}");
+
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn an_agent_is_a_capability_call_in_the_bytecode() {
+    // Nothing below the checker knows what an agent is.
+    let out = write_temp("agent.sicb", "");
+    let out_str = out.to_str().unwrap().to_string();
+    let (_, stderr, code) = sic(&["compile", &example("agent.sic"), "-o", &out_str]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic(&["disasm", &out_str]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("CALL_CAP"), "{stdout}");
+    assert!(stdout.contains("FROM_JSON"), "{stdout}");
+    assert!(stdout.contains("llm.invoke"), "{stdout}");
+
+    // And `sic verify` reports the model it may talk to, without running it.
+    let (stdout, _, code) = sic(&["verify", &out_str]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("llm.invoke [invoke] \"claude-opus-4\""),
+        "{stdout}"
+    );
+
+    std::fs::remove_file(out).ok();
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

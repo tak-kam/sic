@@ -38,6 +38,17 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         requires_constraint: true,
     },
     CapSig {
+        name: "llm.invoke",
+        kind: CapKind::Invoke,
+        // The prompt in, the raw answer out. Turning that answer into a value
+        // is `from_json`, which is what an agent declaration wires up.
+        params: &[Types::STR],
+        ret: Types::STR,
+        // The constraint names the model, so a manifest says which one a
+        // module may talk to.
+        requires_constraint: true,
+    },
+    CapSig {
         name: "human.approve",
         kind: CapKind::Invoke,
         // The question is the argument; the answer is whether it was approved.

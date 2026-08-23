@@ -93,6 +93,7 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
                         pc: code_off + offset,
                         attempts: policy.attempts.unwrap_or(1),
                         timeout_ms: policy.timeout_ms.unwrap_or(0),
+                        budget: policy.budget.unwrap_or(0),
                     });
                 }
                 program.funcs.push(FuncDef {

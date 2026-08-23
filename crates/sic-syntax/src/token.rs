@@ -124,6 +124,7 @@ pub enum Keyword {
     Spawn,
     Await,
     Type,
+    Agent,
     Retry,
     Timeout,
     /// Reserved only. Using one produces a diagnostic.
@@ -132,13 +133,12 @@ pub enum Keyword {
 
 /// Words planned for later phases. They cannot be used as identifiers today.
 ///
-/// `process` is deliberately absent: it is the namespace of the `process.exec`
-/// capability, so it has to lex as an ordinary identifier.
+/// `process` and `budget` are deliberately absent: the first is the namespace
+/// of the `process.exec` capability, the second is a setting inside an `agent`
+/// body, and both have to lex as ordinary identifiers.
 const RESERVED: &[&str] = &[
-    "agent",
     "approval",
     "as",
-    "budget",
     "capability",
     "const",
     "enum",
@@ -171,6 +171,7 @@ impl Keyword {
             "null" => Keyword::Null,
             "allow" => Keyword::Allow,
             "type" => Keyword::Type,
+            "agent" => Keyword::Agent,
             "spawn" => Keyword::Spawn,
             "await" => Keyword::Await,
             "retry" => Keyword::Retry,
@@ -194,6 +195,7 @@ impl Keyword {
             Keyword::Null => "null",
             Keyword::Allow => "allow",
             Keyword::Type => "type",
+            Keyword::Agent => "agent",
             Keyword::Spawn => "spawn",
             Keyword::Await => "await",
             Keyword::Retry => "retry",

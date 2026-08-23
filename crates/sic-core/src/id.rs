@@ -50,6 +50,10 @@ define_id!(
     CapId
 );
 define_id!(
+    /// Index into the module's agent table.
+    AgentId
+);
+define_id!(
     /// An interned type.
     TypeId
 );

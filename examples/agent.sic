@@ -1,0 +1,33 @@
+// An agent is not a function that returns a string.
+//
+// `diagnose(prompt)` is a model call and a validation: the answer has to fit
+// `Diagnosis` before the program can read `d.cause`. Nothing in the VM knows
+// what an agent is - the declaration lowers to CALL_CAP and FROM_JSON.
+//
+// This broker defers a model call, because calling one means TLS. So the run
+// stops and continues when the answer arrives:
+//
+//     sic run examples/agent.sic --checkpoint ask.sicc
+//     sic resume ask.sicc examples/agent.sic \
+//         --value '{"cause": "disk full", "confidence": 0.9}'
+//
+// `budget` is how many model calls this agent may make in a whole run.
+type Diagnosis {
+    cause: String,
+    confidence: Float,
+}
+
+allow {
+    llm.invoke "claude-opus-4";
+}
+
+agent diagnose {
+    input: String,
+    output: Diagnosis,
+    budget: 2,
+}
+
+fn main() -> String {
+    let d = diagnose("disk usage is at 100%");
+    return d.cause;
+}

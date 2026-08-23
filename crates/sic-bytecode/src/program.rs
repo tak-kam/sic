@@ -35,6 +35,10 @@ pub struct PolicyEntry {
     pub attempts: u32,
     /// Milliseconds, or 0 for no deadline.
     pub timeout_ms: u32,
+    /// How many times this call site may run in a whole run, or 0 for no
+    /// limit. Counting calls is what can be enforced honestly today; tokens and
+    /// cost need the broker to report them.
+    pub budget: u32,
 }
 
 impl Program {

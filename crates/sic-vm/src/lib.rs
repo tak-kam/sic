@@ -81,6 +81,8 @@ pub enum FailKind {
     /// A document did not parse, or did not fit the type it was checked
     /// against. The detail says which and where.
     Schema,
+    /// A call site ran out of the budget its policy gave it.
+    OutOfBudget,
     /// A task was awaited whose result had already been taken.
     TaskAlreadyAwaited,
     /// The task being awaited failed.
@@ -107,6 +109,7 @@ impl FailKind {
             FailKind::CallStackTooDeep => "call stack too deep",
             FailKind::IndexOutOfRange => "the index is outside the list",
             FailKind::Schema => "the document does not fit the type",
+            FailKind::OutOfBudget => "the call site is out of budget",
             FailKind::TaskAlreadyAwaited => "this task has already been awaited",
             FailKind::AwaitedTaskFailed => "the awaited task failed",
             FailKind::Deadlock => "every task is waiting for another task",
@@ -210,6 +213,10 @@ pub struct Vm<'a> {
     /// The span of the run itself, which every task sits inside.
     pub(crate) root_span: SpanId,
     pub(crate) fuel: u64,
+    /// How many times each capability call site has run, for the budgets in
+    /// the policy table. Keyed by pc, because that is what a budget is attached
+    /// to; the VM does not know that some of those sites are agents.
+    spent: std::collections::HashMap<u32, u32>,
 }
 
 impl std::fmt::Debug for Vm<'_> {
@@ -248,6 +255,7 @@ impl<'a> Vm<'a> {
             journal,
             root_span: SpanId(0),
             fuel,
+            spent: std::collections::HashMap::new(),
         }
     }
 
@@ -458,6 +466,13 @@ impl<'a> Vm<'a> {
             root_span: self.root_span.0,
             fuel: self.fuel,
             cursor: self.cursor as u32,
+            spent: {
+                let mut spent: Vec<(u32, u32)> = self.spent.iter().map(|(k, v)| (*k, *v)).collect();
+                // Sorted so that two checkpoints of the same run are the same
+                // bytes.
+                spent.sort_unstable();
+                spent
+            },
             answering: answering as u32,
             question: question.to_string(),
             tasks: self.tasks.iter().map(snapshot_task).collect(),
@@ -538,6 +553,7 @@ impl<'a> Vm<'a> {
             journal,
             root_span: SpanId(saved.root_span),
             fuel: saved.fuel,
+            spent: saved.spent.iter().copied().collect(),
         };
         vm.journal
             .emit(vm.root_span, None, EventKind::RunResumed { cap });
@@ -1043,6 +1059,29 @@ impl<'a> Vm<'a> {
                         }
                     }
                     let policy = self.program.policy_at(pc);
+                    if let Some(budget) = policy.map(|p| p.budget).filter(|b| *b > 0) {
+                        let spent = self.spent.entry(pc).or_insert(0);
+                        *spent += 1;
+                        let used = *spent;
+                        let frame_span = self.tasks[index].frames.last().map(|f| f.span);
+                        self.journal.emit_for(
+                            TaskId(index as u64),
+                            frame_span.unwrap_or(self.root_span),
+                            Some(self.root_span),
+                            EventKind::BudgetConsumed {
+                                kind: "calls".into(),
+                                amount: 1,
+                                remaining: budget.saturating_sub(used) as u64,
+                            },
+                        );
+                        if used > budget {
+                            die!(
+                                FailKind::OutOfBudget,
+                                None,
+                                Some(format!("`{name}` may run {budget} time(s) in a run"))
+                            );
+                        }
+                    }
                     let frame_span = self.tasks[index].frames.last().map(|f| f.span);
                     let span = self.journal.new_span();
                     // Recorded here, where the instruction runs, rather than
