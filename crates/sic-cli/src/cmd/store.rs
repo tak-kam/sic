@@ -182,12 +182,33 @@ pub fn pending_question(dir: &Path) -> Option<String> {
     sic_vm::Checkpoint::decode(&bytes).ok().map(|c| c.question)
 }
 
+/// One recorded answer, as it goes into `responses.jsonl`.
+pub struct Answer<'a> {
+    pub value: &'a sic_core::CapValue,
+    /// The question a person was asked, when one was. The broker's own answers
+    /// have none, because nobody was asked.
+    pub asked: Option<&'a str>,
+    /// Why they answered that way, if they said. Free text a person wrote,
+    /// which is why it lives here rather than in the journal.
+    pub because: Option<&'a str>,
+}
+
+impl<'a> Answer<'a> {
+    pub fn from_broker(value: &'a sic_core::CapValue) -> Answer<'a> {
+        Answer {
+            value,
+            asked: None,
+            because: None,
+        }
+    }
+}
+
 /// Appends one recorded answer.
 ///
 /// These are values, unlike the journal. Keeping them in their own file means
 /// the file that is safe to ship stays safe to ship, and the one that is not is
 /// one file, named, in a directory you can delete.
-pub fn record_answer(dir: &Path, value: &sic_core::CapValue) -> Result<(), String> {
+pub fn record_answer(dir: &Path, answer: &Answer<'_>) -> Result<(), String> {
     use std::io::Write;
 
     let path = dir.join(RESPONSES);
@@ -196,13 +217,13 @@ pub fn record_answer(dir: &Path, value: &sic_core::CapValue) -> Result<(), Strin
         .append(true)
         .open(&path)
         .map_err(|e| format!("cannot write `{}`: {e}", path.display()))?;
-    writeln!(file, "{}", answer_to_json(value))
+    writeln!(file, "{}", answer_to_json(answer))
         .map_err(|e| format!("cannot write `{}`: {e}", path.display()))
 }
 
-fn answer_to_json(value: &sic_core::CapValue) -> String {
+fn answer_to_json(answer: &Answer<'_>) -> String {
     use sic_core::CapValue;
-    let rendered = match value {
+    let rendered = match answer.value {
         CapValue::Unit => "null".to_string(),
         CapValue::Bool(v) => v.to_string(),
         CapValue::I64(v) => v.to_string(),
@@ -216,7 +237,17 @@ fn answer_to_json(value: &sic_core::CapValue) -> String {
             format!("[{}]", parts.join(","))
         }
     };
-    format!("{{\"value\":{rendered}}}")
+    let mut out = format!("{{\"value\":{rendered}");
+    // An index on its own says nothing six months later. The question carries
+    // the alternatives, so recording it is what keeps what was *not* chosen.
+    if let Some(asked) = answer.asked {
+        out.push_str(&format!(",\"asked\":{}", json_string(asked)));
+    }
+    if let Some(because) = answer.because {
+        out.push_str(&format!(",\"because\":{}", json_string(because)));
+    }
+    out.push('}');
+    out
 }
 
 fn json_string(value: &str) -> String {

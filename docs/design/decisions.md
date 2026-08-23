@@ -114,13 +114,62 @@ nothing.
 
 ---
 
-## 6. Not here
+## 6. The reason is worth more than the choice
 
-- **The reason.** "The third one" is the decision; *why* the third one is what
-  anybody reading it later actually needs. Carrying free text alongside an
-  answer - `sic attach <id> --value 2 --because "..."` - is an addition to the
-  run store and to `sic explain`, not to a capability, and it is the next piece
-  of this rather than part of it.
+"The third one" is the decision. *Why* the third one is what anybody reading it
+later actually needs, and it is the part that would otherwise survive only
+because somebody typed it into an issue by hand.
+
+```console
+$ sic attach 7f3a --value 2 --because "the only one where reading a plan still tells you the truth"
+```
+
+Three things follow from where it is written down.
+
+**It goes in `responses.jsonl`, not the journal.** The journal records digests,
+never values, so that a secret cannot reach telemetry by default. A reason is
+free text a person wrote, which is exactly the kind of thing that rule protects.
+`responses.jsonl` is the run's own material - the file that is already not safe
+to ship, one file, named, in a directory you can delete.
+
+**The question is recorded with it.** A recorded answer used to be a bare value,
+and an index on its own says nothing six months later. The question the person
+was asked carries the numbered alternatives, so writing it down is what keeps
+*what was not chosen* - which is the whole value of a recorded decision, and the
+same thing every document in this directory ends with.
+
+```json
+{"value":"contents"}
+{"value":2,"asked":"[the design decision] how should imports …\n  0. …\n  1. …","because":"…"}
+```
+
+A line has an `asked` exactly when a person answered. The broker's own answers
+have none, because nobody was asked.
+
+**Replay ignores both.** It needs the values and nothing else, so a recorded
+reason changes nothing about what re-running does.
+
+`sic explain` then has something to print that is not a digest:
+
+```text
+  asked a person:
+    [the design decision] how should imports handle capabilities?
+      0. the importing program grants everything
+      1. grants are unioned
+      2. a library declares, the importer approves
+    answered 2
+    because the only one where reading a plan still tells you the truth
+```
+
+`sic resume` takes no `--because`, and says so rather than accepting one. It
+works from a checkpoint file, which is a run's state and not a run's record;
+there is nowhere in it for a reason to live. Recording one is what the run store
+is for, and `sic attach` is the way in.
+
+---
+
+## 7. Not here
+
 - **Choosing more than one**, ranking, or editing an option before choosing it.
 - **Options that are not strings.** A person reads the alternatives, so they are
   text. Choosing between records would need a way to render one for a human,

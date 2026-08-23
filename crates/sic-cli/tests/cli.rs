@@ -2282,3 +2282,80 @@ fn a_decision_with_no_alternatives_is_not_one() {
     assert_eq!(code, 1);
     assert!(stderr.contains("no alternatives"), "{stderr}");
 }
+
+/// The reason is the part worth more than the choice, and the question is what
+/// keeps the alternatives that were not taken.
+#[test]
+fn a_reason_is_recorded_next_to_the_answer() {
+    let store = write_temp("runs-because", "");
+    std::fs::remove_file(&store).ok();
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("decision.sic"), "--record"],
+    );
+    assert_eq!(code, 3, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    assert_eq!(code, 0);
+    let id = stdout
+        .lines()
+        .find_map(|l| l.split_whitespace().next().filter(|w| w.len() >= 8))
+        .expect("a waiting run")
+        .to_string();
+
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &[
+            "attach",
+            &id,
+            "--value",
+            "2",
+            "--because",
+            "reading a plan still tells you the truth",
+        ],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("asked a person"), "{stdout}");
+    // What was not chosen is the whole value of a recorded decision.
+    assert!(stdout.contains("1. grants are unioned"), "{stdout}");
+    assert!(stdout.contains("answered 2"), "{stdout}");
+    assert!(
+        stdout.contains("because reading a plan still tells you the truth"),
+        "{stdout}"
+    );
+
+    // A recorded reason changes nothing about re-running: replay needs the
+    // values and nothing else.
+    let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    std::fs::remove_dir_all(&store).ok();
+}
+
+/// A checkpoint is a run's state, not its record, so there is nowhere in it for
+/// a reason to live.
+#[test]
+fn resume_says_it_cannot_record_a_reason() {
+    let src = example("decision.sic");
+    let checkpoint = write_temp("because-resume.sicc", "");
+    let (_, _, code) = sic(&["run", &src, "--checkpoint", checkpoint.to_str().unwrap()]);
+    assert_eq!(code, 3);
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &src,
+        "--value",
+        "2",
+        "--because",
+        "why not",
+    ]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("cannot record a reason"), "{stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}

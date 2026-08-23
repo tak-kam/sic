@@ -55,6 +55,10 @@ A recorded run therefore contains what its capabilities returned. That is a
 decision the `--record` flag makes explicitly, and it is why the flag exists
 rather than recording always.
 
+Where a person answered, the line also holds the question they were asked and,
+if they gave one, the reason: `docs/design/decisions.md` §6 says why free text a
+person wrote belongs in this file rather than in the journal.
+
 ---
 
 ## 3. `explain` and `inspect-run`

@@ -21,7 +21,9 @@ Usage:
                                   saving its state if it has to wait, or
                                   keeping the whole run with --record
   sic runs [--waiting]            list recorded runs, or only those waiting
-  sic attach <RUN-ID> [--value V] see what a waiting run needs, or answer it
+  sic attach <RUN-ID> [--value V] [--because WHY]
+                                  see what a waiting run needs, or answer it -
+                                  `--because` records why, next to the answer
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
@@ -77,14 +79,27 @@ fn main() -> ExitCode {
             [flag] if flag == "--waiting" => cmd::runs::list_waiting(),
             _ => usage_error("`runs` takes at most `--waiting`"),
         },
-        "attach" => match parse_flags(rest, &["--value"], 1) {
-            Ok((files, flags)) => cmd::runs::attach(&files[0], flags[0].as_deref()),
+        "attach" => match parse_flags(rest, &["--value", "--because"], 1) {
+            Ok((files, flags)) => {
+                cmd::runs::attach(&files[0], flags[0].as_deref(), flags[1].as_deref())
+            }
             Err(msg) => usage_error(msg),
         },
         "explain" => with_one_file(rest, "explain", cmd::runs::explain),
         "inspect-run" => with_one_file(rest, "inspect-run", cmd::runs::inspect),
         "replay" => with_one_file(rest, "replay", cmd::runs::replay),
-        "resume" => match parse_flags(rest, &["--value", "--journal", "--checkpoint"], 2) {
+        "resume" => match parse_flags(
+            rest,
+            &["--value", "--journal", "--checkpoint", "--because"],
+            2,
+        ) {
+            // A reason needs somewhere to live, and a checkpoint is a run's
+            // state rather than its record. Saying so beats accepting the flag
+            // and dropping what it carried.
+            Ok((_, flags)) if flags[3].is_some() => usage_error(
+                "`resume` cannot record a reason: a checkpoint holds a run's state, not its \
+                 record. `sic attach <RUN-ID> --value V --because \"...\"` writes one",
+            ),
             Ok((files, flags)) => cmd::resume::run(
                 &files[0],
                 &files[1],

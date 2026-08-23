@@ -37,7 +37,8 @@ pub fn drive_recording(
             Status::Suspended(request) => match broker.call(&request) {
                 Ok(CapOutcome::Value(value)) => {
                     if let Some(dir) = record_into {
-                        if let Err(msg) = super::store::record_answer(dir, &value) {
+                        let answer = super::store::Answer::from_broker(&value);
+                        if let Err(msg) = super::store::record_answer(dir, &answer) {
                             eprintln!("warning: {msg}");
                         }
                     }

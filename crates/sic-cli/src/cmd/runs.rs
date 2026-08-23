@@ -99,7 +99,7 @@ pub fn list() -> ExitCode {
 ///
 /// The read-only form matters as much as the other: whatever is going to answer
 /// has to be able to find out what the question is first.
-pub fn attach(prefix: &str, value: Option<&str>) -> ExitCode {
+pub fn attach(prefix: &str, value: Option<&str>, because: Option<&str>) -> ExitCode {
     let dir = match store::find(prefix) {
         Ok(dir) => dir,
         Err(msg) => {
@@ -163,8 +163,14 @@ pub fn attach(prefix: &str, value: Option<&str>) -> ExitCode {
             return ExitCode::from(EXIT_USAGE);
         }
     };
-    // Recorded so that replaying the run answers it the same way.
-    if let Err(msg) = store::record_answer(&dir, &answer) {
+    // Recorded so that replaying the run answers it the same way - and, since
+    // a person answered this one, with what they were asked and why.
+    let recorded = store::Answer {
+        value: &answer,
+        asked: Some(&question),
+        because,
+    };
+    if let Err(msg) = store::record_answer(&dir, &recorded) {
         eprintln!("warning: {msg}");
     }
 
@@ -217,7 +223,65 @@ pub fn explain(prefix: &str) -> ExitCode {
         let indent = "  ".repeat(store::depth_of(&timed.event, &events) + 1);
         println!("{indent}{line}");
     }
+
+    // The journal records digests, so the one thing it cannot show is what a
+    // person was asked and what they said about it. That is here.
+    for asked in read_asked(&dir) {
+        println!();
+        println!("  asked a person:");
+        for line in asked.question.lines() {
+            println!("    {line}");
+        }
+        println!("    answered {}", asked.answer);
+        if let Some(because) = &asked.because {
+            println!("    because {because}");
+        }
+    }
     ExitCode::SUCCESS
+}
+
+/// One question a person answered, read back out of `responses.jsonl`.
+struct Asked {
+    question: String,
+    answer: String,
+    because: Option<String>,
+}
+
+/// The answers a person gave, in the order they gave them.
+///
+/// A line has a question exactly when somebody was asked; the broker's own
+/// answers have none, and are skipped rather than reported as decisions.
+fn read_asked(dir: &Path) -> Vec<Asked> {
+    let path = dir.join(store::RESPONSES);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Ok(json) = sic_json::parse(line) else {
+            continue;
+        };
+        let Some(sic_json::Json::Str(question)) = json.member("asked") else {
+            continue;
+        };
+        let answer = match json.member("value") {
+            Some(sic_json::Json::Str(s)) => format!("{s:?}"),
+            Some(sic_json::Json::Int(v)) => v.to_string(),
+            Some(sic_json::Json::Bool(v)) => v.to_string(),
+            Some(other) => other.kind().to_string(),
+            None => continue,
+        };
+        let because = match json.member("because") {
+            Some(sic_json::Json::Str(s)) => Some(s.clone()),
+            _ => None,
+        };
+        out.push(Asked {
+            question: question.clone(),
+            answer,
+            because,
+        });
+    }
+    out
 }
 
 /// The one line an event is worth in a summary, or nothing.

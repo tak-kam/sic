@@ -208,7 +208,8 @@ compares - which is a check on determinism, and calls nothing.
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record]
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
-sic attach <RUN-ID> [--value V]    see what a waiting run needs, or answer it
+sic attach <RUN-ID> [--value V] [--because WHY]
+                                   see what a waiting run needs, or answer it
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
