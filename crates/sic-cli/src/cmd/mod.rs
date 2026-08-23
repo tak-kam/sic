@@ -8,6 +8,8 @@ pub mod parse;
 pub mod plan;
 pub mod resume;
 pub mod run;
+pub mod runs;
+pub mod store;
 pub mod verify;
 
 use std::process::ExitCode;

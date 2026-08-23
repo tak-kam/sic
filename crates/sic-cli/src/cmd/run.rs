@@ -13,14 +13,18 @@ use sic_core::{Digest, SourceFile};
 use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
-use super::drive::{Outcome, drive, manifest};
+use super::drive::{Outcome, drive_recording, manifest};
 use super::journal::{FileSink, new_run_id};
+use super::store;
 use super::{EXIT_FAILURE, EXIT_SUSPENDED, compile_source};
 
 pub struct RunOptions<'a> {
     pub journal: Option<&'a str>,
     /// Where to write the run's state if it has to stop and wait.
     pub checkpoint: Option<&'a str>,
+    /// Keep the whole run - bytecode, journal, and what the broker answered -
+    /// so it can be explained and replayed later.
+    pub record: bool,
 }
 
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
@@ -53,10 +57,39 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     }
 
     let run_id = new_run_id();
-    let journal = match options.journal {
+
+    // A recorded run keeps the bytecode beside its journal: replaying needs the
+    // exact program, and "the file on disk now" is not it.
+    let recording = if options.record {
+        match store::create(run_id) {
+            Ok(dir) => {
+                let bytes = sic_bytecode::encode(&program);
+                if let Err(e) = std::fs::write(dir.join(store::PROGRAM), &bytes) {
+                    eprintln!("error: cannot write the recorded program: {e}");
+                    return ExitCode::from(EXIT_FAILURE);
+                }
+                eprintln!("run {run_id}  recorded in {}", dir.display());
+                Some(dir)
+            }
+            Err(msg) => {
+                eprintln!("error: {msg}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+        }
+    } else {
+        None
+    };
+
+    let journal_path = match (&recording, options.journal) {
+        (Some(dir), None) => Some(dir.join(store::JOURNAL).to_string_lossy().into_owned()),
+        (_, given) => given.map(str::to_string),
+    };
+    let journal = match journal_path.as_deref() {
         Some(path) => match FileSink::create(path) {
             Ok(sink) => {
-                eprintln!("run {run_id} -> {path}");
+                if recording.is_none() {
+                    eprintln!("run {run_id} -> {path}");
+                }
                 Journal::new(run_id, Box::new(sink))
             }
             Err(msg) => {
@@ -70,8 +103,15 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let mut broker = Broker::new(manifest(&program));
     let status = vm.run(entry, &[]);
-    let outcome = drive(&mut vm, &mut broker, status);
-    finish(&mut vm, &program, &file, outcome, options.checkpoint)
+    let outcome = drive_recording(&mut vm, &mut broker, status, recording.as_deref());
+
+    // A recorded run that has to wait keeps its checkpoint too, so `sic resume`
+    // can find it beside everything else.
+    let checkpoint = match (&recording, options.checkpoint) {
+        (Some(dir), None) => Some(dir.join(store::CHECKPOINT).to_string_lossy().into_owned()),
+        (_, given) => given.map(str::to_string),
+    };
+    finish(&mut vm, &program, &file, outcome, checkpoint.as_deref())
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.

@@ -9,11 +9,22 @@ fn sic(args: &[&str]) -> (String, String, i32) {
 /// Runs the binary with a working directory, for programs whose capability
 /// grants name relative paths.
 fn sic_in(dir: std::path::PathBuf, args: &[&str]) -> (String, String, i32) {
-    let out = Command::new(env!("CARGO_BIN_EXE_sic"))
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("failed to run sic");
+    sic_with_store(dir, None, args)
+}
+
+/// Runs the binary with its run store pointed somewhere, so a test never
+/// records into the repository.
+fn sic_with_store(
+    dir: std::path::PathBuf,
+    store: Option<&std::path::Path>,
+    args: &[&str],
+) -> (String, String, i32) {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_sic"));
+    command.args(args).current_dir(dir);
+    if let Some(store) = store {
+        command.env("SIC_RUNS", store);
+    }
+    let out = command.output().expect("failed to run sic");
     (
         String::from_utf8_lossy(&out.stdout).into_owned(),
         String::from_utf8_lossy(&out.stderr).into_owned(),
@@ -1262,6 +1273,151 @@ fn passing_a_models_answer_straight_to_a_deploy_does_not_compile() {
         "{stderr}"
     );
     std::fs::remove_file(src).ok();
+}
+
+// ---- recorded runs ----
+
+/// A directory for one test's run store.
+fn temp_store(name: &str) -> std::path::PathBuf {
+    let mut path = std::env::temp_dir();
+    path.push(format!("sic-store-{}-{name}", std::process::id()));
+    std::fs::create_dir_all(&path).unwrap();
+    path
+}
+
+#[test]
+fn a_recorded_run_can_be_listed_explained_and_replayed() {
+    let store = temp_store("replay");
+    let src = write_temp("record.sic", "fn main() -> Int { return 6 * 7; }\n");
+
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stderr.contains("recorded in"), "{stderr}");
+
+    // The bytecode is kept beside the journal: replaying needs the exact
+    // program, and the file on disk now is not it.
+    let dirs: Vec<_> = std::fs::read_dir(&store).unwrap().flatten().collect();
+    assert_eq!(dirs.len(), 1);
+    assert!(dirs[0].path().join("program.sicb").exists());
+    assert!(dirs[0].path().join("journal.jsonl").exists());
+
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("completed"), "{stdout}");
+
+    let id = stdout.split_whitespace().next().unwrap().to_string();
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("outcome    completed"), "{stdout}");
+
+    // Given the same program and the same answers, the VM does the same thing.
+    let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("events matched"), "{stdout}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn a_replay_that_differs_says_where() {
+    // A difference is a real finding: the VM changed, the compiler changed, or
+    // something was not as deterministic as it claimed.
+    let store = temp_store("differs");
+    let src = write_temp(
+        "replay-差.sic".replace('差', "diff").as_str(),
+        "fn main() -> Int { return 1; }\n",
+    );
+    let other = write_temp("replay-other.sic", "fn main() -> Int { return 2; }\n");
+
+    let (_, _, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 0);
+
+    // Swap the recorded bytecode for a different program.
+    let dir = std::fs::read_dir(&store)
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let other_bytecode = other.with_extension("sicb");
+    let (_, _, code) = sic(&[
+        "compile",
+        other.to_str().unwrap(),
+        "-o",
+        other_bytecode.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 0);
+    std::fs::copy(&other_bytecode, dir.join("program.sicb")).unwrap();
+
+    let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+    assert_eq!(code, 1);
+    assert!(stdout.contains("recorded"), "{stdout}");
+    assert!(stdout.contains("replayed"), "{stdout}");
+
+    for path in [src, other, other_bytecode] {
+        std::fs::remove_file(path).ok();
+    }
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn a_run_that_was_not_recorded_leaves_nothing_behind() {
+    // Recording is opt-in, and a run that was not asked to keep anything does
+    // not.
+    let store = temp_store("norecord");
+    let src = write_temp("norecord.sic", "fn main() -> Int { return 1; }\n");
+    let (_, _, code) = sic_with_store(repo_root(), Some(&store), &["run", src.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert_eq!(std::fs::read_dir(&store).unwrap().count(), 0);
+
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("no recorded runs"), "{stdout}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn an_unknown_run_id_says_so() {
+    let store = temp_store("unknown");
+    let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &["explain", "deadbeef"]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("no run in"), "{stderr}");
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn inspect_run_prints_every_event() {
+    let store = temp_store("inspect");
+    let src = write_temp("inspect.sic", "fn main() -> Int { return 1; }\n");
+    let (_, _, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 0);
+
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+    let id = stdout.split_whitespace().next().unwrap().to_string();
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["inspect-run", &id]);
+    assert_eq!(code, 0);
+    // Every line is an event, including the ones `explain` leaves out.
+    assert!(stdout.contains("function_entered"), "{stdout}");
+    assert!(stdout.contains("run_completed"), "{stdout}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_dir_all(store).ok();
 }
 
 #[test]

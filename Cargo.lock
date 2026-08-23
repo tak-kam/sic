@@ -26,6 +26,7 @@ dependencies = [
  "sic-core",
  "sic-ir",
  "sic-journal",
+ "sic-json",
  "sic-otel",
  "sic-plan",
  "sic-syntax",

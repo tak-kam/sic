@@ -21,11 +21,28 @@ pub enum Outcome {
     },
 }
 
-pub fn drive(vm: &mut Vm, broker: &mut Broker, mut status: Status) -> Outcome {
+pub fn drive(vm: &mut Vm, broker: &mut Broker, status: Status) -> Outcome {
+    drive_recording(vm, broker, status, None)
+}
+
+/// The same loop, recording each answer where a run is being kept.
+pub fn drive_recording(
+    vm: &mut Vm,
+    broker: &mut Broker,
+    mut status: Status,
+    record_into: Option<&std::path::Path>,
+) -> Outcome {
     loop {
         match status {
             Status::Suspended(request) => match broker.call(&request) {
-                Ok(CapOutcome::Value(value)) => status = vm.resume(value),
+                Ok(CapOutcome::Value(value)) => {
+                    if let Some(dir) = record_into {
+                        if let Err(msg) = super::store::record_answer(dir, &value) {
+                            eprintln!("warning: {msg}");
+                        }
+                    }
+                    status = vm.resume(value)
+                }
                 Ok(CapOutcome::Deferred { question }) => {
                     return Outcome::Suspended { question };
                 }

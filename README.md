@@ -290,6 +290,34 @@ error: the document does not fit the type: evidence[0].weight: expected Int, fou
 caps on document size and nesting because its input is untrusted text from a
 model. See [docs/design/agents.md](docs/design/agents.md).
 
+### A run can be kept, explained, and replayed
+
+```console
+$ sic run app.sic --record
+run 1fe3d3e5...  recorded in .sic/runs/1fe3d3e5...
+
+$ sic runs
+1fe3d3e5  main        completed   2 capability call(s)
+b59ad9db  main        failed      0 capability call(s)  division by zero
+
+$ sic explain 1fe3d3e5
+$ sic replay 1fe3d3e5
+replaying 1fe3d3e5... (main)
+  18 events matched
+```
+
+`replay` re-runs the **stored bytecode** against the answers the broker gave the
+first time, and compares the journal it produces with the one that was recorded.
+What that establishes is determinism: given the same program and the same
+answers, the VM does the same thing. It calls nothing - a replay that asked the
+broker again would be a second run, with a second set of effects.
+
+The answers live in their own file, not in the journal. The journal is an
+account of a run that leaves the process, so it records digests; replaying needs
+values. Keeping them apart means the file that is safe to ship stays safe to
+ship. Recording is opt-in for the same reason. See
+[docs/design/runs.md](docs/design/runs.md).
+
 ### Telemetry is a view of the journal
 
 ```console

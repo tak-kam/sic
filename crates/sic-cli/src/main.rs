@@ -14,10 +14,15 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH]
+  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record]
                                   compile, verify and run a source file,
                                   optionally recording its execution journal,
-                                  saving its state if it has to wait
+                                  saving its state if it has to wait, or
+                                  keeping the whole run with --record
+  sic runs                        list recorded runs
+  sic explain <RUN-ID>            summarize a recorded run
+  sic inspect-run <RUN-ID>        print every event of a recorded run
+  sic replay <RUN-ID>             re-run it against its recorded answers
   sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH]
                                   continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
@@ -47,16 +52,27 @@ fn main() -> ExitCode {
     let rest = &args[1..];
 
     match command.as_str() {
-        "run" => match parse_flags(rest, &["--journal", "--checkpoint"], 1) {
-            Ok((files, flags)) => cmd::run::run(
-                &files[0],
+        "run" => match parse_run(rest) {
+            Ok((file, journal, checkpoint, record)) => cmd::run::run(
+                &file,
                 cmd::run::RunOptions {
-                    journal: flags[0].as_deref(),
-                    checkpoint: flags[1].as_deref(),
+                    journal: journal.as_deref(),
+                    checkpoint: checkpoint.as_deref(),
+                    record,
                 },
             ),
             Err(msg) => usage_error(msg),
         },
+        "runs" => {
+            if rest.is_empty() {
+                cmd::runs::list()
+            } else {
+                usage_error("`runs` takes no arguments")
+            }
+        }
+        "explain" => with_one_file(rest, "explain", cmd::runs::explain),
+        "inspect-run" => with_one_file(rest, "inspect-run", cmd::runs::inspect),
+        "replay" => with_one_file(rest, "replay", cmd::runs::replay),
         "resume" => match parse_flags(rest, &["--value", "--journal", "--checkpoint"], 2) {
             Ok((files, flags)) => cmd::resume::run(
                 &files[0],
@@ -106,6 +122,27 @@ fn with_one_file(args: &[String], name: &str, f: fn(&str) -> ExitCode) -> ExitCo
         [] => usage_error(format!("`{name}` needs a file")),
         _ => usage_error(format!("`{name}` takes exactly one file")),
     }
+}
+
+/// `run <input> [--journal PATH] [--checkpoint PATH] [--record]`.
+///
+/// `--record` takes no value, so it cannot go through `parse_flags`.
+fn parse_run(args: &[String]) -> Result<(String, Option<String>, Option<String>, bool), String> {
+    let mut record = false;
+    let rest: Vec<String> = args
+        .iter()
+        .filter(|a| {
+            if a.as_str() == "--record" {
+                record = true;
+                false
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+    let (files, flags) = parse_flags(&rest, &["--journal", "--checkpoint"], 1)?;
+    Ok((files[0].clone(), flags[0].clone(), flags[1].clone(), record))
 }
 
 /// Splits arguments into the expected positional files and the values of the

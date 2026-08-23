@@ -19,6 +19,7 @@ sic-plan = { path = "../sic-plan" }
 sic-verify = { path = "../sic-verify" }
 sic-vm = { path = "../sic-vm" }
 sic-journal = { path = "../sic-journal" }
+sic-json = { path = "../sic-json" }
 sic-otel = { path = "../sic-otel" }
 sic-broker = { path = "../sic-broker" }
 
