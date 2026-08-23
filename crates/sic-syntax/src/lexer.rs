@@ -14,7 +14,16 @@ use crate::token::{Keyword, Token, TokenKind};
 
 /// Turns a whole source text into tokens. The result always ends with `Eof`.
 pub fn tokenize(src: &str) -> (Vec<Token>, Vec<Diagnostic>) {
-    let mut lx = Lexer::new(src);
+    tokenize_at(src, 0)
+}
+
+/// The same, for a file that sits at `base` in a `SourceMap`'s offset space.
+///
+/// Positions inside the lexer stay relative to this file; only the spans it
+/// hands out are shifted. That is what lets a `Span` remain a range of bytes
+/// while a program spans several files.
+pub fn tokenize_at(src: &str, base: u32) -> (Vec<Token>, Vec<Diagnostic>) {
+    let mut lx = Lexer::new(src, base);
     let tokens = lx.run();
     (tokens, lx.diags)
 }
@@ -23,17 +32,25 @@ struct Lexer<'a> {
     src: &'a str,
     bytes: &'a [u8],
     pos: u32,
+    /// Where this file begins in the shared offset space.
+    base: u32,
     diags: Vec<Diagnostic>,
 }
 
 impl<'a> Lexer<'a> {
-    fn new(src: &'a str) -> Self {
+    fn new(src: &'a str, base: u32) -> Self {
         Self {
             src,
             bytes: src.as_bytes(),
             pos: 0,
+            base,
             diags: Vec::new(),
         }
+    }
+
+    /// A span in the shared offset space.
+    fn span(&self, lo: u32, hi: u32) -> Span {
+        Span::new(lo + self.base, hi + self.base)
     }
 
     fn run(&mut self) -> Vec<Token> {
@@ -42,7 +59,8 @@ impl<'a> Lexer<'a> {
             self.skip_trivia();
             let start = self.pos;
             let Some(b) = self.peek() else {
-                tokens.push(Token::new(TokenKind::Eof, Span::empty(self.pos)));
+                let at = self.span(self.pos, self.pos);
+                tokens.push(Token::new(TokenKind::Eof, at));
                 return tokens;
             };
             let kind = match b {
@@ -54,7 +72,8 @@ impl<'a> Lexer<'a> {
                     None => continue, // already reported; resume at the next character
                 },
             };
-            tokens.push(Token::new(kind, Span::new(start, self.pos)));
+            let span = self.span(start, self.pos);
+            tokens.push(Token::new(kind, span));
         }
     }
 
@@ -133,7 +152,7 @@ impl<'a> Lexer<'a> {
                     self.error(
                         "E0104",
                         "unterminated block comment",
-                        Span::new(start, start + 2),
+                        self.span(start, start + 2),
                         "no matching `*/`",
                     );
                     return;
@@ -182,7 +201,7 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        let span = Span::new(start, self.pos);
+        let span = self.span(start, self.pos);
         let raw: String = self.src[start as usize..self.pos as usize]
             .chars()
             .filter(|c| *c != '_')
@@ -235,7 +254,7 @@ impl<'a> Lexer<'a> {
                     self.error(
                         "E0103",
                         "unterminated string literal",
-                        Span::new(start, self.pos),
+                        self.span(start, self.pos),
                         "no closing `\"`",
                     );
                     return TokenKind::Str(value);
@@ -261,7 +280,7 @@ impl<'a> Lexer<'a> {
             self.error(
                 "E0103",
                 "escape sequence ends abruptly",
-                Span::new(start, self.pos),
+                self.span(start, self.pos),
                 "",
             );
             return;
@@ -278,7 +297,7 @@ impl<'a> Lexer<'a> {
                 self.error(
                     "E0105",
                     "unknown escape sequence",
-                    Span::new(start, self.pos),
+                    self.span(start, self.pos),
                     "the escapes are \\\" \\\\ \\n \\t \\r \\0 \\u{...}",
                 );
             }
@@ -290,7 +309,7 @@ impl<'a> Lexer<'a> {
             self.error(
                 "E0105",
                 "`\\u` must be followed by `{`",
-                Span::new(start, self.pos),
+                self.span(start, self.pos),
                 "",
             );
             return;
@@ -305,7 +324,7 @@ impl<'a> Lexer<'a> {
             self.error(
                 "E0105",
                 "malformed `\\u{...}` escape",
-                Span::new(start, self.pos),
+                self.span(start, self.pos),
                 "expected 1 to 6 hex digits inside `{}`",
             );
             return;
@@ -318,7 +337,7 @@ impl<'a> Lexer<'a> {
             None => self.error(
                 "E0105",
                 "not a valid Unicode scalar value",
-                Span::new(start, self.pos),
+                self.span(start, self.pos),
                 "surrogates and values above 0x10FFFF are not allowed",
             ),
         }
@@ -379,7 +398,7 @@ impl<'a> Lexer<'a> {
                 // character rather than one byte.
                 self.pos = start;
                 self.advance_char();
-                let span = Span::new(start, self.pos);
+                let span = self.span(start, self.pos);
                 let text = &self.src[start as usize..self.pos as usize];
                 let (msg, hint): (String, String) = match b {
                     b'&' => (
@@ -498,15 +517,12 @@ mod tests {
     #[test]
     fn reserved_words_lex_as_keywords() {
         assert_eq!(
-            kinds("import")[0],
-            TokenKind::Kw(Keyword::Reserved("import"))
-        );
-        assert_eq!(
             kinds("parallel")[0],
             TokenKind::Kw(Keyword::Reserved("parallel"))
         );
         // A word that has since become real lexes as itself.
         assert_eq!(kinds("agent")[0], TokenKind::Kw(Keyword::Agent));
+        assert_eq!(kinds("import")[0], TokenKind::Kw(Keyword::Import));
         // An identifier that merely starts with a keyword stays an identifier.
         assert_eq!(kinds("agent_id")[0], TokenKind::Ident("agent_id".into()));
     }

@@ -17,6 +17,8 @@
 //! worse than claiming none.
 
 use sic_bytecode::inst::Op;
+use std::collections::HashMap;
+
 use sic_bytecode::program::Program;
 use sic_core::{CapKind, Digest};
 
@@ -37,6 +39,9 @@ pub struct Plan {
     pub unbounded_sites: usize,
     /// Capabilities that are granted but never called.
     pub unused: Vec<String>,
+    /// Whether the program was built from more than one file. A position is
+    /// only worth a file name when there is a choice of file.
+    pub multi_file: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -50,6 +55,9 @@ pub struct Step {
     pub pc: u32,
     /// The line and column this came from, when the file has a debug section.
     pub position: Option<(u32, u32)>,
+    /// The file it came from, which is not always the one named on the command
+    /// line.
+    pub file: Option<String>,
     pub action: Action,
 }
 
@@ -102,6 +110,9 @@ pub struct Grant {
     pub constraint: String,
     /// The digest the file has to have, if the grant pins what runs.
     pub pin: String,
+    /// The files whose code calls it. Derived from the call sites rather than
+    /// from a declaration, so it says where a grant is really used.
+    pub called_from: Vec<String>,
 }
 
 /// Reads a program and works out what it may do.
@@ -110,6 +121,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
     let mut bounded_calls: u64 = 0;
     let mut unbounded_sites = 0usize;
     let mut called = vec![false; program.caps.len()];
+    let mut call_sites: HashMap<String, Vec<String>> = HashMap::new();
 
     for func in &program.funcs {
         let mut steps = Vec::new();
@@ -128,6 +140,16 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                     };
                     if let Some(slot) = called.get_mut(inst.b() as usize) {
                         *slot = true;
+                    }
+                    // Which file asks for a grant is the thing a reader most
+                    // needs when a program is built from more than one: a
+                    // manifest that does not say where its entries are used is
+                    // approving something you cannot see.
+                    if let Some(file) = program.debug.file(pc) {
+                        let sites = call_sites.entry(cap.name.clone()).or_default();
+                        if !sites.iter().any(|f| f == file) {
+                            sites.push(file.to_string());
+                        }
                     }
                     let policy = program.policy_at(pc);
                     let attempts = policy.map(|p| p.attempts.max(1)).unwrap_or(1);
@@ -164,6 +186,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             steps.push(Step {
                 pc,
                 position: program.debug.position(pc),
+                file: program.debug.file(pc).map(str::to_string),
                 action,
             });
         }
@@ -183,6 +206,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             kind: c.kind,
             constraint: c.constraints.clone(),
             pin: c.pin.clone(),
+            called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
     let unused = program
@@ -200,6 +224,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         bounded_calls,
         unbounded_sites,
         unused,
+        multi_file: program.debug.sources.len() > 1,
     }
 }
 
@@ -241,7 +266,10 @@ pub fn render(plan: &Plan, source: &str) -> String {
                 Action::Await => {}
             }
             if let Some((line, col)) = step.position {
-                out.push_str(&format!("   ; {line}:{col}"));
+                match (plan.multi_file, &step.file) {
+                    (true, Some(file)) => out.push_str(&format!("   ; {file}:{line}:{col}")),
+                    _ => out.push_str(&format!("   ; {line}:{col}")),
+                }
             }
             out.push('\n');
         }
@@ -266,6 +294,12 @@ pub fn render(plan: &Plan, source: &str) -> String {
             out.push_str(&format!("  sha256:{}", grant.pin));
         }
         out.push('\n');
+        if plan.multi_file && !grant.called_from.is_empty() {
+            out.push_str(&format!(
+                "    called from {}\n",
+                grant.called_from.join(", ")
+            ));
+        }
     }
     for name in &plan.unused {
         out.push_str(&format!(

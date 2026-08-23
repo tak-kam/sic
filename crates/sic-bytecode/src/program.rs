@@ -263,20 +263,39 @@ pub struct CapDecl {
 /// Source mapping, so a runtime error or a trace can name a line of source.
 #[derive(Debug, Clone, Default)]
 pub struct DebugInfo {
-    pub source_name: String,
-    /// `(pc, line, col)`, sorted by pc. Only the instructions that start a new
-    /// position are listed.
-    pub lines: Vec<(u32, u32, u32)>,
+    /// Every file the program was built from, the one named on the command
+    /// line first. A position names one of these by index, so a failure in an
+    /// imported file is reported against that file rather than the entry one.
+    pub sources: Vec<String>,
+    /// `(pc, file, line, col)`, sorted by pc. Only the instructions that start
+    /// a new position are listed.
+    pub lines: Vec<(u32, u32, u32, u32)>,
 }
 
 impl DebugInfo {
+    /// The file the program was built from, for the common case of one.
+    pub fn source_name(&self) -> &str {
+        self.sources.first().map_or("", |s| s.as_str())
+    }
+
+    /// The entry at or before `pc`, if the table has one.
+    fn entry(&self, pc: u32) -> Option<&(u32, u32, u32, u32)> {
+        match self.lines.binary_search_by_key(&pc, |e| e.0) {
+            Ok(i) => Some(&self.lines[i]),
+            Err(0) => None,
+            Err(i) => Some(&self.lines[i - 1]),
+        }
+    }
+
     /// The source position of an instruction, if the table has one at or before
     /// it.
     pub fn position(&self, pc: u32) -> Option<(u32, u32)> {
-        match self.lines.binary_search_by_key(&pc, |e| e.0) {
-            Ok(i) => Some((self.lines[i].1, self.lines[i].2)),
-            Err(0) => None,
-            Err(i) => Some((self.lines[i - 1].1, self.lines[i - 1].2)),
-        }
+        self.entry(pc).map(|e| (e.2, e.3))
+    }
+
+    /// The file an instruction came from.
+    pub fn file(&self, pc: u32) -> Option<&str> {
+        let e = self.entry(pc)?;
+        self.sources.get(e.1 as usize).map(|s| s.as_str())
     }
 }

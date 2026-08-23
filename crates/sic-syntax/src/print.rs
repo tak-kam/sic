@@ -18,6 +18,11 @@ pub fn dump(m: &Module) -> String {
             Item::Allow(a) => p.allow_decl(a),
             Item::Type(t) => p.type_decl(t),
             Item::Agent(a) => p.agent_decl(a),
+            Item::Import(i) => p.line(&format!("(import {:?})", i.path)),
+            Item::Requires(r) => {
+                let names: Vec<String> = r.caps.iter().map(|c| c.full_name()).collect();
+                p.line(&format!("(requires {})", names.join(" ")));
+            }
         }
     }
     p.depth -= 1;

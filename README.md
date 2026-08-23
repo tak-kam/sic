@@ -125,6 +125,13 @@ compiled module is complete by construction. `process.exec` takes an absolute
 path, never searches `PATH`, and can pin the binary's sha256.
 → [capabilities.md](docs/design/capabilities.md)
 
+**Modules that cannot grant themselves anything.** `import "./lib/deploy.sic";`
+brings a local file in. A library declares what it needs with `requires`, and
+the program that is run is the only file with an `allow` block, so the manifest
+stays one list in one place and `sic plan` says which file spends each grant.
+There is no registry, no version and no network resolution.
+→ [modules.md](docs/design/modules.md)
+
 **The VM cannot reach outside.** It suspends at an effect and something else
 performs it. That boundary is checked by a test, not by convention, and it is
 where the VM and the broker will later split into separate processes.
@@ -230,8 +237,7 @@ argument.
 ## Status
 
 Early, and honest about it. Phases 1 to 8 of the design are implemented and
-`docs/status.md` says exactly what is not. The largest gap is that there is no
-`import`, so a program is one file.
+`docs/status.md` says exactly what is not.
 
 Not a stable language. Not benchmarked. Not something to run untrusted code with
 yet, though most of the machinery for that is the point of the design.

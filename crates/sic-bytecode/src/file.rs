@@ -17,7 +17,7 @@ use crate::program::*;
 
 pub const MAGIC: [u8; 4] = *b"SICB";
 pub const VERSION_MAJOR: u16 = 0;
-pub const VERSION_MINOR: u16 = 1;
+pub const VERSION_MINOR: u16 = 2;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -126,10 +126,14 @@ pub fn encode(p: &Program) -> Vec<u8> {
     sections.push((section::POLICIES, w.finish()));
 
     let mut w = Writer::new();
-    w.str(&p.debug.source_name);
+    w.u32(p.debug.sources.len() as u32);
+    for name in &p.debug.sources {
+        w.str(name);
+    }
     w.u32(p.debug.lines.len() as u32);
-    for (pc, line, col) in &p.debug.lines {
+    for (pc, file, line, col) in &p.debug.lines {
         w.u32(*pc);
+        w.u32(*file);
         w.u32(*line);
         w.u32(*col);
     }
@@ -366,14 +370,20 @@ fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
 
 fn decode_debug(body: &[u8]) -> Result<DebugInfo> {
     let mut r = Reader::new(body);
-    let source_name = r.str()?;
-    let n = r.count(12)?;
+    // Each name is at least a length prefix, so one file cannot claim more
+    // entries than the body has bytes for.
+    let files = r.count(4)?;
+    let mut sources = Vec::with_capacity(files);
+    for _ in 0..files {
+        sources.push(r.str()?);
+    }
+    let n = r.count(16)?;
     let mut lines = Vec::with_capacity(n);
     for _ in 0..n {
-        lines.push((r.u32()?, r.u32()?, r.u32()?));
+        lines.push((r.u32()?, r.u32()?, r.u32()?, r.u32()?));
     }
     r.expect_end("debug")?;
-    Ok(DebugInfo { source_name, lines })
+    Ok(DebugInfo { sources, lines })
 }
 
 #[cfg(test)]
@@ -418,8 +428,8 @@ mod tests {
                 budget: 8,
             }],
             debug: DebugInfo {
-                source_name: "main.sic".into(),
-                lines: vec![(0, 2, 5), (1, 3, 5)],
+                sources: vec!["main.sic".into()],
+                lines: vec![(0, 0, 2, 5), (1, 0, 3, 5)],
             },
         }
     }

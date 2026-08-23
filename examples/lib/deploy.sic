@@ -1,0 +1,12 @@
+// A library: what it does is its own business, what it is pointed at is the
+// program's. It says which capabilities it needs and never grants one.
+
+requires {
+    process.exec;
+}
+
+// Runs a binary and reports whether it succeeded.
+fn deploy(binary: String) -> Bool {
+    let status = process.exec(binary) retry 2;
+    return status == 0;
+}

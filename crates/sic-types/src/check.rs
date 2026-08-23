@@ -5,7 +5,7 @@
 //! it before it has been checked requires an annotation (E0306). That rule keeps
 //! inference to a single forward pass with no constraint solving.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sic_core::{AgentId, CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
 use sic_syntax::ast::*;
@@ -102,6 +102,7 @@ pub fn check(module: &Module) -> (Typed, Vec<Diagnostic>) {
     c.collect_signatures(module);
     c.collect_agents(module);
     c.check_bodies(module);
+    c.check_requires(module);
     c.finish()
 }
 
@@ -126,6 +127,9 @@ struct Checker {
     res: HashMap<NodeId, Res>,
     caps: Vec<CapEntry>,
     cap_ids: HashMap<String, CapId>,
+    /// Every capability something in the program actually calls, which is what
+    /// makes an unused `requires` visible.
+    cap_used: HashSet<String>,
     /// User-defined record types, by name.
     type_ids: HashMap<String, ObjectId>,
     agents: Vec<AgentInfo>,
@@ -152,6 +156,7 @@ impl Checker {
             res: HashMap::new(),
             caps: Vec::new(),
             cap_ids: HashMap::new(),
+            cap_used: HashSet::new(),
             type_ids: HashMap::new(),
             agents: Vec::new(),
             agent_ids: HashMap::new(),
@@ -172,6 +177,17 @@ impl Checker {
     ) {
         self.diags
             .push(Diagnostic::error(code, msg, Label::new(span, label)));
+    }
+
+    fn warning(
+        &mut self,
+        code: &'static str,
+        msg: impl Into<String>,
+        span: Span,
+        label: impl Into<String>,
+    ) {
+        self.diags
+            .push(Diagnostic::warning(code, msg, Label::new(span, label)));
     }
 
     fn note(&mut self, note: impl Into<String>) {
@@ -378,6 +394,61 @@ impl Checker {
         }
     }
 
+    // ---- what imported files ask for ----
+
+    /// Checks every `requires` against the grants the program actually made.
+    ///
+    /// This runs last because it needs to know which capabilities were called,
+    /// and a `requires` is a claim about the program as a whole rather than
+    /// about one function.
+    fn check_requires(&mut self, module: &Module) {
+        let mut seen: HashMap<String, Span> = HashMap::new();
+        for item in &module.items {
+            let Item::Requires(decl) = item else {
+                continue;
+            };
+            for path in &decl.caps {
+                let full = path.full_name();
+                if cap::builtin(&full).is_none() {
+                    self.error(
+                        "E0321",
+                        format!("unknown capability `{full}`"),
+                        path.span,
+                        "no such capability",
+                    );
+                    self.note(format!("v0.1 has {}", cap::all_names().join(", ")));
+                    continue;
+                }
+                if let Some(first) = seen.insert(full.clone(), path.span) {
+                    let _ = first;
+                    // Two files needing the same capability is ordinary; only
+                    // the grant has to be unique.
+                    continue;
+                }
+                if !self.cap_ids.contains_key(&full) {
+                    self.error(
+                        "E0404",
+                        format!("`{full}` is required but not allowed"),
+                        path.span,
+                        "an imported file needs this",
+                    );
+                    self.note(format!(
+                        "the program decides what it is pointed at: allow {{ {full} \"...\"; }}"
+                    ));
+                    continue;
+                }
+                if !self.cap_used.contains(&full) {
+                    self.warning(
+                        "E0405",
+                        format!("`{full}` is required but never called"),
+                        path.span,
+                        "nothing in the program uses it",
+                    );
+                }
+            }
+        }
+    }
+
     /// Declares the module's agents, after types, capabilities and functions.
     fn collect_agents(&mut self, module: &Module) {
         for item in &module.items {
@@ -405,6 +476,7 @@ impl Checker {
 
             // An agent is a model call, and a model call is a capability. There
             // is no path to an effect that the manifest does not name.
+            self.cap_used.insert("llm.invoke".to_string());
             let Some(cap) = self.cap_ids.get("llm.invoke").copied() else {
                 self.error(
                     "E0362",
@@ -1106,6 +1178,7 @@ impl Checker {
             return Types::ERROR;
         };
         self.res.insert(callee.id, Res::Cap(id));
+        self.cap_used.insert(full.clone());
 
         let entry = &self.caps[id.index()];
         let (params, ret) = (entry.params.clone(), entry.ret);
@@ -1294,6 +1367,7 @@ impl Checker {
         let value = self.check_expr(&args[1]);
 
         // Asking a person is an effect like any other.
+        self.cap_used.insert("human.approve".to_string());
         if !self.cap_ids.contains_key("human.approve") {
             self.error(
                 "E0370",

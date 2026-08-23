@@ -5,25 +5,21 @@
 
 use std::process::ExitCode;
 
-use super::{EXIT_USAGE, read_source, report};
+use super::{load_program, report};
 
 pub fn run(path: &str) -> ExitCode {
-    let file = match read_source(path) {
-        Ok(f) => f,
-        Err(msg) => {
-            eprintln!("error: {msg}");
-            return ExitCode::from(EXIT_USAGE);
-        }
+    let loaded = match load_program(path) {
+        Ok(l) => l,
+        Err(code) => return code,
     };
-
-    let (module, mut diags) = sic_syntax::parse(file.text());
-    let (typed, type_diags) = sic_types::check(&module);
+    let mut diags = loaded.diags;
+    let (typed, type_diags) = sic_types::check(&loaded.module);
     diags.extend(type_diags);
     if diags.iter().any(|d| d.is_error()) {
-        return report(&file, &diags);
+        return report(&loaded.sources, &diags);
     }
-    report(&file, &diags);
+    report(&loaded.sources, &diags);
 
-    print!("{}", sic_ir::dump(&sic_ir::lower(&module, &typed)));
+    print!("{}", sic_ir::dump(&sic_ir::lower(&loaded.module, &typed)));
     ExitCode::SUCCESS
 }

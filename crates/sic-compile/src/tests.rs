@@ -1,12 +1,12 @@
 use sic_bytecode::disassemble;
-use sic_core::SourceFile;
+use sic_core::{SourceFile, SourceMap};
 
 use super::compile;
 
 /// Compiles a source string and returns the disassembly.
 fn asm(src: &str) -> String {
     let hir = sic_ir::lower::compile_to_hir(src).expect("the source should compile");
-    let file = SourceFile::new("t.sic", src);
+    let file = SourceMap::single(SourceFile::new("t.sic", src));
     let program = compile(&hir, &file).expect("bytecode should be produced");
     disassemble(&program)
 }
@@ -87,9 +87,9 @@ fn jump_offsets_are_relative_to_the_next_instruction() {
 fn debug_positions_point_at_the_source() {
     let src = "fn main() {\n    let x = 10;\n    return x;\n}\n";
     let hir = sic_ir::lower::compile_to_hir(src).unwrap();
-    let file = SourceFile::new("t.sic", src);
+    let file = SourceMap::single(SourceFile::new("t.sic", src));
     let program = compile(&hir, &file).unwrap();
-    assert_eq!(program.debug.source_name, "t.sic");
+    assert_eq!(program.debug.source_name(), "t.sic");
     // The first instruction loads the literal 10 on line 2.
     assert_eq!(program.debug.position(0), Some((2, 13)));
 }
@@ -97,7 +97,7 @@ fn debug_positions_point_at_the_source() {
 #[test]
 fn the_constant_pool_holds_unit_and_zero_once() {
     let hir = sic_ir::lower::compile_to_hir("fn f(a: Int) -> Int { return -a; }").unwrap();
-    let file = SourceFile::new("t.sic", "");
+    let file = SourceMap::single(SourceFile::new("t.sic", ""));
     let program = compile(&hir, &file).unwrap();
     let zeros = program
         .consts
@@ -112,7 +112,7 @@ fn a_capability_call_compiles_to_call_cap_with_a_manifest() {
     let src =
         "allow { fs.read \"./a.txt\"; }\nfn main() -> String { return fs.read(\"./a.txt\"); }";
     let hir = sic_ir::lower::compile_to_hir(src).unwrap();
-    let file = SourceFile::new("t.sic", src);
+    let file = SourceMap::single(SourceFile::new("t.sic", src));
     let program = compile(&hir, &file).unwrap();
 
     assert_eq!(program.caps.len(), 1);
@@ -140,7 +140,7 @@ fn a_capability_call_compiles_to_call_cap_with_a_manifest() {
 fn capability_arguments_go_into_consecutive_registers() {
     let src = "allow { fs.write \"./a.txt\"; }\nfn main() { fs.write(\"./a.txt\", \"data\"); }";
     let hir = sic_ir::lower::compile_to_hir(src).unwrap();
-    let file = SourceFile::new("t.sic", src);
+    let file = SourceMap::single(SourceFile::new("t.sic", src));
     let asm = disassemble(&compile(&hir, &file).unwrap());
     // Two arguments, so two moves into the scratch area, then the call.
     assert_eq!(asm.matches("MOVE").count(), 2, "{asm}");
@@ -157,7 +157,7 @@ fn trust_is_erased_before_the_bytecode() {
         fn takes(p: HumanApproved<Plan>) -> Int { return 1; }\n\
         fn main() -> Int { let p = make_plan(\"x\"); return takes(approve(\"ok?\", p)); }";
     let hir = sic_ir::lower::compile_to_hir(src).unwrap();
-    let file = SourceFile::new("t.sic", src);
+    let file = SourceMap::single(SourceFile::new("t.sic", src));
     let program = compile(&hir, &file).unwrap();
 
     // Nothing in the type section mentions provenance, and `takes` sees the

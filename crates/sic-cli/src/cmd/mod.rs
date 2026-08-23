@@ -14,8 +14,9 @@ pub mod verify;
 
 use std::process::ExitCode;
 
+use crate::module::Loaded;
 use sic_bytecode::Program;
-use sic_core::{Diagnostic, SourceFile};
+use sic_core::{Diagnostic, SourceFile, SourceMap};
 
 /// Exit code 2: the command line, or the file named on it, is wrong.
 pub const EXIT_USAGE: u8 = 2;
@@ -49,9 +50,9 @@ pub fn read_bytes(path: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Prints diagnostics to stderr and returns exit code 1 if any were errors.
-pub fn report(file: &SourceFile, diags: &[Diagnostic]) -> ExitCode {
+pub fn report(sources: &SourceMap, diags: &[Diagnostic]) -> ExitCode {
     for d in diags {
-        eprint!("{}", d.render(file));
+        eprint!("{}", d.render(sources));
         eprintln!();
     }
     let errors = diags.iter().filter(|d| d.is_error()).count();
@@ -68,25 +69,23 @@ pub fn report(file: &SourceFile, diags: &[Diagnostic]) -> ExitCode {
 ///
 /// Errors are already reported when this returns `Err`, which carries the exit
 /// code to use.
-pub fn compile_source(path: &str) -> Result<(SourceFile, Program), ExitCode> {
-    let file = read_source(path).map_err(|msg| {
-        eprintln!("error: {msg}");
-        ExitCode::from(EXIT_USAGE)
-    })?;
+pub fn compile_source(path: &str) -> Result<Program, ExitCode> {
+    let loaded = load_program(path)?;
+    let mut diags = loaded.diags;
+    let sources = loaded.sources;
 
-    let (module, mut diags) = sic_syntax::parse(file.text());
-    let (typed, type_diags) = sic_types::check(&module);
+    let (typed, type_diags) = sic_types::check(&loaded.module);
     diags.extend(type_diags);
     if diags.iter().any(|d| d.is_error()) {
-        return Err(report(&file, &diags));
+        return Err(report(&sources, &diags));
     }
     // Warnings still deserve to be seen.
     if !diags.is_empty() {
-        report(&file, &diags);
+        report(&sources, &diags);
     }
 
-    let hir = sic_ir::lower(&module, &typed);
-    let program = sic_compile::compile(&hir, &file).map_err(|errors| {
+    let hir = sic_ir::lower(&loaded.module, &typed);
+    let program = sic_compile::compile(&hir, &sources).map_err(|errors| {
         // Reaching this means the compiler produced something it cannot encode,
         // such as a function needing more registers than the format allows.
         for e in errors {
@@ -94,7 +93,15 @@ pub fn compile_source(path: &str) -> Result<(SourceFile, Program), ExitCode> {
         }
         ExitCode::from(EXIT_FAILURE)
     })?;
-    Ok((file, program))
+    Ok(program)
+}
+
+/// Reads a file and everything it imports.
+pub fn load_program(path: &str) -> Result<Loaded, ExitCode> {
+    crate::module::load(path, &read_source).map_err(|msg| {
+        eprintln!("error: {msg}");
+        ExitCode::from(EXIT_USAGE)
+    })
 }
 
 /// Loads and decodes a bytecode file.

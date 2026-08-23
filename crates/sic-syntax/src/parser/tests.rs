@@ -319,7 +319,7 @@ fn top_level_junk_recovers_to_next_fn() {
 
 #[test]
 fn reserved_word_as_identifier() {
-    assert!(codes("fn f() { let import = 1; }").contains(&"E0210"));
+    assert!(codes("fn f() { let capability = 1; }").contains(&"E0210"));
     assert!(codes("fn f() { return parallel; }").contains(&"E0210"));
 }
 
@@ -333,4 +333,41 @@ fn empty_input_is_an_empty_module() {
     let (m, diags) = parse("");
     assert!(diags.is_empty());
     assert!(m.items.is_empty());
+}
+
+#[test]
+fn imports_and_requirements() {
+    let src = "\
+import \"./lib/deploy.sic\";
+
+requires {
+    process.exec;
+    fs.read;
+}
+
+fn main() -> Int {
+    return 0;
+}
+";
+    assert_eq!(
+        ok(src),
+        "\
+(module
+  (import \"./lib/deploy.sic\")
+  (requires process.exec fs.read)
+  (fn main -> Int
+    (block
+      (return 0))))
+"
+    );
+}
+
+#[test]
+fn an_import_needs_a_path() {
+    assert!(codes("import lib;").contains(&"E0212"));
+}
+
+#[test]
+fn a_requirement_is_a_capability_name() {
+    assert!(codes("requires { process; }").contains(&"E0200"));
 }

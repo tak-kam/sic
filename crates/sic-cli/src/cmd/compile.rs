@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use super::{EXIT_FAILURE, compile_source};
 
 pub fn run(path: &str, output: Option<&str>) -> ExitCode {
-    let (_, program) = match compile_source(path) {
+    let program = match compile_source(path) {
         Ok(v) => v,
         Err(code) => return code,
     };

@@ -21,7 +21,7 @@ pub fn run(path: &str) -> ExitCode {
         }
     } else {
         match compile_source(path) {
-            Ok((_, program)) => program,
+            Ok(program) => program,
             Err(code) => return code,
         }
     };

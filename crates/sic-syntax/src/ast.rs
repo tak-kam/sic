@@ -22,6 +22,10 @@ pub enum Item {
     Type(TypeDecl),
     /// An agent: a model call and the shape its answer has to fit.
     Agent(AgentDecl),
+    /// Another file, brought in whole.
+    Import(ImportDecl),
+    /// What an imported file needs the program to allow.
+    Requires(RequiresDecl),
 }
 
 impl Item {
@@ -31,8 +35,34 @@ impl Item {
             Item::Allow(a) => a.span,
             Item::Type(t) => t.span,
             Item::Agent(a) => a.span,
+            Item::Import(i) => i.span,
+            Item::Requires(r) => r.span,
         }
     }
+}
+
+/// `import "./lib/deploy.sic";`
+#[derive(Debug, Clone)]
+pub struct ImportDecl {
+    pub id: NodeId,
+    /// The path as written, relative to the importing file.
+    pub path: String,
+    pub span: Span,
+}
+
+/// ```text
+/// requires {
+///     process.exec;
+/// }
+/// ```
+///
+/// A capability, never a constraint: what a library does is its own business,
+/// which file or binary it is pointed at is the program's.
+#[derive(Debug, Clone)]
+pub struct RequiresDecl {
+    pub id: NodeId,
+    pub caps: Vec<CapPath>,
+    pub span: Span,
 }
 
 /// ```text

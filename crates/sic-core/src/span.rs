@@ -144,6 +144,95 @@ impl SourceFile {
     }
 }
 
+/// Several source files laid out in one offset space.
+///
+/// A `Span` stays what it is - a range of bytes - and this turns one back into
+/// a file, a line and a column. The alternative, putting a file id in every
+/// span, would touch every construction of one in the compiler.
+#[derive(Debug, Clone, Default)]
+pub struct SourceMap {
+    files: Vec<SourceFile>,
+    /// Where each file begins in the shared offset space.
+    starts: Vec<u32>,
+    next: u32,
+}
+
+impl SourceMap {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// A map holding one file, for the many places that have exactly one.
+    pub fn single(file: SourceFile) -> Self {
+        let mut map = Self::new();
+        map.add(file);
+        map
+    }
+
+    /// Adds a file and returns the offset its first byte has.
+    ///
+    /// Files are separated by one byte so that the end of one and the start of
+    /// the next are different offsets.
+    pub fn add(&mut self, file: SourceFile) -> u32 {
+        let start = self.next;
+        self.next = start + file.len() + 1;
+        self.starts.push(start);
+        self.files.push(file);
+        start
+    }
+
+    pub fn files(&self) -> &[SourceFile] {
+        &self.files
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.files.is_empty()
+    }
+
+    /// The file an offset falls in, and where that file begins.
+    pub fn file_at(&self, offset: u32) -> Option<(&SourceFile, u32)> {
+        if self.files.is_empty() {
+            return None;
+        }
+        let index = match self.starts.binary_search(&offset) {
+            Ok(i) => i,
+            Err(0) => return None,
+            Err(i) => i - 1,
+        };
+        Some((&self.files[index], self.starts[index]))
+    }
+
+    /// The index of the file an offset falls in.
+    pub fn file_index(&self, offset: u32) -> usize {
+        match self.starts.binary_search(&offset) {
+            Ok(i) => i,
+            Err(0) => 0,
+            Err(i) => i - 1,
+        }
+    }
+
+    /// The name of the file an offset falls in.
+    pub fn name_at(&self, offset: u32) -> &str {
+        self.file_at(offset).map(|(f, _)| f.name()).unwrap_or("")
+    }
+
+    /// The line and column of an offset, within its own file.
+    pub fn line_col(&self, offset: u32) -> LineCol {
+        match self.file_at(offset) {
+            Some((file, start)) => file.line_col(offset - start),
+            None => LineCol { line: 1, col: 1 },
+        }
+    }
+
+    /// The text of the line an offset falls on.
+    pub fn line_text(&self, offset: u32) -> &str {
+        match self.file_at(offset) {
+            Some((file, start)) => file.line_text(file.line_col(offset - start).line),
+            None => "",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,6 +271,24 @@ mod tests {
         let b = Span::new(10, 12);
         assert_eq!(a.to(b), Span::new(3, 12));
         assert_eq!(b.to(a), Span::new(3, 12));
+    }
+
+    #[test]
+    fn a_source_map_finds_the_file_an_offset_falls_in() {
+        let mut map = SourceMap::new();
+        let first = map.add(SourceFile::new("a.sic", "one\ntwo\n"));
+        let second = map.add(SourceFile::new("b.sic", "three\n"));
+        assert_eq!(first, 0);
+
+        assert_eq!(map.name_at(0), "a.sic");
+        assert_eq!(map.line_col(0), LineCol { line: 1, col: 1 });
+        // The second line of the first file.
+        assert_eq!(map.line_col(4), LineCol { line: 2, col: 1 });
+
+        assert_eq!(map.name_at(second), "b.sic");
+        // Positions are within their own file, not the shared space.
+        assert_eq!(map.line_col(second), LineCol { line: 1, col: 1 });
+        assert_eq!(map.line_text(second), "three");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 353 tests.
+Last updated at 370 tests.
 
 ---
 
@@ -19,6 +19,7 @@ Last updated at 353 tests.
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
 | 10 | Absolute paths, no PATH search, binary hash pinning | `sic-broker` |
+| 11 | `import`, local files only | `docs/design/modules.md` |
 | 12 | Bytecode verifier | `sic-verify`, `docs/design/v0.1.md` §9 |
 | 13 | Bytecode format with a capability manifest | `.sicb`, `sic verify` reports it |
 | 14 | An arena per run, no GC | `sic-vm/src/value.rs` |
@@ -56,11 +57,6 @@ broker does not report either, so any number would be invented.
 ---
 
 ## Not built
-
-**§11, imports.** There is no `import` at all, so a program is one file. The
-specification's rule - local files only, no network resolution - is not violated
-by this, but it is not implemented either. This is the largest gap for anyone
-writing a program longer than an example.
 
 **§26, structured logging.** `log info "..." { ... }` does not parse. The IR has
 the instruction, the journal has nowhere for it to go yet, and the exporter says

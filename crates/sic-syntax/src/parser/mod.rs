@@ -11,12 +11,17 @@ mod expr;
 use sic_core::{Diagnostic, Label, NodeId, Span};
 
 use crate::ast::*;
-use crate::lexer::tokenize;
+use crate::lexer::tokenize_at;
 use crate::token::{Keyword, Token, TokenKind};
 
 /// Parses a source text as a single module. The diagnostics include the lexer's.
 pub fn parse(src: &str) -> (Module, Vec<Diagnostic>) {
-    let (tokens, mut diags) = tokenize(src);
+    parse_at(src, 0)
+}
+
+/// The same, for a file at `base` in a `SourceMap`'s offset space.
+pub fn parse_at(src: &str, base: u32) -> (Module, Vec<Diagnostic>) {
+    let (tokens, mut diags) = tokenize_at(src, base);
     let mut p = Parser::new(tokens);
     let module = p.parse_module();
     diags.append(&mut p.diags);
@@ -179,12 +184,16 @@ impl Parser {
                 TokenKind::Kw(Keyword::Allow) => items.push(Item::Allow(self.parse_allow())),
                 TokenKind::Kw(Keyword::Type) => items.push(Item::Type(self.parse_type_decl())),
                 TokenKind::Kw(Keyword::Agent) => items.push(Item::Agent(self.parse_agent())),
+                TokenKind::Kw(Keyword::Import) => items.push(Item::Import(self.parse_import())),
+                TokenKind::Kw(Keyword::Requires) => {
+                    items.push(Item::Requires(self.parse_requires()))
+                }
                 other => {
                     let span = self.span();
                     let found = other.describe();
                     self.error(
                         "E0202",
-                        "the top level holds `fn`, `type`, `agent` and `allow` declarations",
+                        "the top level holds `import`, `fn`, `type`, `agent`, `allow` and `requires`",
                         span,
                         format!("found {found}"),
                     );
@@ -237,6 +246,74 @@ impl Parser {
             id,
             name,
             fields,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// `import "./lib/deploy.sic";`
+    fn parse_import(&mut self) -> ImportDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `import`
+        let path = match self.peek().clone() {
+            TokenKind::Str(text) => {
+                self.bump();
+                text
+            }
+            other => {
+                let span = self.span();
+                self.error(
+                    "E0212",
+                    "`import` needs a path",
+                    span,
+                    format!("found {}", other.describe()),
+                );
+                String::new()
+            }
+        };
+        self.expect(&TokenKind::Semi, "after an import");
+        ImportDecl {
+            id,
+            path,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// ```text
+    /// requires { process.exec; }
+    /// ```
+    fn parse_requires(&mut self) -> RequiresDecl {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `requires`
+        let mut caps = Vec::new();
+        if self.expect(&TokenKind::LBrace, "to open a `requires` block") {
+            while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                let before = self.pos;
+                let cap_start = self.span().lo;
+                let namespace = self.expect_ident("a capability namespace");
+                self.expect(
+                    &TokenKind::Dot,
+                    "between a capability namespace and its name",
+                );
+                let name = self.expect_ident("a capability name");
+                caps.push(CapPath {
+                    namespace,
+                    name,
+                    span: Span::new(cap_start, self.prev_end()),
+                });
+                if !self.expect(&TokenKind::Semi, "after a required capability") {
+                    self.recover_to_grant_end();
+                }
+                if self.pos == before {
+                    self.bump();
+                }
+            }
+            self.expect(&TokenKind::RBrace, "to close the `requires` block");
+        }
+        RequiresDecl {
+            id,
+            caps,
             span: Span::new(start, self.prev_end()),
         }
     }

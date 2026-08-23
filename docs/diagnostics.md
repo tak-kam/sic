@@ -12,6 +12,7 @@ or the other way round. An index that drifts is worse than none.
 | E01xx | lexer |
 | E02xx | parser |
 | E03xx | type checker |
+| E04xx | modules |
 
 Failures that happen while a program runs are not codes: they are named in the
 message and located by the debug section, because a run has a place as well as a
@@ -45,6 +46,7 @@ reason.
 | E0209 | an unknown setting in an `agent` body |
 | E0210 | a word reserved for a later phase |
 | E0211 | `sha256` without a digest |
+| E0212 | `import` without a path |
 
 ## E03xx — names, types and effects
 
@@ -122,3 +124,17 @@ reason.
 | E0370 | `approve` without the `human.approve` grant |
 | E0371 | using a value where its provenance makes it unusable |
 | E0372 | a model's answer reaching a capability that changes something |
+
+## E04xx — modules
+
+Produced while gathering the files a program is built from, and while checking
+what they ask of each other.
+
+| Code | Means |
+|---|---|
+| E0400 | an import path that cannot be used |
+| E0401 | an import that cannot be read |
+| E0402 | an import cycle |
+| E0403 | a file that both grants and requires capabilities |
+| E0404 | a required capability the program does not grant |
+| E0405 | a `requires` for a capability nothing calls |

@@ -1565,3 +1565,228 @@ fn version_and_help() {
     assert!(stdout.contains("sic run"), "{stdout}");
     assert!(stdout.contains("sic parse"), "{stdout}");
 }
+
+// ---- modules ----
+
+/// Writes a small program made of several files, and returns the entry file.
+fn write_temp_program(name: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("sic-test-{}-{name}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    for (rel, contents) in files {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, contents).unwrap();
+    }
+    dir.join(files[0].0)
+}
+
+const LIB_DEPLOY: &str = "\
+requires {
+    process.exec;
+}
+
+fn deploy(binary: String) -> Int {
+    return process.exec(binary);
+}
+";
+
+#[test]
+fn an_imported_function_is_callable() {
+    let entry = write_temp_program(
+        "import-ok",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/deploy.sic\";\n\n\
+                 allow {\n    process.exec \"/bin/echo\";\n}\n\n\
+                 fn main() -> Int {\n    return deploy(\"/bin/echo\");\n}\n",
+            ),
+            ("lib/deploy.sic", LIB_DEPLOY),
+        ],
+    );
+    let (stdout, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "0");
+}
+
+#[test]
+fn a_plan_says_which_file_asks_for_a_grant() {
+    let entry = write_temp_program(
+        "import-plan",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/deploy.sic\";\n\n\
+                 allow {\n    process.exec \"/bin/echo\";\n}\n\n\
+                 fn main() -> Int {\n    return deploy(\"/bin/echo\");\n}\n",
+            ),
+            ("lib/deploy.sic", LIB_DEPLOY),
+        ],
+    );
+    let (stdout, stderr, code) = sic(&["plan", entry.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("called from"), "{stdout}");
+    assert!(stdout.contains("lib/deploy.sic"), "{stdout}");
+}
+
+#[test]
+fn a_required_capability_has_to_be_granted() {
+    let entry = write_temp_program(
+        "import-ungranted",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/deploy.sic\";\n\n\
+                 fn main() -> Int {\n    return deploy(\"/bin/echo\");\n}\n",
+            ),
+            ("lib/deploy.sic", LIB_DEPLOY),
+        ],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0404"), "{stderr}");
+}
+
+#[test]
+fn a_requirement_nothing_calls_is_a_warning() {
+    let entry = write_temp_program(
+        "import-unused-requires",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/idle.sic\";\n\n\
+                 allow {\n    process.exec \"/bin/echo\";\n}\n\n\
+                 fn main() -> Int {\n    return quiet();\n}\n",
+            ),
+            (
+                "lib/idle.sic",
+                "requires {\n    process.exec;\n}\n\nfn quiet() -> Int {\n    return 0;\n}\n",
+            ),
+        ],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stderr.contains("E0405"), "{stderr}");
+}
+
+#[test]
+fn a_file_either_grants_or_requires() {
+    let entry = write_temp_program(
+        "import-both-roles",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/greedy.sic\";\n\nfn main() -> Int {\n    return go();\n}\n",
+            ),
+            (
+                "lib/greedy.sic",
+                "allow {\n    process.exec \"/bin/echo\";\n}\n\n\
+                 requires {\n    process.exec;\n}\n\n\
+                 fn go() -> Int {\n    return process.exec(\"/bin/echo\");\n}\n",
+            ),
+        ],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0403"), "{stderr}");
+}
+
+#[test]
+fn an_import_cycle_is_reported_rather_than_followed() {
+    let entry = write_temp_program(
+        "import-cycle",
+        &[
+            (
+                "main.sic",
+                "import \"./a.sic\";\n\nfn main() -> Int {\n    return one();\n}\n",
+            ),
+            (
+                "a.sic",
+                "import \"./b.sic\";\n\nfn one() -> Int {\n    return two();\n}\n",
+            ),
+            (
+                "b.sic",
+                "import \"./a.sic\";\n\nfn two() -> Int {\n    return 2;\n}\n",
+            ),
+        ],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0402"), "{stderr}");
+}
+
+#[test]
+fn an_import_may_not_reach_outside_the_program() {
+    let entry = write_temp_program(
+        "import-escape",
+        &[(
+            "main.sic",
+            "import \"../elsewhere.sic\";\n\nfn main() -> Int {\n    return 0;\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0400"), "{stderr}");
+}
+
+#[test]
+fn an_import_that_is_not_there_names_the_import() {
+    let entry = write_temp_program(
+        "import-missing",
+        &[(
+            "main.sic",
+            "import \"./nowhere.sic\";\n\nfn main() -> Int {\n    return 0;\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0401"), "{stderr}");
+    assert!(stderr.contains("nowhere.sic"), "{stderr}");
+}
+
+#[test]
+fn the_same_file_imported_twice_comes_in_once() {
+    let entry = write_temp_program(
+        "import-diamond",
+        &[
+            (
+                "main.sic",
+                "import \"./a.sic\";\nimport \"./b.sic\";\n\n\
+                 fn main() -> Int {\n    return one() + two();\n}\n",
+            ),
+            (
+                "a.sic",
+                "import \"./shared.sic\";\n\nfn one() -> Int {\n    return base();\n}\n",
+            ),
+            (
+                "b.sic",
+                "import \"./shared.sic\";\n\nfn two() -> Int {\n    return base();\n}\n",
+            ),
+            ("shared.sic", "fn base() -> Int {\n    return 21;\n}\n"),
+        ],
+    );
+    let (stdout, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout.trim(), "42");
+}
+
+#[test]
+fn a_failure_inside_an_imported_file_names_that_file() {
+    let entry = write_temp_program(
+        "import-failure",
+        &[
+            (
+                "main.sic",
+                "import \"./lib/math.sic\";\n\nfn main() -> Int {\n    return half(0);\n}\n",
+            ),
+            (
+                "lib/math.sic",
+                "fn half(n: Int) -> Int {\n    return 10 / n;\n}\n",
+            ),
+        ],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("lib/math.sic:2"), "{stderr}");
+}

@@ -1,0 +1,15 @@
+// A program built from two files.
+//
+// The grant lives here, in the file that is run: `lib/deploy.sic` states that
+// it needs `process.exec`, and this file decides which binary that means. Run
+// `sic plan examples/import.sic` to see both halves in one manifest.
+
+import "./lib/deploy.sic";
+
+allow {
+    process.exec "/bin/echo";
+}
+
+fn main() -> Bool {
+    return deploy("/bin/echo");
+}

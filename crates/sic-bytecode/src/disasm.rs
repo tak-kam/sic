@@ -9,8 +9,8 @@ use crate::program::*;
 
 pub fn disassemble(p: &Program) -> String {
     let mut out = String::new();
-    if !p.debug.source_name.is_empty() {
-        out.push_str(&format!("; source: {}\n", p.debug.source_name));
+    if !p.debug.sources.is_empty() {
+        out.push_str(&format!("; source: {}\n", p.debug.sources.join(", ")));
     }
 
     out.push_str("constants:\n");

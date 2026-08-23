@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::*;
-use sic_core::{BlockId, SourceFile, Span};
+use sic_core::{BlockId, SourceMap, Span};
 use sic_ir::hir::{
     BinOp, CallPolicy as HirCallPolicy, Const as HirConst, Hir, HirFunc, Inst as HirInst, InstKind,
     Term, Terminator, UnOp,
@@ -39,7 +39,7 @@ const MAX_REGISTERS: usize = 256;
 const MAX_CONSTS: usize = u16::MAX as usize + 1;
 const MAX_FUNCS: usize = 256;
 
-pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError>> {
+pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileError>> {
     let mut errors = Vec::new();
 
     if hir.funcs.len() > MAX_FUNCS {
@@ -54,7 +54,11 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
     let mut types = TypeSection::new();
     let mut program = Program {
         debug: DebugInfo {
-            source_name: file.name().to_string(),
+            sources: sources
+                .files()
+                .iter()
+                .map(|f| f.name().to_string())
+                .collect(),
             lines: Vec::new(),
         },
         ..Program::default()
@@ -82,11 +86,12 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
             Ok(compiled) => {
                 let code_off = program.code.len() as u32;
                 for (offset, span) in compiled.spans {
-                    let pos = file.line_col(span.lo);
+                    let file = sources.file_index(span.lo) as u32;
+                    let pos = sources.line_col(span.lo);
                     program
                         .debug
                         .lines
-                        .push((code_off + offset, pos.line, pos.col));
+                        .push((code_off + offset, file, pos.line, pos.col));
                 }
                 program.code.extend(compiled.code);
                 for (offset, policy) in compiled.policies {

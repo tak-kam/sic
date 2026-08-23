@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use sic_broker::Broker;
 use sic_bytecode::Program;
-use sic_core::{Digest, SourceFile};
+use sic_core::Digest;
 use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
@@ -28,7 +28,7 @@ pub struct RunOptions<'a> {
 }
 
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
-    let (file, program) = match compile_source(path) {
+    let program = match compile_source(path) {
         Ok(v) => v,
         Err(code) => return code,
     };
@@ -119,7 +119,6 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     finish(
         &mut vm,
         &program,
-        &file,
         outcome,
         checkpoint.as_deref(),
         hint.as_deref(),
@@ -130,7 +129,6 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 pub fn finish(
     vm: &mut Vm,
     program: &Program,
-    file: &SourceFile,
     outcome: Outcome,
     checkpoint_path: Option<&str>,
     resume_hint: Option<&str>,
@@ -142,7 +140,7 @@ pub fn finish(
             ExitCode::SUCCESS
         }
         Outcome::Failed(info) => {
-            report_failure(vm, program, file, &info);
+            report_failure(vm, program, &info);
             ExitCode::from(EXIT_FAILURE)
         }
         Outcome::Suspended { question } => {
@@ -186,7 +184,10 @@ fn write_checkpoint(
 }
 
 /// Reports a runtime failure, naming the source line through the debug section.
-pub fn report_failure(vm: &Vm, program: &Program, file: &SourceFile, info: &FailInfo) {
+///
+/// The file comes from the debug section rather than from whatever was named on
+/// the command line, so a failure inside an imported file says so.
+pub fn report_failure(vm: &Vm, program: &Program, info: &FailInfo) {
     eprint!("error: {}", info.kind.message());
     if let Some(value) = &info.value {
         eprint!(": {}", vm.display(value));
@@ -197,7 +198,10 @@ pub fn report_failure(vm: &Vm, program: &Program, file: &SourceFile, info: &Fail
     eprintln!();
 
     match program.debug.position(info.pc) {
-        Some((line, col)) => eprintln!(" --> {}:{}:{}", file.name(), line, col),
+        Some((line, col)) => {
+            let name = program.debug.file(info.pc).unwrap_or("?");
+            eprintln!(" --> {name}:{line}:{col}")
+        }
         None => eprintln!(" --> in `{}` at instruction {}", info.func, info.pc),
     }
 }

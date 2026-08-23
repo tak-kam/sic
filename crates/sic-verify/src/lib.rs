@@ -172,7 +172,7 @@ impl<'a> Verifier<'a> {
             }
         }
 
-        for (pc, _, _) in &p.debug.lines {
+        for (pc, _, _, _) in &p.debug.lines {
             if *pc as usize >= p.code.len() {
                 self.error(
                     None,

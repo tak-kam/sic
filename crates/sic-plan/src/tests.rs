@@ -36,8 +36,8 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
         ],
         policies: policy.into_iter().collect(),
         debug: DebugInfo {
-            source_name: "main.sic".into(),
-            lines: vec![(1, 3, 12)],
+            sources: vec!["main.sic".into()],
+            lines: vec![(1, 0, 3, 12)],
         },
     };
     p.types.push(TypeDesc::Object {

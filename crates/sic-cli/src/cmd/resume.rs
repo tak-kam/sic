@@ -33,7 +33,7 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         }
     };
 
-    let (file, program) = match compile_source(source_path) {
+    let program = match compile_source(source_path) {
         Ok(v) => v,
         Err(code) => return code,
     };
@@ -89,5 +89,5 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     let mut broker = Broker::new(manifest(&program));
     let status = vm.resume(value);
     let outcome = drive(&mut vm, &mut broker, status);
-    finish(&mut vm, &program, &file, outcome, options.checkpoint, None)
+    finish(&mut vm, &program, outcome, options.checkpoint, None)
 }

@@ -10,5 +10,5 @@ pub mod print;
 pub mod token;
 
 pub use ast::Module;
-pub use lexer::tokenize;
-pub use parser::parse;
+pub use lexer::{tokenize, tokenize_at};
+pub use parser::{parse, parse_at};

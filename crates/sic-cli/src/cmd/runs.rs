@@ -173,13 +173,10 @@ pub fn attach(prefix: &str, value: Option<&str>) -> ExitCode {
     let outcome = super::drive::drive_recording(&mut vm, &mut broker, status, Some(&dir));
 
     let still_waiting = matches!(outcome, super::drive::Outcome::Suspended { .. });
-    let source = program.debug.source_name.clone();
-    let file = sic_core::SourceFile::new(source, "");
     let hint = format!("sic attach {prefix} --value <VALUE>");
     let code = super::run::finish(
         &mut vm,
         &program,
-        &file,
         outcome,
         Some(&checkpoint_path.to_string_lossy()),
         Some(&hint),

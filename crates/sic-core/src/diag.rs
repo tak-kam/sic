@@ -3,7 +3,7 @@
 //! Every layer collects diagnostics instead of stopping at the first error, so a
 //! diagnostic is plain data rather than an exceptional control flow path.
 
-use crate::span::{SourceFile, Span};
+use crate::span::{SourceMap, Span};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -83,7 +83,7 @@ impl Diagnostic {
     /// No colors: deciding whether the output is a TTY and adding escapes is the
     /// CLI's job. This function returns a deterministic string so it stays easy
     /// to test.
-    pub fn render(&self, file: &SourceFile) -> String {
+    pub fn render(&self, sources: &SourceMap) -> String {
         let mut out = String::new();
         match self.code {
             Some(code) => out.push_str(&format!(
@@ -95,22 +95,30 @@ impl Diagnostic {
             None => out.push_str(&format!("{}: {}\n", self.severity.label(), self.message)),
         }
 
-        let pos = file.line_col(self.primary.span.lo);
+        let pos = sources.line_col(self.primary.span.lo);
         // The gutter is as wide as the line number it has to hold.
         let gutter = pos.line.to_string().len();
         let pad = " ".repeat(gutter);
 
-        out.push_str(&format!("{pad}--> {}:{}\n", file.name(), pos));
+        out.push_str(&format!(
+            "{pad}--> {}:{}\n",
+            sources.name_at(self.primary.span.lo),
+            pos
+        ));
         out.push_str(&format!("{pad} |\n"));
-        render_snippet(&mut out, file, &self.primary, gutter);
+        render_snippet(&mut out, sources, &self.primary, gutter);
 
         for label in &self.secondary {
-            let lc = file.line_col(label.span.lo);
+            let lc = sources.line_col(label.span.lo);
             out.push_str(&format!("{pad} |\n"));
             if lc.line != pos.line {
-                out.push_str(&format!("{pad}--> {}:{}\n", file.name(), lc));
+                out.push_str(&format!(
+                    "{pad}--> {}:{}\n",
+                    sources.name_at(label.span.lo),
+                    lc
+                ));
             }
-            render_snippet(&mut out, file, label, gutter);
+            render_snippet(&mut out, sources, label, gutter);
         }
 
         for note in &self.notes {
@@ -121,9 +129,9 @@ impl Diagnostic {
 }
 
 /// Writes the source line and the caret line for a single label.
-fn render_snippet(out: &mut String, file: &SourceFile, label: &Label, gutter: usize) {
-    let start = file.line_col(label.span.lo);
-    let line = file.line_text(start.line);
+fn render_snippet(out: &mut String, sources: &SourceMap, label: &Label, gutter: usize) {
+    let start = sources.line_col(label.span.lo);
+    let line = sources.line_text(label.span.lo);
     let num = format!("{:>width$}", start.line, width = gutter);
     // Tabs would misalign the carets, so collapse each to a single space.
     let display_line: String = line
@@ -132,7 +140,7 @@ fn render_snippet(out: &mut String, file: &SourceFile, label: &Label, gutter: us
         .collect();
     out.push_str(&format!("{num} | {display_line}\n"));
 
-    let end = file.line_col(label.span.hi);
+    let end = sources.line_col(label.span.hi);
     // A span covering several lines is underlined up to the end of its first line.
     let caret_len = if end.line == start.line {
         (end.col.saturating_sub(start.col)).max(1)
@@ -157,8 +165,9 @@ mod tests {
 
     #[test]
     fn renders_caret_under_span() {
-        let file = SourceFile::new("main.sic", "fn main() {\n    let y = x + ;\n}\n");
+        let file = crate::span::SourceFile::new("main.sic", "fn main() {\n    let y = x + ;\n}\n");
         let at = file.text().find(';').unwrap() as u32;
+        let sources = SourceMap::single(file);
         let d = Diagnostic::error(
             "E0100",
             "expected an expression",
@@ -166,7 +175,7 @@ mod tests {
         )
         .with_note("the right-hand side of `+` is missing");
 
-        let s = d.render(&file);
+        let s = d.render(&sources);
         let expected = "\
 error[E0100]: expected an expression
  --> main.sic:2:17
@@ -180,9 +189,12 @@ error[E0100]: expected an expression
 
     #[test]
     fn multi_line_span_stops_at_first_line() {
-        let file = SourceFile::new("main.sic", "fn f() {\n  1\n}\n");
+        let sources = SourceMap::single(crate::span::SourceFile::new(
+            "main.sic",
+            "fn f() {\n  1\n}\n",
+        ));
         let d = Diagnostic::error("E0001", "test", Label::new(Span::new(0, 12), ""));
-        let s = d.render(&file);
+        let s = d.render(&sources);
         assert!(s.contains("1 | fn f() {\n"), "{s}");
         assert!(s.contains("^^^^^^^^"), "{s}");
     }
