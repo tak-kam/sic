@@ -15,6 +15,47 @@ use sic_vm::{DEFAULT_FUEL, Status, Vm};
 use super::store;
 use super::{EXIT_FAILURE, EXIT_USAGE};
 
+/// `sic runs [--waiting]`: what has been recorded.
+///
+/// `--waiting` narrows it to the runs that stopped for an answer, and prints
+/// what each one is waiting for. That is the list something answering runs -
+/// a person, or an agent driving `sic` - works from.
+pub fn list_waiting() -> ExitCode {
+    let runs = match store::list() {
+        Ok(runs) => runs,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
+    let mut found = 0;
+    for dir in runs {
+        let Ok(events) = store::read_journal(&dir) else {
+            continue;
+        };
+        let summary = store::summarize(&events);
+        if !matches!(summary.outcome, store::Outcome::Waiting(_)) {
+            continue;
+        }
+        let Some(question) = store::pending_question(&dir) else {
+            continue;
+        };
+        found += 1;
+        // The question is last, because it is the only field that can contain
+        // spaces.
+        println!(
+            "{}  {:<10}  {:<14}  {question}",
+            &summary.run.to_string()[..8],
+            summary.workflow,
+            summary.outcome.detail().unwrap_or("")
+        );
+    }
+    if found == 0 {
+        println!("nothing is waiting");
+    }
+    ExitCode::SUCCESS
+}
+
 /// `sic runs`: what has been recorded.
 pub fn list() -> ExitCode {
     let runs = match store::list() {
@@ -47,6 +88,107 @@ pub fn list() -> ExitCode {
         println!();
     }
     ExitCode::SUCCESS
+}
+
+/// `sic attach <id> [--value V]`: pick up a run that stopped for an answer.
+///
+/// Without a value it says what the run is waiting for and stops; with one it
+/// answers and carries on. Everything it needs - the bytecode, the checkpoint,
+/// where the journal goes - is in the run's directory, so a run is identified
+/// by its id and nothing else has to be remembered.
+///
+/// The read-only form matters as much as the other: whatever is going to answer
+/// has to be able to find out what the question is first.
+pub fn attach(prefix: &str, value: Option<&str>) -> ExitCode {
+    let dir = match store::find(prefix) {
+        Ok(dir) => dir,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+    let checkpoint_path = dir.join(store::CHECKPOINT);
+    let Ok(checkpoint) = std::fs::read(&checkpoint_path) else {
+        eprintln!("error: run `{}` is not waiting for anything", prefix);
+        return ExitCode::from(EXIT_USAGE);
+    };
+
+    let program_path = dir.join(store::PROGRAM).to_string_lossy().into_owned();
+    let program = match super::load_bytecode(&program_path) {
+        Ok(program) => program,
+        Err(code) => return code,
+    };
+    // The bytecode is the one the run started with, so the digest matches by
+    // construction - which is the point of storing it beside the checkpoint.
+    let digest = Digest::of(&sic_bytecode::encode(&program));
+
+    let sink: Box<dyn sic_journal::Sink> =
+        match super::journal::FileSink::append(&dir.join(store::JOURNAL).to_string_lossy()) {
+            Ok(sink) => Box::new(sink),
+            Err(msg) => {
+                eprintln!("error: {msg}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+        };
+
+    let (mut vm, question) = match Vm::restore(&program, &checkpoint, digest, sink) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: cannot pick up `{}`: {e}", dir.display());
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
+
+    let Some(cap) = vm.pending_capability().map(str::to_string) else {
+        eprintln!("internal error: the checkpoint is not waiting for anything");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+    let Some(tag) = super::drive::capability_return_type(&program, &cap) else {
+        eprintln!("error: `{cap}` is not a capability this program declares");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+
+    let Some(text) = value else {
+        println!("waiting: {question}");
+        println!(
+            "answer:  sic attach {prefix} --value <{}>",
+            tag.short_name()
+        );
+        return ExitCode::from(super::EXIT_SUSPENDED);
+    };
+    let answer = match super::drive::parse_answer(text, tag) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("error: {msg}, and `{cap}` returns {}", tag.short_name());
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+    // Recorded so that replaying the run answers it the same way.
+    if let Err(msg) = store::record_answer(&dir, &answer) {
+        eprintln!("warning: {msg}");
+    }
+
+    let mut broker = sic_broker::Broker::new(super::drive::manifest(&program));
+    let status = vm.resume(answer);
+    let outcome = super::drive::drive_recording(&mut vm, &mut broker, status, Some(&dir));
+
+    let still_waiting = matches!(outcome, super::drive::Outcome::Suspended { .. });
+    let source = program.debug.source_name.clone();
+    let file = sic_core::SourceFile::new(source, "");
+    let hint = format!("sic attach {prefix} --value <VALUE>");
+    let code = super::run::finish(
+        &mut vm,
+        &program,
+        &file,
+        outcome,
+        Some(&checkpoint_path.to_string_lossy()),
+        Some(&hint),
+    );
+    // A finished run that kept its checkpoint would keep showing up as waiting.
+    if !still_waiting {
+        std::fs::remove_file(&checkpoint_path).ok();
+    }
+    code
 }
 
 /// `sic explain <id>`: the summary a person reads when something went wrong.
@@ -199,35 +341,62 @@ pub fn replay(prefix: &str) -> ExitCode {
 ///
 /// A difference is a real finding: the VM changed, the compiler changed, or
 /// something in the run was not as deterministic as it claimed to be.
+///
+/// Suspending, checkpointing and resuming are left out of the comparison. They
+/// record how a run was carried out - in how many sittings the answers arrived
+/// - rather than what the program did, and a run that stopped twice for a
+/// person is the same run as one that was answered immediately.
 fn compare(recorded: &[TimedEvent], replayed: &[sic_journal::Event]) -> Vec<String> {
+    let original: Vec<&sic_journal::Event> = recorded
+        .iter()
+        .map(|t| &t.event)
+        .filter(|e| is_about_the_program(&e.kind))
+        .collect();
+    let again: Vec<&sic_journal::Event> = replayed
+        .iter()
+        .filter(|e| is_about_the_program(&e.kind))
+        .collect();
+
     let mut differences = Vec::new();
-    for (i, replayed_event) in replayed.iter().enumerate() {
-        let Some(original) = recorded.get(i) else {
+    for (i, replayed_event) in again.iter().enumerate() {
+        let Some(recorded_event) = original.get(i) else {
             differences.push(format!(
-                "seq {i}: the replay produced {} which the recording does not have",
+                "the replay produced {} which the recording does not have",
                 replayed_event.kind.name()
             ));
             break;
         };
-        if original.event.kind != replayed_event.kind {
+        if recorded_event.kind != replayed_event.kind {
             differences.push(format!(
-                "seq {i}: recorded {}, replayed {}",
-                describe(&original.event.kind),
+                "seq {}: recorded {}, replayed {}",
+                recorded_event.seq,
+                describe(&recorded_event.kind),
                 describe(&replayed_event.kind)
             ));
             break;
         }
     }
-    if replayed.len() < recorded.len() && differences.is_empty() {
+    if again.len() < original.len() && differences.is_empty() {
         // Not a mismatch in itself: a suspended run's recording stops where the
         // run stopped.
         differences.push(format!(
             "the replay produced {} of {} events",
-            replayed.len(),
-            recorded.len()
+            again.len(),
+            original.len()
         ));
     }
     differences
+}
+
+/// Whether an event says something about what the program did, rather than
+/// about how its execution was arranged.
+fn is_about_the_program(kind: &EventKind) -> bool {
+    !matches!(
+        kind,
+        EventKind::RunSuspended { .. }
+            | EventKind::RunResumed { .. }
+            | EventKind::CheckpointWritten { .. }
+    )
 }
 
 fn describe(kind: &EventKind) -> String {

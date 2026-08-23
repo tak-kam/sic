@@ -176,6 +176,12 @@ pub fn depth_of(event: &Event, events: &[TimedEvent]) -> usize {
     depth
 }
 
+/// What a waiting run is waiting for, read from its checkpoint.
+pub fn pending_question(dir: &Path) -> Option<String> {
+    let bytes = std::fs::read(dir.join(CHECKPOINT)).ok()?;
+    sic_vm::Checkpoint::decode(&bytes).ok().map(|c| c.question)
+}
+
 /// Appends one recorded answer.
 ///
 /// These are values, unlike the journal. Keeping them in their own file means

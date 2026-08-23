@@ -89,5 +89,5 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     let mut broker = Broker::new(manifest(&program));
     let status = vm.resume(value);
     let outcome = drive(&mut vm, &mut broker, status);
-    finish(&mut vm, &program, &file, outcome, options.checkpoint)
+    finish(&mut vm, &program, &file, outcome, options.checkpoint, None)
 }

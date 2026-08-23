@@ -94,6 +94,12 @@ What it does not do is call anything. A replay that asked the broker again would
 be a second run, with a second set of effects, which is the opposite of what
 replaying is for.
 
+Suspending, checkpointing and resuming are left out of the comparison. They
+record how a run was carried out - in how many sittings the answers arrived -
+rather than what the program did. A run that waited two days for a person is the
+same run as one answered immediately, and a replay that called those different
+would report a difference nobody can act on.
+
 Two ways a replay can legitimately end early:
 
 - **The run was suspended.** The recorded answers stop where the run stopped;
@@ -103,7 +109,39 @@ Two ways a replay can legitimately end early:
 
 ---
 
-## 5. Not here
+---
+
+## 5. Picking a waiting run up again
+
+A run that stopped is detached, in the sense a terminal multiplexer means: it
+exists, it is not attached to a process, and something can come back to it.
+
+```console
+$ sic runs --waiting
+b4b6776d  main  llm.invoke  [claude-opus-4] what should we deploy?
+
+$ sic attach b4b6776d
+waiting: [claude-opus-4] what should we deploy?
+answer:  sic attach b4b6776d --value <String>
+
+$ sic attach b4b6776d --value '{"action": "restart the service"}'
+waiting: [deploying] deploy this?
+```
+
+Everything needed is in the run's directory, so a run is named by its id and
+nothing about a path has to be remembered.
+
+**Reading the question is a separate step from answering it**, and that is the
+half that makes this usable by something other than a person who already knows
+what the run wants. Whatever answers - a person, or an agent driving `sic` -
+has to be able to find out what is being asked first. `sic attach` with no value
+prints the question and exits 3; with a value it answers and carries on.
+
+That is also why `llm.invoke` deferring is not a limitation to be fixed later.
+The thing outside that answers a model call can be whatever is driving `sic`,
+and it finds its work with `sic runs --waiting`.
+
+## 6. Not here
 
 - **No pruning, no retention, no size limit.** A run directory is a directory;
   deleting old ones is `rm`. Anything cleverer is a policy, and policies belong

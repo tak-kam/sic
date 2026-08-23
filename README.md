@@ -306,6 +306,29 @@ replaying 1fe3d3e5... (main)
   18 events matched
 ```
 
+A run that stopped is detached, in the sense a terminal multiplexer means: it
+exists, it is not attached to a process, and something can come back to it.
+
+```console
+$ sic runs --waiting
+b4b6776d  main  llm.invoke  [claude-opus-4] what should we deploy?
+
+$ sic attach b4b6776d
+waiting: [claude-opus-4] what should we deploy?
+answer:  sic attach b4b6776d --value <String>
+
+$ sic attach b4b6776d --value '{"action": "restart the service"}'
+waiting: [deploying] deploy this?
+```
+
+**Reading the question is a separate step from answering it**, which is the half
+that makes this usable by something other than a person who already knows what
+the run wants. Whatever answers - a person, or an agent driving `sic` - finds its
+work with `sic runs --waiting` and does it with `sic attach`.
+
+That is also why a deferred `llm.invoke` is not a gap to be closed later: the
+thing outside that answers a model call can be whatever is driving `sic`.
+
 `replay` re-runs the **stored bytecode** against the answers the broker gave the
 first time, and compares the journal it produces with the one that was recorded.
 What that establishes is determinism: given the same program and the same

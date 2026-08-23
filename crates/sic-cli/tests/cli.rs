@@ -1421,6 +1421,116 @@ fn inspect_run_prints_every_event() {
 }
 
 #[test]
+fn a_waiting_run_is_found_and_answered_by_its_id_alone() {
+    // Everything a run needs to be picked up is in its directory, so nothing
+    // about a path has to be remembered - which is what makes this usable by
+    // something driving `sic` rather than a person who just typed the command.
+    let store = temp_store("attach");
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("approval-flow.sic"), "--record"],
+    );
+    assert_eq!(code, 3, "stderr: {stderr}");
+    assert!(stderr.contains("sic attach"), "{stderr}");
+
+    // What is waiting, and for what.
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("llm.invoke"), "{stdout}");
+    assert!(stdout.contains("what should we deploy?"), "{stdout}");
+    let id = stdout.split_whitespace().next().unwrap().to_string();
+
+    // Reading the question is separate from answering it: whatever answers has
+    // to be able to find out what the question is first.
+    let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["attach", &id]);
+    assert_eq!(code, 3);
+    assert!(stdout.contains("waiting: [claude-opus-4]"), "{stdout}");
+    assert!(stdout.contains("--value <String>"), "{stdout}");
+
+    // Answer the model; the run stops again, this time for a person.
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["attach", &id, "--value", r#"{"action": "restart"}"#],
+    );
+    assert_eq!(code, 3, "stderr: {stderr}");
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    assert!(stdout.contains("human.approve"), "{stdout}");
+
+    // Approve it, and it finishes.
+    let (stdout, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["attach", &id, "--value", "true"],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "0\n");
+
+    // A finished run is no longer waiting, and its checkpoint is gone.
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    assert!(stdout.contains("nothing is waiting"), "{stdout}");
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+    assert!(stdout.contains("completed"), "{stdout}");
+
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn attaching_to_a_run_that_is_not_waiting_says_so() {
+    let store = temp_store("attach-done");
+    let src = write_temp("attach-done.sic", "fn main() -> Int { return 1; }\n");
+    let (_, _, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 0);
+
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+    let id = stdout.split_whitespace().next().unwrap().to_string();
+    let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &["attach", &id]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("not waiting"), "{stderr}");
+
+    std::fs::remove_file(src).ok();
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
+fn an_answered_run_still_replays() {
+    // An answer given through `attach` is recorded like any other, so the run
+    // stays replayable.
+    let store = temp_store("attach-replay");
+    let (_, _, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", &example("agent.sic"), "--record"],
+    );
+    assert_eq!(code, 3);
+
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    let id = stdout.split_whitespace().next().unwrap().to_string();
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &[
+            "attach",
+            &id,
+            "--value",
+            r#"{"cause": "disk full", "confidence": 0.9}"#,
+        ],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("events matched"), "{stdout}");
+
+    std::fs::remove_dir_all(store).ok();
+}
+
+#[test]
 fn every_example_compiles_verifies_and_plans() {
     // `plan` runs the whole front end and the verifier and executes nothing, so
     // it is the cheapest way to say that every example in the repository still

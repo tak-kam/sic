@@ -111,7 +111,19 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         (Some(dir), None) => Some(dir.join(store::CHECKPOINT).to_string_lossy().into_owned()),
         (_, given) => given.map(str::to_string),
     };
-    finish(&mut vm, &program, &file, outcome, checkpoint.as_deref())
+    // A recorded run is identified by its id, so that is what the hint uses:
+    // nothing about a path has to be remembered.
+    let hint = recording
+        .as_ref()
+        .map(|_| format!("sic attach {} --value <VALUE>", &run_id.to_string()[..8]));
+    finish(
+        &mut vm,
+        &program,
+        &file,
+        outcome,
+        checkpoint.as_deref(),
+        hint.as_deref(),
+    )
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.
@@ -121,6 +133,7 @@ pub fn finish(
     file: &SourceFile,
     outcome: Outcome,
     checkpoint_path: Option<&str>,
+    resume_hint: Option<&str>,
 ) -> ExitCode {
     match outcome {
         Outcome::Finished(Value::Unit) => ExitCode::SUCCESS,
@@ -140,12 +153,18 @@ pub fn finish(
                 eprintln!("       pass --checkpoint PATH to write its state out");
                 return ExitCode::from(EXIT_FAILURE);
             };
-            write_checkpoint(vm, program, path, &question)
+            write_checkpoint(vm, program, path, &question, resume_hint)
         }
     }
 }
 
-fn write_checkpoint(vm: &mut Vm, program: &Program, path: &str, question: &str) -> ExitCode {
+fn write_checkpoint(
+    vm: &mut Vm,
+    program: &Program,
+    path: &str,
+    question: &str,
+    resume_hint: Option<&str>,
+) -> ExitCode {
     // The digest ties the checkpoint to this exact bytecode, so it cannot be
     // resumed against a program that has changed underneath it.
     let digest = Digest::of(&sic_bytecode::encode(program));
@@ -159,7 +178,10 @@ fn write_checkpoint(vm: &mut Vm, program: &Program, path: &str, question: &str) 
     }
     eprintln!("waiting: {question}");
     eprintln!("saved {} bytes to {path}", bytes.len());
-    eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>");
+    match resume_hint {
+        Some(hint) => eprintln!("answer with:  {hint}"),
+        None => eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>"),
+    }
     ExitCode::from(EXIT_SUSPENDED)
 }
 

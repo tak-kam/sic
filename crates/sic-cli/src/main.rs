@@ -19,7 +19,8 @@ Usage:
                                   optionally recording its execution journal,
                                   saving its state if it has to wait, or
                                   keeping the whole run with --record
-  sic runs                        list recorded runs
+  sic runs [--waiting]            list recorded runs, or only those waiting
+  sic attach <RUN-ID> [--value V] see what a waiting run needs, or answer it
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
@@ -63,13 +64,15 @@ fn main() -> ExitCode {
             ),
             Err(msg) => usage_error(msg),
         },
-        "runs" => {
-            if rest.is_empty() {
-                cmd::runs::list()
-            } else {
-                usage_error("`runs` takes no arguments")
-            }
-        }
+        "runs" => match rest {
+            [] => cmd::runs::list(),
+            [flag] if flag == "--waiting" => cmd::runs::list_waiting(),
+            _ => usage_error("`runs` takes at most `--waiting`"),
+        },
+        "attach" => match parse_flags(rest, &["--value"], 1) {
+            Ok((files, flags)) => cmd::runs::attach(&files[0], flags[0].as_deref()),
+            Err(msg) => usage_error(msg),
+        },
         "explain" => with_one_file(rest, "explain", cmd::runs::explain),
         "inspect-run" => with_one_file(rest, "inspect-run", cmd::runs::inspect),
         "replay" => with_one_file(rest, "replay", cmd::runs::replay),
