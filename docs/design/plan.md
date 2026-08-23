@@ -5,14 +5,16 @@ What a program may do, said before it does any of it.
 ```console
 $ sic plan examples/agent.sic
 Execution plan for examples/agent.sic
-bytecode sha256:5da4f16d8b7cbfc800e8fcebd029dc59888cfb76968ea65c0348eebac2ac6325
+bytecode sha256:a99e44d39ed16d77f1ca5a048b4b2258b37a1be3148091a303a16ad46eb9842d
 
   main
-    1. INVOKE llm.invoke    "claude-opus-4"  at most 2 in a run   ; 31:13
-    2. VERIFY Diagnosis   ; 31:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  at most 2 in a run   ; 36:13
+    2. VERIFY   Diagnosis   ; 36:13
 
 Capabilities:
-  llm.invoke    [invoke]  "claude-opus-4"
+  llm.invoke      [invoke]  "claude-opus-4"  (not pinned)
+    warning: this grant says what the program may ask for, not
+             what the agent may do while answering
 
 At most 2 capability call(s).
 ```

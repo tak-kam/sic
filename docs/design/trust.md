@@ -46,7 +46,7 @@ this if it were.
 **A `LLM<T>` cannot reach a capability that changes something.** Concretely: no
 argument of a `write` or `exec` capability may carry `LLM`. Reading and invoking
 are fine - asking a model about a model's answer is ordinary, and so is reading
-a file whose name it suggested is not, which is why the rule is about the
+a file whose name it suggested - which is why the rule is about the
 capability's kind rather than about the value.
 
 **A trust type is not its inner type.** `LLM<Int> + 1` does not compile, and

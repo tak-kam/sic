@@ -59,8 +59,8 @@ From a release, which publishes a static Linux binary, both macOS
 architectures, and Windows, with a `SHA256SUMS` beside them:
 
 ```console
-$ tar xzf sic-v0.1.1-x86_64-unknown-linux-musl.tar.gz
-$ ./sic-v0.1.1-x86_64-unknown-linux-musl/sic version
+$ tar xzf sic-v0.1.2-x86_64-unknown-linux-musl.tar.gz
+$ ./sic-v0.1.2-x86_64-unknown-linux-musl/sic version
 ```
 
 Or with cargo, which needs Rust 1.85 or newer:
@@ -132,7 +132,7 @@ bytecode sha256:...
     1. READ   fs.read  "./hello.sic"
 
 $ sic run hello.sic
-99
+112
 ```
 
 It reads its own source and returns its length.
@@ -216,7 +216,7 @@ compares - which is a check on determinism, and calls nothing.
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC]
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
-sic attach <RUN-ID> [--value V] [--because WHY]
+sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
                                    see what a waiting run needs, or answer it
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>

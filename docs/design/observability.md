@@ -101,19 +101,19 @@ another format is not a reason to start including values.
 
 ## 4. Metrics
 
-Counters and durations that the runtime produces on its own, per section 25:
+Counters the runtime produces on its own, per section 25:
 
 ```text
-sic.workflow.runs        sic.workflow.failures     sic.workflow.duration
-sic.capability.calls     sic.capability.failures   sic.capability.duration
+sic.workflow.runs        sic.workflow.failures
+sic.capability.calls     sic.capability.failures
 sic.task.started         sic.task.failed
 sic.agent.invocations
 sic.checkpoints.written
 ```
 
-Each is a sum or a histogram over one journal, with the attributes that make it
-worth splitting: the capability name, the workflow name. Exporting a single run
-gives a single data point; a collector aggregates across runs, which is what a
+Each is a sum over one journal, with the attributes that make it worth
+splitting: the capability name, the workflow name. Exporting a single run gives
+a single data point; a collector aggregates across runs, which is what a
 collector is for.
 
 `sic.agent.invocations` counts `llm.invoke` calls, because that is what an agent
@@ -130,6 +130,9 @@ is at this level - the exporter does not know what an agent is either.
   HTTP transport, and a document is what this produces.
 - **No sampling and no batching.** Both are decisions about a stream of runs,
   and this converts one journal at a time.
+- **No durations.** No event carries one, because the broker does not report
+  how long a call took, so a histogram here would be a number nobody measured.
+  A span still has a start and an end, from the timestamps a sink wrote.
 - **No trust or secret attributes.** Section 19's types do not exist yet, so
   there is nothing to label. When they do, `sic.trust.level` is the attribute
   and the rule is that a `Secret<T>` never reaches an attribute at all.

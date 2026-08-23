@@ -21,7 +21,7 @@ Broker: performs the effect, holds the credentials
 A capability is a named, typed operation that the VM cannot perform itself, and
 that a module must declare before it can call.
 
-v0.1 ships three, chosen because they need no credentials and no network:
+v0.1 ships six, chosen because they need no credentials and no network:
 
 | Capability | Signature | Kind |
 |---|---|---|

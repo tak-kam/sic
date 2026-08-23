@@ -25,6 +25,8 @@ $ sic replay 9b41d0
     journal.jsonl     what happened
     responses.jsonl   what the broker answered
     checkpoint.sicc   present only if the run is waiting
+    driver.json       what answered its model calls, if anything did
+    conversations     which agent conversations it has open, if any
 ```
 
 - **A directory per run, named by its id.** The id is already 128 bits and
@@ -113,8 +115,6 @@ Two ways a replay can legitimately end early:
 
 ---
 
----
-
 ## 5. Picking a waiting run up again
 
 A run that stopped is detached, in the sense a terminal multiplexer means: it
@@ -144,6 +144,8 @@ prints the question and exits 3; with a value it answers and carries on.
 That is also why `llm.invoke` deferring is not a limitation to be fixed later.
 The thing outside that answers a model call can be whatever is driving `sic`,
 and it finds its work with `sic runs --waiting`.
+
+---
 
 ## 6. Not here
 

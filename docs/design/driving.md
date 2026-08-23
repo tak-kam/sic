@@ -79,18 +79,18 @@ true, which is worse than the run not happening.
 
 For each call the driver
 
-1. starts a detached tmux session running the agent,
+1. opens a detached window running the agent, in the run's session (§9),
 2. pastes the prompt and presses Enter,
 3. polls the pane until the answer is complete,
-4. kills the session.
+4. kills the window.
 
 A person can watch it happen (`tmux -L sic attach -t <session>`), which is the
-seed of the run-level session in §8 rather than a feature of this part.
+seed of the run-level session in §9 rather than a feature of this part.
 
 The pane is closed when the call returns, and the reason is what the journal
 holds: for a call with no memory the prompt and the answer are the whole story,
 so the pane keeps nothing the record does not. A pane worth keeping alive is one
-carrying accumulated context, and that is `memory: task` - §8.
+carrying accumulated context, and that is `memory: task` - §9.
 
 ### The tmux server is sic's, not the person's
 
@@ -111,7 +111,7 @@ carrying accumulated context, and that is `memory: task` - §8.
 ### What the agent inherits
 
 The environment is cleared down to a named list: `HOME`, `PATH`, `TERM`,
-`LANG`, `LC_ALL`, `USER`, `SHELL`, `TMPDIR`.
+`LANG`, `LC_ALL`, `LC_CTYPE`, `USER`, `SHELL`, `TMPDIR`.
 
 The pane starts in the directory `sic` was started in. A coding agent reads the
 directory it is in, so that is what decides what it can see, and leaving it to
@@ -165,7 +165,8 @@ contain the marker it describes, because that property is the whole protocol.
 
 The answer is the text between the last begin marker and the first end marker
 after it. Each line then loses trailing spaces (`capture-pane` pads to the pane
-width) and any leading run of the characters a TUI draws with - `⏺ ⎿ │ ╭ ╰ ─ ▌`.
+width) and any leading run of the characters a TUI draws with -
+`⏺ ⎿ │ ╭ ╰ ╮ ╯ ─ ▌ · •`.
 Lines that are nothing but those characters are dropped: they are the input box,
 not the answer.
 
@@ -286,8 +287,8 @@ happen. So it says what it does not know:
 ```text
 Capabilities:
   llm.invoke      [invoke]  "claude"  (not pinned)
-    warning: this grant says what the program may ask for, not what the
-             agent may do while answering
+    warning: this grant says what the program may ask for, not
+             what the agent may do while answering
 ```
 
 This is not a placeholder for work that finishes the sentence; it is the true
@@ -339,7 +340,7 @@ The last row is why the choice belongs in the declaration, where whoever reads
 the program will see it, and why `sic plan` prints it:
 
 ```text
-1. INVOKE   llm.invoke   "claude"  in one conversation per task  at most 4 in a run
+1. INVOKE   llm.invoke      "claude"  in one conversation per task  at most 4 in a run
 ```
 
 Two calls that continue one conversation are not two independent calls, and a

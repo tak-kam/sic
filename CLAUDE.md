@@ -81,7 +81,7 @@ The journal records digests, never values. A checkpoint and a recorded run's
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC]
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic plan <FILE.sic|FILE.sicb>     what a program may do, running nothing
-sic runs [--waiting] | attach <ID> [--value V] [--because WHY]
+sic runs [--waiting] | attach <ID> [--value V] [--because WHY] [--llm SPEC]
 sic explain <ID> | inspect-run <ID> | replay <ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
 sic upgrade [--check] | --to FILE --sha256 HEX

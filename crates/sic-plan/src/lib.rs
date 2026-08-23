@@ -375,7 +375,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
         // answering a question does not edit files while they think, and an
         // agent does - so a plan that printed one confident line here would be
         // the manifest lying about the most important thing in it. See
-        // `docs/design/driving.md` §7.
+        // `docs/design/driving.md` §8.
         if grant.name == "llm.invoke" {
             out.push_str(
                 "    warning: this grant says what the program may ask for, not\n\

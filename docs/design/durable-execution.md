@@ -9,7 +9,8 @@ stack.
 $ sic run examples/approval.sic --checkpoint deploy.sicc --journal deploy.jsonl
 run 79368b6cc64da8ca800777c749450807 -> deploy.jsonl
 waiting: [deploy to production] deploy build 42?
-saved 274 bytes to deploy.sicc
+saved 378 bytes to deploy.sicc
+resume with: sic resume deploy.sicc <FILE.sic> --value <VALUE>
 $ echo $?
 3
 

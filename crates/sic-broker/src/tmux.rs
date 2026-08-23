@@ -1,8 +1,8 @@
 //! Driving an agent CLI in a tmux pane.
 //!
-//! One call, one pane: a detached session is started, the prompt is pasted in,
-//! the pane is read until the answer is complete, and the session is killed.
-//! See `docs/design/driving.md` §3.
+//! One call, one pane: a window is opened in the run's session, the prompt is
+//! pasted in, the pane is read until the answer is complete, and the window is
+//! killed. See `docs/design/driving.md` §3.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
