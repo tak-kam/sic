@@ -129,11 +129,14 @@ succeeding surprisingly.
 - **No fetching.** Nothing in `sic` opens a socket, and this does not either.
 - **No automatic check.** Nothing runs on a timer, and nothing reports a version
   anywhere. `sic update --check` runs when a person runs it.
-- **No signature.** A digest says the file is the file the release published. A
-  signature would say who published it, and that needs a signing key, somewhere
-  to publish the public half, and a decision about rotation - a design of its
-  own, and the bytecode format already has an empty signature section waiting
-  for the same one.
+- **No signature on the artifacts.** Commits and tags are signed, so a release
+  says who cut it. That is not the same as saying who built what is attached to
+  it: those bytes come from GitHub's runners, and nothing here rebuilds them to
+  check. Within the release, a digest says the file is the file that was
+  published, which is what `--sha256` verifies. Signing the artifact itself
+  would need a key the build can reach, somewhere to publish the public half,
+  and a decision about rotation - a design of its own, and the bytecode format
+  already has an empty signature section waiting for the same one.
 - **No reading `SHA256SUMS`** (§1).
 - **No rollback.** The previous binary is not kept on Unix, because a copy of a
   release is a thing the release already provides. On Windows the moved-aside

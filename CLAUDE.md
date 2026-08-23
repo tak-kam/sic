@@ -105,6 +105,11 @@ that `Cargo.lock` agrees with the manifests. `main` refuses force pushes and
 deletion, so a mistake in a commit message is fixed by another commit rather
 than by rewriting history.
 
+Commits and tags are signed with an SSH key (`gpg.format ssh`), so who made a
+commit is a checkable fact rather than a name typed into a field. A release tag
+is a signed object; the binaries attached to it are pinned by digest instead,
+and `docs/design/update.md` says why those are two different claims.
+
 ## Building
 
 `cargo test` needs a C linker (`cc`). On a machine without one, link with the
