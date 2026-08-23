@@ -30,6 +30,7 @@ v0.1 ships three, chosen because they need no credentials and no network:
 | `process.exec` | `(path: String, args: List<String>) -> Int` | exec |
 | `process.capture` | `(path: String, args: List<String>) -> Observed<String>` | exec |
 | `human.approve` | `(question: String) -> Bool` | invoke |
+| `human.choose` | `(question: String, options: List<String>) -> Int` | invoke |
 
 `process.exec` and `process.capture` are the ones whose last parameter may be
 left off:

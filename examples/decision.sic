@@ -1,0 +1,25 @@
+// A decision, recorded.
+//
+// `approve` asks yes or no about a value that exists. `choose` asks which of
+// these, about alternatives that do not exist yet - and the run stops until
+// somebody says. The alternatives are numbered from zero because the number
+// you read is the number you answer with.
+//
+//     sic plan examples/decision.sic
+//     sic run examples/decision.sic --checkpoint d.sicc
+//     sic resume d.sicc examples/decision.sic --value 2
+//
+// The capability answers with an index, so the value handed back is read out
+// of the list this program itself wrote. Nobody answering can hand back a
+// string that is not on it: see docs/design/decisions.md.
+allow {
+    human.choose "the design decision";
+}
+
+fn main() -> HumanChosen<String> {
+    return choose("how should imports handle capabilities?", [
+        "the importing program grants everything",
+        "grants are unioned",
+        "a library declares, the importer approves",
+    ]);
+}

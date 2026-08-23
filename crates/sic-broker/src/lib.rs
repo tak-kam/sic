@@ -62,6 +62,7 @@ impl Broker {
             "process.exec" => process_exec(&grant, request),
             "human.approve" => human_approve(&grant, request),
             "process.capture" => process_capture(&grant, request),
+            "human.choose" => human_choose(&grant, request),
             "llm.invoke" => llm_invoke(&grant, request),
             other => Err(CapError::new(format!(
                 "`{other}` is in the manifest but this broker cannot perform it"
@@ -270,6 +271,37 @@ fn human_approve(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, C
     Ok(CapOutcome::Deferred {
         question: format!("[{}] {question}", grant.constraint),
     })
+}
+
+/// Asking a person which one.
+///
+/// Like `human.approve`, this never answers within the call. The alternatives
+/// travel with the question, numbered, because whoever answers has to be able
+/// to read them without the source in front of them - and the answer is which
+/// one, so the number is the answer.
+fn human_choose(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
+    let question = string_arg(request, 0, 2)?;
+    let options = request.args[1].as_list().ok_or_else(|| {
+        CapError::new(format!(
+            "argument 1 of `{}` must be a List<String>, got {}",
+            request.name,
+            request.args[1].type_name()
+        ))
+    })?;
+    if options.is_empty() {
+        return Err(CapError::new(
+            "a decision with no alternatives is not one".to_string(),
+        ));
+    }
+    // Numbered from zero, because the number a person reads is the number they
+    // answer with, and the answer is an index. Counting from one would put an
+    // off-by-one in a translation layer forever.
+    let mut text = format!("[{}] {question}", grant.constraint);
+    for (i, option) in options.iter().enumerate() {
+        text.push_str(&format!("\n  {i}. {option}"));
+    }
+    Ok(CapOutcome::Deferred { question: text })
 }
 
 /// Runs a child and kills it if it outlives its deadline.

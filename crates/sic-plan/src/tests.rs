@@ -65,6 +65,7 @@ fn a_capability_call_is_listed_with_what_bounds_it() {
             budget: None,
             attempts: 1,
             timeout_ms: 0,
+            alternatives: None,
         }
     );
     // The debug section puts it back on a line of source.

@@ -43,6 +43,10 @@ It also settles what would otherwise be a real question - what happens when
 somebody answers with something that is not on the list. Nothing happens,
 because there is no way to say it.
 
+The alternatives are shown to whoever answers **numbered from zero**, because
+the number they read is the number they type and the answer is an index.
+Counting from one would put an off-by-one in a translation layer forever.
+
 ---
 
 ## 2. `choose` is a builtin, like `approve`

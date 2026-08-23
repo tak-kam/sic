@@ -126,6 +126,7 @@ reason.
 | E0370 | `approve` without the `human.approve` grant |
 | E0371 | using a value where its provenance makes it unusable |
 | E0372 | a model's answer reaching a capability that changes something |
+| E0373 | `choose` without the `human.choose` grant |
 
 ## E04xx — modules
 

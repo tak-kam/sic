@@ -32,6 +32,8 @@ pub enum Builtin {
     /// `approve(question, value)`, which asks a person and fails if the answer
     /// is no.
     Approve,
+    /// `choose(question, options)`, which asks a person which one.
+    Choose,
     /// `from_json(text)`, whose result type comes from the annotation on the
     /// binding it initializes.
     FromJson,
@@ -1070,6 +1072,10 @@ impl Checker {
                 self.res.insert(callee.id, Res::Builtin(Builtin::Approve));
                 return self.check_approve(args, span);
             }
+            if name.name == "choose" {
+                self.res.insert(callee.id, Res::Builtin(Builtin::Choose));
+                return self.check_choose(args, span);
+            }
             if name.name == "from_json" {
                 self.res.insert(callee.id, Res::Builtin(Builtin::FromJson));
                 return self.check_from_json(args, span);
@@ -1416,6 +1422,48 @@ impl Checker {
             return Types::ERROR;
         }
         self.types.trust(TrustKind::HumanApproved, value)
+    }
+
+    /// `choose(question, options)`: ask a person which one, and hand back the
+    /// option they picked.
+    ///
+    /// The alternatives are strings because a person reads them. What comes
+    /// back is one of them - the capability answers with an index, and the VM
+    /// reads the value out of the list this call already built.
+    fn check_choose(&mut self, args: &[Expr], span: Span) -> TypeId {
+        if args.len() != 2 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!("`choose` takes 2 arguments but {} were given", args.len()),
+                span,
+                "write `choose(question, options)`",
+            );
+            return Types::ERROR;
+        }
+        let question = self.check_expr(&args[0]);
+        self.expect_type(Types::STR, question, args[0].span, "this question");
+        let options = self.check_expr(&args[1]);
+        self.expect_type(Types::LIST_STR, options, args[1].span, "these options");
+
+        // Asking a person is an effect like any other.
+        self.cap_used.insert("human.choose".to_string());
+        if !self.cap_ids.contains_key("human.choose") {
+            self.error(
+                "E0373",
+                "`choose` needs `human.choose`",
+                span,
+                "no grant covers asking a person to decide",
+            );
+            self.note("declare it: allow { human.choose \"what this covers\"; }");
+            return Types::ERROR;
+        }
+        if self.types.is_error(options) {
+            return Types::ERROR;
+        }
+        self.types.trust(TrustKind::HumanChosen, Types::STR)
     }
 
     /// `from_json(text)`, whose result type is the annotation on the binding.

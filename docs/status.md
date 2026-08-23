@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 408 tests.
+Last updated at 414 tests.
 
 ---
 
@@ -45,8 +45,8 @@ memory and execution history are not there: an agent that can call tools is an
 agent that can loop, and a loop whose stopping condition is a model's output
 needs a budget that counts more than calls.
 
-**§19, trust.** `LLM<T>`, `HumanApproved<T>` and `Observed<T>` exist and are
-enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because
+**§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
+`HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because
 nothing produces one yet - see `docs/design/trust.md`.
 
 **§22, OpenTelemetry.** The journal converts to OTLP documents. Nothing sends

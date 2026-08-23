@@ -280,6 +280,9 @@ impl<'a> FnLower<'a> {
                     Some(Res::Builtin(sic_types::Builtin::Approve)) => {
                         self.approve(dst, args[0], args[1], e.span)
                     }
+                    Some(Res::Builtin(sic_types::Builtin::Choose)) => {
+                        self.choose(dst, args[0], args[1], e.span)
+                    }
                     // An agent is a model call and a validation. Nothing below
                     // this point knows what an agent is.
                     Some(Res::Agent(agent)) => {
@@ -446,6 +449,41 @@ impl<'a> FnLower<'a> {
                 unreachable!("rejected by the type checker")
             }
         }
+    }
+
+    /// `choose(question, options)`: ask a person which one, and read that one
+    /// out of the list.
+    ///
+    /// The capability answers with an index, so the value handed back comes
+    /// from the list this call already built. `GET_INDEX` refuses an index
+    /// outside it, which is the whole of what an answer can get wrong.
+    fn choose(&mut self, dst: LocalId, question: LocalId, options: LocalId, span: Span) {
+        let Some(cap) = self
+            .typed
+            .caps
+            .iter()
+            .position(|c| c.name == "human.choose")
+        else {
+            unreachable!("the checker required the grant");
+        };
+        let picked = self.temp(sic_types::Types::INT);
+        self.emit(
+            InstKind::CallCap {
+                dst: picked,
+                cap: sic_core::CapId(cap as u32),
+                args: vec![question, options],
+                policy: crate::hir::CallPolicy::default(),
+            },
+            span,
+        );
+        self.emit(
+            InstKind::GetIndex {
+                dst,
+                base: options,
+                index: picked,
+            },
+            span,
+        );
     }
 
     /// `approve(question, value)`: ask a person, and fail the run if the answer

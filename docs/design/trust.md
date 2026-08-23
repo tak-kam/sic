@@ -117,6 +117,12 @@ one trust type that cannot be erased - a runtime check is the point of it.
 The same goes for `Verified<T>` and `UserProvided<T>`: each needs something
 that produces it before the type is worth anything.
 
+`HumanChosen<T>` arrived the same way `Observed<T>` did - with something that
+produces it. `choose` asks a person which of the program's own alternatives, so
+it carries no restriction: unlike a model's answer or a program's output, its
+text was written by whoever wrote the program. See `docs/design/decisions.md`
+§4.
+
 `Observed<T>` is no longer one of them. `process.capture` produces it - what a
 program printed was not verified, not approved, and not written by whoever wrote
 the program that read it - and it carries `LLM<T>`'s rule, because the sentence

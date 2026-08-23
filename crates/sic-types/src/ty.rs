@@ -76,6 +76,8 @@ pub enum TrustKind {
     /// A program printed it. Not verified, not approved, and not written by
     /// whoever wrote the program that read it.
     Observed,
+    /// A person picked it out of a list the program itself wrote.
+    HumanChosen,
 }
 
 impl TrustKind {
@@ -84,6 +86,7 @@ impl TrustKind {
             TrustKind::Llm => "LLM",
             TrustKind::HumanApproved => "HumanApproved",
             TrustKind::Observed => "Observed",
+            TrustKind::HumanChosen => "HumanChosen",
         }
     }
 
@@ -92,6 +95,7 @@ impl TrustKind {
             "LLM" => Some(TrustKind::Llm),
             "HumanApproved" => Some(TrustKind::HumanApproved),
             "Observed" => Some(TrustKind::Observed),
+            "HumanChosen" => Some(TrustKind::HumanChosen),
             _ => None,
         }
     }

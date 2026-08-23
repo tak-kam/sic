@@ -75,6 +75,11 @@ pub enum Action {
         /// How many times one visit to this site may call out, from `retry`.
         attempts: u32,
         timeout_ms: u32,
+        /// How many alternatives a decision offers, for `human.choose`. Read
+        /// from the `MAKE_LIST` that built the argument, because how many
+        /// choices somebody will be asked to make between is the thing a plan
+        /// is being read for.
+        alternatives: Option<u32>,
     },
     /// A document checked against a type.
     Verify {
@@ -94,6 +99,10 @@ impl Action {
             // plan is read by a person deciding whether to run this - and
             // "reads what it says" is the part they need to see.
             Action::Capability { name, .. } if name == "process.capture" => "CAPTURE",
+            // Asking a person is not the same act as asking a model, and a
+            // plan is read by the person who will be asked.
+            Action::Capability { name, .. } if name == "human.choose" => "CHOOSE",
+            Action::Capability { name, .. } if name == "human.approve" => "APPROVE",
             Action::Capability { kind, .. } => match kind {
                 CapKind::Read => "READ",
                 CapKind::Write => "WRITE",
@@ -124,6 +133,40 @@ pub struct Grant {
 }
 
 /// Reads a program and works out what it may do.
+/// How many elements the list in `reg` was built from, if a `MAKE_LIST` in this
+/// function built it.
+///
+/// A plan reads bytecode, so this is the only way to know how many alternatives
+/// a decision offers: the options are a list the program builds just before it
+/// asks. Anything else - a list passed in, or built in another function -
+/// answers `None`, because a plan does not guess.
+fn options_at(
+    program: &Program,
+    func: &sic_bytecode::FuncDef,
+    call_pc: u32,
+    reg: u8,
+) -> Option<u32> {
+    // Arguments are moved into a contiguous window before a call, so the list
+    // was built somewhere else and copied here. Following the moves back to
+    // whatever wrote it is the whole of the search.
+    let mut reg = reg;
+    let mut pc = call_pc;
+    while pc > func.code_off {
+        pc -= 1;
+        let inst = program.code.get(pc as usize)?;
+        if inst.a() != reg {
+            continue;
+        }
+        match inst.op() {
+            Some(Op::MakeList) => return Some(u32::from(inst.c())),
+            Some(Op::Move) => reg = inst.b(),
+            // Anything else built it, and a plan does not guess.
+            _ => return None,
+        }
+    }
+    None
+}
+
 pub fn plan(program: &Program, digest: Digest) -> Plan {
     let mut functions = Vec::new();
     let mut bounded_calls: u64 = 0;
@@ -169,10 +212,16 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         Some(budget) => bounded_calls += budget as u64,
                         None => unbounded_sites += 1,
                     }
+                    let alternatives = if cap.name == "human.choose" {
+                        options_at(program, func, pc, inst.c().saturating_add(1))
+                    } else {
+                        None
+                    };
                     Action::Capability {
                         name: cap.name.clone(),
                         kind: cap.kind,
                         constraint: cap.constraints.clone(),
+                        alternatives,
                         budget,
                         attempts,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
@@ -257,9 +306,13 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     budget,
                     attempts,
                     timeout_ms,
+                    alternatives,
                     ..
                 } => {
                     out.push_str(&format!("{name:<16}{constraint:?}"));
+                    if let Some(n) = alternatives {
+                        out.push_str(&format!("  {n} options"));
+                    }
                     if let Some(budget) = budget {
                         out.push_str(&format!("  at most {budget} in a run"));
                     }

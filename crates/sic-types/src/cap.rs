@@ -80,6 +80,19 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         optional_tail: false,
     },
     CapSig {
+        name: "human.choose",
+        kind: CapKind::Invoke,
+        // The question, then the alternatives. What comes back is which one,
+        // never what: see `docs/design/decisions.md`.
+        params: &[Types::STR, Types::LIST_STR],
+        ret: Types::INT,
+        // An unconstrained decision would be a decision about anything, so a
+        // grant has to say what it covers.
+        requires_constraint: true,
+        accepts_pin: false,
+        optional_tail: false,
+    },
+    CapSig {
         name: "process.capture",
         // Running it is what it does; reading the answer is why. The kind is
         // what the trust rule looks at, and this one runs a program.

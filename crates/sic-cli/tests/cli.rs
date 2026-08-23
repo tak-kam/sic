@@ -2179,3 +2179,106 @@ fn a_grant_to_run_is_not_a_grant_to_read() {
     assert_eq!(code, 1);
     assert!(stderr.contains("E0320"), "{stderr}");
 }
+
+// ---- decisions ----
+
+#[test]
+fn a_decision_stops_the_run_and_lists_the_alternatives() {
+    let src = example("decision.sic");
+    let checkpoint = write_temp("decision.sicc", "");
+    let (_, stderr, code) = sic(&["run", &src, "--checkpoint", checkpoint.to_str().unwrap()]);
+    assert_eq!(code, 3, "stderr: {stderr}");
+    // Numbered from zero: the number a person reads is the one they answer
+    // with.
+    assert!(stderr.contains("0. the importing program"), "{stderr}");
+    assert!(stderr.contains("2. a library declares"), "{stderr}");
+
+    let (stdout, stderr, code) =
+        sic(&["resume", checkpoint.to_str().unwrap(), &src, "--value", "2"]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("a library declares"), "{stdout}");
+    std::fs::remove_file(checkpoint).ok();
+}
+
+/// The answer is an index into the program's own list, so nobody answering can
+/// hand back a value that was never offered. The worst an answer can do is
+/// fail the run.
+#[test]
+fn an_answer_outside_the_alternatives_fails_the_run() {
+    let src = example("decision.sic");
+    let checkpoint = write_temp("decision-bad.sicc", "");
+    let (_, _, code) = sic(&["run", &src, "--checkpoint", checkpoint.to_str().unwrap()]);
+    assert_eq!(code, 3);
+
+    let (_, stderr, code) = sic(&["resume", checkpoint.to_str().unwrap(), &src, "--value", "9"]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("outside the list"), "{stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}
+
+/// How many decisions a run will ask of you is the thing a plan is read for.
+#[test]
+fn a_plan_says_how_many_alternatives_a_decision_offers() {
+    let (stdout, stderr, code) = sic(&["plan", &example("decision.sic")]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("CHOOSE"), "{stdout}");
+    assert!(stdout.contains("3 options"), "{stdout}");
+}
+
+#[test]
+fn choosing_needs_its_own_grant() {
+    let entry = write_temp_program(
+        "choose-ungranted",
+        &[(
+            "main.sic",
+            "allow {\n    human.approve \"deploying\";\n}\n\
+             fn main() -> HumanChosen<String> {\n    return choose(\"which?\", [\"a\", \"b\"]);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0373"), "{stderr}");
+}
+
+/// A chosen value may reach a capability that runs something: its text was
+/// written by whoever wrote the program, and a person picked it.
+#[test]
+fn a_chosen_value_may_decide_what_runs() {
+    let entry = write_temp_program(
+        "choose-then-exec",
+        &[(
+            "main.sic",
+            "allow {\n    human.choose \"which binary\";\n    process.exec \"/bin/echo\" args [\"a\"];\n}\n\
+             fn main() -> Int {\n    let which = choose(\"which?\", [\"a\", \"b\"]);\n\
+             \x20   return process.exec(\"/bin/echo\", [which]);\n}\n",
+        )],
+    );
+    let checkpoint = entry.with_extension("sicc");
+    let (_, stderr, code) = sic(&[
+        "run",
+        entry.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    // It compiles - the point of the test - and stops to ask.
+    assert_eq!(code, 3, "stderr: {stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn a_decision_with_no_alternatives_is_not_one() {
+    let entry = write_temp_program(
+        "choose-empty",
+        &[(
+            "main.sic",
+            // An empty literal needs an annotation, so the list is built as
+            // one - which is also the only way this reaches the broker at all.
+            "allow {\n    human.choose \"nothing\";\n}\n\
+             fn main() -> HumanChosen<String> {\n\
+             \x20   let none: List<String> = [];\n    return choose(\"which?\", none);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("no alternatives"), "{stderr}");
+}

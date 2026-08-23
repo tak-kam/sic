@@ -234,6 +234,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [plan.md](docs/design/plan.md) | `sic plan` |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
+| [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
 
