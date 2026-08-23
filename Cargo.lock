@@ -27,6 +27,7 @@ dependencies = [
  "sic-ir",
  "sic-journal",
  "sic-otel",
+ "sic-plan",
  "sic-syntax",
  "sic-types",
  "sic-verify",
@@ -74,6 +75,14 @@ version = "0.1.0"
 dependencies = [
  "sic-core",
  "sic-journal",
+]
+
+[[package]]
+name = "sic-plan"
+version = "0.1.0"
+dependencies = [
+ "sic-bytecode",
+ "sic-core",
 ]
 
 [[package]]

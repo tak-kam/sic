@@ -44,6 +44,34 @@ $ sic disasm factorial.sicb
   0002  JUMP_IF_NOT r2, +2  ; -> 0005  ; 5:8
 ```
 
+### What a program may do, before it does any of it
+
+```console
+$ sic plan examples/agent.sic
+Execution plan for examples/agent.sic
+bytecode sha256:5da4f16d8b7cbfc800e8fcebd029dc59888cfb76968ea65c0348eebac2ac6325
+
+  main
+    1. INVOKE llm.invoke    "claude-opus-4"  at most 2 in a run   ; 31:13
+    2. VERIFY Diagnosis   ; 31:13
+
+Capabilities:
+  llm.invoke    [invoke]  "claude-opus-4"
+
+At most 2 capability call(s).
+```
+
+`sic plan` reads bytecode and runs nothing - no socket, no process, no VM -
+which is what makes it worth having on a program nobody has decided to trust
+yet. Everything it needs is already in the file, because each phase put it there
+for this.
+
+It says what a program **may** do, not what it will, and it is careful about the
+difference. Only a `budget` bounds a call site over a whole run; `retry` bounds
+one visit, and how many visits there are depends on the path taken. So sites
+without a budget are counted and named rather than folded into a number that
+would be a guess dressed as a fact. See [docs/design/plan.md](docs/design/plan.md).
+
 ### Effects are capabilities
 
 Reaching outside the program takes a grant, and the grant is part of the
@@ -282,6 +310,7 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 | `sic-vm` | the register VM |
 | `sic-journal` | the execution journal: events, digests, JSONL |
 | `sic-json` | a JSON parser, for what a model answers with |
+| `sic-plan` | what a program may do, read from its bytecode |
 | `sic-otel` | turns a journal into OTLP traces and metrics |
 | `sic-broker` | performs capability calls; the only crate with external effects |
 | `sic-cli` | the `sic` command |

@@ -7,6 +7,7 @@ members = [
     "crates/sic-ir",
     "crates/sic-bytecode",
     "crates/sic-compile",
+    "crates/sic-plan",
     "crates/sic-verify",
     "crates/sic-vm",
     "crates/sic-journal",

@@ -1098,6 +1098,73 @@ fn a_resumed_run_exports_as_one_trace() {
     }
 }
 
+// ---- planning ----
+
+#[test]
+fn a_plan_lists_effects_without_causing_any() {
+    // The file the program would write must not exist afterwards: a plan on a
+    // program nobody trusts yet is the only time a plan is worth having.
+    let target = write_temp("plan-target.txt", "");
+    std::fs::remove_file(&target).ok();
+    let target = target.to_str().unwrap().to_string();
+
+    let src = write_temp(
+        "plan.sic",
+        &format!(
+            "allow {{ fs.write {target:?}; }}\n\
+             fn main() {{ fs.write({target:?}, \"data\"); }}\n"
+        ),
+    );
+
+    let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("WRITE"), "{stdout}");
+    assert!(stdout.contains("fs.write"), "{stdout}");
+    assert!(stdout.contains("bytecode sha256:"), "{stdout}");
+    assert!(
+        !std::path::Path::new(&target).exists(),
+        "the plan wrote the file"
+    );
+
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn a_plan_can_be_made_from_bytecode_alone() {
+    // The thing you plan should be the thing you run, and bytecode from
+    // somewhere else has no source to consult.
+    let out = write_temp("plan.sicb", "");
+    let out_str = out.to_str().unwrap().to_string();
+    let (_, stderr, code) = sic(&["compile", &example("agent.sic"), "-o", &out_str]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+
+    let (stdout, _, code) = sic(&["plan", &out_str]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("INVOKE"), "{stdout}");
+    assert!(stdout.contains("VERIFY Diagnosis"), "{stdout}");
+    assert!(stdout.contains("at most 2 in a run"), "{stdout}");
+
+    std::fs::remove_file(out).ok();
+}
+
+#[test]
+fn a_plan_says_when_a_bound_is_not_one() {
+    // `retry` bounds one visit, not a run, and saying otherwise would be a
+    // guess dressed as a fact.
+    let (stdout, _, code) = sic(&["plan", &example("tasks.sic")]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("none with a budget"), "{stdout}");
+    assert!(stdout.contains("SPAWN"), "{stdout}");
+}
+
+#[test]
+fn a_program_with_no_effects_plans_to_nothing() {
+    let (stdout, _, code) = sic(&["plan", &example("milestone.sic")]);
+    assert_eq!(code, 0);
+    assert!(stdout.contains("(no external effects)"), "{stdout}");
+    assert!(stdout.contains("No capability calls."), "{stdout}");
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

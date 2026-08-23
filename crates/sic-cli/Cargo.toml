@@ -15,6 +15,7 @@ sic-types = { path = "../sic-types" }
 sic-ir = { path = "../sic-ir" }
 sic-bytecode = { path = "../sic-bytecode" }
 sic-compile = { path = "../sic-compile" }
+sic-plan = { path = "../sic-plan" }
 sic-verify = { path = "../sic-verify" }
 sic-vm = { path = "../sic-vm" }
 sic-journal = { path = "../sic-journal" }

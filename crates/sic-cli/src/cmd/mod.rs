@@ -5,6 +5,7 @@ pub mod export;
 pub mod hir;
 pub mod journal;
 pub mod parse;
+pub mod plan;
 pub mod resume;
 pub mod run;
 pub mod verify;

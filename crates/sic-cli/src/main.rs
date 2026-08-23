@@ -23,6 +23,7 @@ Usage:
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic export <JOURNAL> [--traces PATH] [--metrics PATH]
                                   convert an execution journal to OpenTelemetry
+  sic plan <FILE.sic|FILE.sicb>   show what a program may do, without running it
   sic verify <FILE.sicb>          check that bytecode is safe to run
   sic disasm <FILE.sicb>          print bytecode as instructions
   sic parse <FILE.sic>            print the AST
@@ -80,6 +81,7 @@ fn main() -> ExitCode {
             ),
             Err(msg) => usage_error(msg),
         },
+        "plan" => with_one_file(rest, "plan", cmd::plan::run),
         "verify" => with_one_file(rest, "verify", cmd::verify::run),
         "disasm" => with_one_file(rest, "disasm", cmd::disasm::run),
         "compile" => match parse_compile_args(rest) {
