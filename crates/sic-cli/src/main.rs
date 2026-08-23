@@ -35,10 +35,13 @@ Usage:
   sic disasm <FILE.sicb>          print bytecode as instructions
   sic parse <FILE.sic>            print the AST
   sic hir <FILE.sic>              print the high-level IR
-  sic update [--to FILE --sha256 HEX] [--check]
-                                  replace this binary with one already on disk,
-                                  after checking it against a digest; --check
-                                  says what would happen and changes nothing
+  sic upgrade [--check]           fetch the latest release, check it against the
+                                  digests that release publishes, and replace
+                                  this binary with it
+  sic upgrade --to FILE --sha256 HEX [--check]
+                                  the same from a file already on disk, checked
+                                  against a digest you bring; --check says what
+                                  would happen and changes nothing
   sic help                        show this help
   sic version                     show the version
 
@@ -108,8 +111,8 @@ fn main() -> ExitCode {
         "plan" => with_one_file(rest, "plan", cmd::plan::run),
         "verify" => with_one_file(rest, "verify", cmd::verify::run),
         "disasm" => with_one_file(rest, "disasm", cmd::disasm::run),
-        "update" => match parse_update(rest) {
-            Ok((to, sha256, check)) => cmd::update::run(cmd::update::UpdateOptions {
+        "upgrade" => match parse_upgrade(rest) {
+            Ok((to, sha256, check)) => cmd::upgrade::run(cmd::upgrade::UpgradeOptions {
                 to: to.as_deref(),
                 sha256: sha256.as_deref(),
                 check,
@@ -161,10 +164,10 @@ fn parse_run(args: &[String]) -> Result<(String, Option<String>, Option<String>,
     Ok((files[0].clone(), flags[0].clone(), flags[1].clone(), record))
 }
 
-/// `update [--to PATH] [--sha256 HEX] [--check]`.
+/// `upgrade [--to PATH] [--sha256 HEX] [--check]`.
 ///
 /// `--check` takes no value, so it cannot go through `parse_flags` either.
-fn parse_update(args: &[String]) -> Result<(Option<String>, Option<String>, bool), String> {
+fn parse_upgrade(args: &[String]) -> Result<(Option<String>, Option<String>, bool), String> {
     let mut check = false;
     let rest: Vec<String> = args
         .iter()

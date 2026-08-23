@@ -88,24 +88,27 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
     cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-### Updating
-
-`sic` fetches nothing - reaching the network to replace itself is the one thing
-the rest of this design exists to prevent. Downloading is `curl`'s job; `sic`
-checks what was downloaded against the digest the release published, and swaps
-it in:
+### Upgrading
 
 ```console
-$ tar xzf sic-v0.1.1-x86_64-unknown-linux-musl.tar.gz
-$ sic update --to sic-v0.1.1-x86_64-unknown-linux-musl/sic --sha256 88eb87ac...
-  installed  0.1.0  sha256:04c4682a...  /home/me/.local/bin/sic
-  candidate  0.1.1  sha256:88eb87ac...  sic-v0.1.1-x86_64-unknown-linux-musl/sic
-replaced /home/me/.local/bin/sic  0.1.0 -> 0.1.1
+$ sic upgrade
+  installed  0.1.1  sha256:975d6bcb...  /home/me/.local/bin/sic
+fetching v0.1.2 for x86_64-unknown-linux-musl
+  candidate  0.1.2  sha256:88eb87ac...  sic-v0.1.2-x86_64-unknown-linux-musl/sic
+replaced /home/me/.local/bin/sic  0.1.1 -> 0.1.2
 ```
 
-`--check` says what would happen and changes nothing. A binary that cargo or a
-package manager installed is left to the thing that installed it.
-→ [update.md](docs/design/update.md)
+`sic` does not speak HTTP: it runs `curl` at an absolute path, only when this
+command is the one that was typed. The runtime still has no network capability,
+nothing checks for updates on a timer, and a program you run reaches nothing.
+Every download is checked against the digests the release publishes, before the
+archive is unpacked and again before the binary is installed.
+
+`--check` says what would happen and changes nothing. `--to FILE --sha256 HEX`
+does the same from a file already on disk, touching no network at all. A binary
+that cargo or a package manager installed is left to the thing that installed
+it.
+→ [upgrade.md](docs/design/upgrade.md)
 
 ## A first program
 
@@ -198,7 +201,7 @@ sic attach <RUN-ID> [--value V]    see what a waiting run needs, or answer it
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
-sic update [--to FILE --sha256 HEX] [--check]
+sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir
 ```
 
@@ -218,7 +221,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
 | [plan.md](docs/design/plan.md) | `sic plan` |
-| [update.md](docs/design/update.md) | `sic update`, which verifies and swaps but never fetches |
+| [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
 
 Each design document records what was deliberately left out, and why. That is

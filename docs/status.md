@@ -32,7 +32,7 @@ Last updated at 377 tests.
 | 28 | A debug section maps a pc to a line | every runtime failure names one |
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `update`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan` | `docs/design/plan.md` |
-| - | `sic update`: verify a binary against a digest and swap it in, fetching nothing | `docs/design/update.md` |
+| - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 

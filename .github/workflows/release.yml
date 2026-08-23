@@ -5,7 +5,7 @@
 # that would have to be trusted.
 #
 # Every artifact is listed in SHA256SUMS. That is not decoration - `sic` pins
-# executables by digest, and `sic update` checks one against SHA256SUMS, so a release
+# executables by digest, and `sic upgrade` checks one against SHA256SUMS, so a release
 # that does not publish its own digests would be asking for trust it has not
 # earned.
 name: Release
@@ -102,7 +102,7 @@ jobs:
           mkdir -p dist && cd dist
           gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}"
 
-          # The archives, and the binary inside each one. `sic update` checks a
+          # The archives, and the binary inside each one. `sic upgrade` checks a
           # binary against a digest, so publishing only the archives' digests
           # would leave that check with nothing to compare against. The names
           # are the paths unpacking produces, so a line here is a line a person

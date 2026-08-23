@@ -10,7 +10,7 @@ pub mod resume;
 pub mod run;
 pub mod runs;
 pub mod store;
-pub mod update;
+pub mod upgrade;
 pub mod verify;
 
 use std::process::ExitCode;

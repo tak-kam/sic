@@ -1794,7 +1794,12 @@ fn a_failure_inside_an_imported_file_names_that_file() {
     assert!(stderr.contains("lib/math.sic:2"), "{stderr}");
 }
 
-// ---- update ----
+// ---- upgrade ----
+//
+// Every test here stays offline. `sic upgrade` with no `--to` fetches, and a
+// test that reaches GitHub would be testing GitHub. What the fetch computes -
+// which line of SHA256SUMS applies, which release a machine wants - is tested
+// as a unit in `cmd::upgrade`.
 
 /// Copies the built binary into a directory of its own, so that a test which
 /// replaces a running binary replaces that copy and not the one cargo built.
@@ -1812,7 +1817,7 @@ fn digest_of(path: &std::path::Path) -> String {
     sic_core::Digest::of(&std::fs::read(path).unwrap()).hex()
 }
 
-/// Runs a binary by its own path, which is what `sic update` needs: the file it
+/// Runs a binary by its own path, which is what `sic upgrade` needs: the file it
 /// replaces is the one it is running from.
 fn sic_at(binary: &std::path::Path, args: &[&str]) -> (String, String, i32) {
     let out = Command::new(binary)
@@ -1827,47 +1832,44 @@ fn sic_at(binary: &std::path::Path, args: &[&str]) -> (String, String, i32) {
 }
 
 #[test]
-fn update_check_says_what_is_installed() {
-    let (stdout, stderr, code) = sic(&["update", "--check"]);
-    assert_eq!(code, 0, "stderr: {stderr}");
-    assert!(
-        stdout.starts_with(concat!(
-            "  installed  ",
-            env!("CARGO_PKG_VERSION"),
-            "  sha256:"
-        )),
-        "{stdout}"
-    );
-    assert!(stdout.contains("sic"), "{stdout}");
-}
-
-#[test]
-fn an_update_without_a_digest_is_refused() {
-    let (_, stderr, code) = sic(&["update", "--to", env!("CARGO_BIN_EXE_sic")]);
+fn an_upgrade_without_a_digest_is_refused() {
+    let (_, stderr, code) = sic(&["upgrade", "--to", env!("CARGO_BIN_EXE_sic")]);
     assert_eq!(code, 2);
     assert!(stderr.contains("--sha256"), "{stderr}");
 }
 
+/// A digest with nothing to apply it to would be a promise about a file that
+/// has not been named.
 #[test]
-fn a_digest_that_does_not_match_refuses_the_update() {
+fn a_digest_without_a_file_is_refused() {
+    let (_, stderr, code) = sic(&["upgrade", "--sha256", &"0".repeat(64)]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("belongs with `--to`"), "{stderr}");
+}
+
+#[test]
+fn a_digest_that_does_not_match_refuses_the_upgrade() {
     let zeros = "0".repeat(64);
     let (_, stderr, code) = sic(&[
-        "update",
+        "upgrade",
         "--to",
         env!("CARGO_BIN_EXE_sic"),
         "--sha256",
         &zeros,
     ]);
     assert_eq!(code, 1);
-    assert!(stderr.contains("but --sha256 says"), "{stderr}");
+    assert!(
+        stderr.contains("but the digest it should have is"),
+        "{stderr}"
+    );
 }
 
 /// Linux only: the candidate is the binary with a byte appended, which an ELF
 /// loader ignores but a signed Mach-O does not.
 #[cfg(target_os = "linux")]
 #[test]
-fn an_update_replaces_the_running_binary() {
-    let installed = install_copy("update-swap", "sic");
+fn an_upgrade_replaces_the_running_binary() {
+    let installed = install_copy("upgrade-swap", "sic");
     let candidate = installed.with_file_name("candidate");
     let mut bytes = std::fs::read(&installed).unwrap();
     bytes.push(b'\n');
@@ -1877,7 +1879,7 @@ fn an_update_replaces_the_running_binary() {
     let (stdout, stderr, code) = sic_at(
         &installed,
         &[
-            "update",
+            "upgrade",
             "--to",
             candidate.to_str().unwrap(),
             "--sha256",
@@ -1893,7 +1895,7 @@ fn an_update_replaces_the_running_binary() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_check_replaces_nothing() {
-    let installed = install_copy("update-check", "sic");
+    let installed = install_copy("upgrade-check", "sic");
     let candidate = installed.with_file_name("candidate");
     let mut bytes = std::fs::read(&installed).unwrap();
     bytes.push(b'\n');
@@ -1904,7 +1906,7 @@ fn a_check_replaces_nothing() {
     let (stdout, stderr, code) = sic_at(
         &installed,
         &[
-            "update",
+            "upgrade",
             "--check",
             "--to",
             candidate.to_str().unwrap(),
@@ -1922,7 +1924,7 @@ fn a_check_replaces_nothing() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_candidate_that_is_not_sic_is_refused() {
-    let installed = install_copy("update-not-sic", "sic");
+    let installed = install_copy("upgrade-not-sic", "sic");
     let candidate = installed.with_file_name("impostor");
     std::fs::write(&candidate, "#!/bin/sh\necho not sic at all\n").unwrap();
     let digest = digest_of(&candidate);
@@ -1931,7 +1933,7 @@ fn a_candidate_that_is_not_sic_is_refused() {
     let (_, stderr, code) = sic_at(
         &installed,
         &[
-            "update",
+            "upgrade",
             "--to",
             candidate.to_str().unwrap(),
             "--sha256",
@@ -1950,7 +1952,7 @@ fn a_candidate_that_is_not_sic_is_refused() {
 #[cfg(target_os = "linux")]
 #[test]
 fn a_binary_a_package_manager_installed_is_left_alone() {
-    let installed = install_copy("update-cargo", ".cargo/bin/sic");
+    let installed = install_copy("upgrade-cargo", ".cargo/bin/sic");
     let candidate = installed.with_file_name("candidate");
     let mut bytes = std::fs::read(&installed).unwrap();
     bytes.push(b'\n');
@@ -1961,7 +1963,7 @@ fn a_binary_a_package_manager_installed_is_left_alone() {
     let (_, stderr, code) = sic_at(
         &installed,
         &[
-            "update",
+            "upgrade",
             "--to",
             candidate.to_str().unwrap(),
             "--sha256",

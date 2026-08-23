@@ -84,7 +84,7 @@ sic plan <FILE.sic|FILE.sicb>     what a program may do, running nothing
 sic runs [--waiting] | attach <ID> [--value V]
 sic explain <ID> | inspect-run <ID> | replay <ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
-sic update [--to FILE --sha256 HEX] [--check]
+sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir
 ```
 
@@ -108,7 +108,7 @@ than by rewriting history.
 Commits and tags are signed with an SSH key (`gpg.format ssh`), and `main`
 requires signatures, so who made a commit is a checkable fact rather than a name
 typed into a field. A release tag is a signed object; the binaries attached to it
-are pinned by digest instead, and `docs/design/update.md` says why those are two
+are pinned by digest instead, and `docs/design/upgrade.md` says why those are two
 different claims.
 
 That means a machine without the signing key cannot push to `main`. Set
