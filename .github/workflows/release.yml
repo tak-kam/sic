@@ -5,7 +5,7 @@
 # that would have to be trusted.
 #
 # Every artifact is listed in SHA256SUMS. That is not decoration - `sic` pins
-# executables by digest, and an update mechanism would check one, so a release
+# executables by digest, and `sic update` checks one against SHA256SUMS, so a release
 # that does not publish its own digests would be asking for trust it has not
 # earned.
 name: Release
@@ -64,13 +64,15 @@ jobs:
         shell: bash
         run: |
           name="sic-${{ github.ref_name }}-${{ matrix.target }}"
+          mkdir -p "$name"
+          cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
+          # One directory either way, so that unpacking a release puts the
+          # binary at a path SHA256SUMS can name.
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            7z a "$name.zip" "./target/${{ matrix.target }}/release/sic.exe" \
-              LICENSE-MIT LICENSE-APACHE README.md
+            cp "target/${{ matrix.target }}/release/sic.exe" "$name/"
+            7z a "$name.zip" "$name"
           else
-            mkdir -p "$name"
             cp "target/${{ matrix.target }}/release/sic" "$name/"
-            cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
             tar czf "$name.tar.gz" "$name"
           fi
 
@@ -92,12 +94,28 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Checksums
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          shopt -s nullglob
           mkdir -p dist && cd dist
           gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}"
-          sha256sum * > SHA256SUMS
+
+          # The archives, and the binary inside each one. `sic update` checks a
+          # binary against a digest, so publishing only the archives' digests
+          # would leave that check with nothing to compare against. The names
+          # are the paths unpacking produces, so a line here is a line a person
+          # can check locally with sha256sum -c.
+          for archive in *.tar.gz; do tar xzf "$archive"; done
+          for archive in *.zip; do unzip -q -o "$archive"; done
+
+          files=(*.tar.gz *.zip sic-*/sic sic-*/sic.exe)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "no release assets to hash"
+            exit 1
+          fi
+          sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
           gh release upload "${{ github.ref_name }}" SHA256SUMS --repo "${{ github.repository }}"
       - name: Publish

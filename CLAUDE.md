@@ -84,6 +84,7 @@ sic plan <FILE.sic|FILE.sicb>     what a program may do, running nothing
 sic runs [--waiting] | attach <ID> [--value V]
 sic explain <ID> | inspect-run <ID> | replay <ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
+sic update [--to FILE --sha256 HEX] [--check]
 sic compile | verify | disasm | parse | hir
 ```
 

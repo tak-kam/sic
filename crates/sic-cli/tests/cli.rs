@@ -1790,3 +1790,182 @@ fn a_failure_inside_an_imported_file_names_that_file() {
     assert_eq!(code, 1);
     assert!(stderr.contains("lib/math.sic:2"), "{stderr}");
 }
+
+// ---- update ----
+
+/// Copies the built binary into a directory of its own, so that a test which
+/// replaces a running binary replaces that copy and not the one cargo built.
+fn install_copy(name: &str, rel: &str) -> std::path::PathBuf {
+    let mut dir = std::env::temp_dir();
+    dir.push(format!("sic-test-{}-{name}", std::process::id()));
+    std::fs::remove_dir_all(&dir).ok();
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_sic"), &path).unwrap();
+    path
+}
+
+fn digest_of(path: &std::path::Path) -> String {
+    sic_core::Digest::of(&std::fs::read(path).unwrap()).hex()
+}
+
+/// Runs a binary by its own path, which is what `sic update` needs: the file it
+/// replaces is the one it is running from.
+fn sic_at(binary: &std::path::Path, args: &[&str]) -> (String, String, i32) {
+    let out = Command::new(binary)
+        .args(args)
+        .output()
+        .expect("failed to run sic");
+    (
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+        out.status.code().unwrap_or(-1),
+    )
+}
+
+#[test]
+fn update_check_says_what_is_installed() {
+    let (stdout, stderr, code) = sic(&["update", "--check"]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(
+        stdout.starts_with("  installed  0.1.0  sha256:"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("sic"), "{stdout}");
+}
+
+#[test]
+fn an_update_without_a_digest_is_refused() {
+    let (_, stderr, code) = sic(&["update", "--to", env!("CARGO_BIN_EXE_sic")]);
+    assert_eq!(code, 2);
+    assert!(stderr.contains("--sha256"), "{stderr}");
+}
+
+#[test]
+fn a_digest_that_does_not_match_refuses_the_update() {
+    let zeros = "0".repeat(64);
+    let (_, stderr, code) = sic(&[
+        "update",
+        "--to",
+        env!("CARGO_BIN_EXE_sic"),
+        "--sha256",
+        &zeros,
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("but --sha256 says"), "{stderr}");
+}
+
+/// Linux only: the candidate is the binary with a byte appended, which an ELF
+/// loader ignores but a signed Mach-O does not.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_update_replaces_the_running_binary() {
+    let installed = install_copy("update-swap", "sic");
+    let candidate = installed.with_file_name("candidate");
+    let mut bytes = std::fs::read(&installed).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&candidate, &bytes).unwrap();
+    let digest = digest_of(&candidate);
+
+    let (stdout, stderr, code) = sic_at(
+        &installed,
+        &[
+            "update",
+            "--to",
+            candidate.to_str().unwrap(),
+            "--sha256",
+            &digest,
+        ],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("replaced"), "{stdout}");
+    assert_eq!(digest_of(&installed), digest);
+    assert_eq!(leftovers(installed.parent().unwrap()), 2);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_check_replaces_nothing() {
+    let installed = install_copy("update-check", "sic");
+    let candidate = installed.with_file_name("candidate");
+    let mut bytes = std::fs::read(&installed).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&candidate, &bytes).unwrap();
+    let before = digest_of(&installed);
+    let digest = digest_of(&candidate);
+
+    let (stdout, stderr, code) = sic_at(
+        &installed,
+        &[
+            "update",
+            "--check",
+            "--to",
+            candidate.to_str().unwrap(),
+            "--sha256",
+            &digest,
+        ],
+    );
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("would replace"), "{stdout}");
+    assert_eq!(digest_of(&installed), before);
+    // The staged file is gone: a check leaves the directory as it found it.
+    assert_eq!(leftovers(installed.parent().unwrap()), 2);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_candidate_that_is_not_sic_is_refused() {
+    let installed = install_copy("update-not-sic", "sic");
+    let candidate = installed.with_file_name("impostor");
+    std::fs::write(&candidate, "#!/bin/sh\necho not sic at all\n").unwrap();
+    let digest = digest_of(&candidate);
+    let before = digest_of(&installed);
+
+    let (_, stderr, code) = sic_at(
+        &installed,
+        &[
+            "update",
+            "--to",
+            candidate.to_str().unwrap(),
+            "--sha256",
+            &digest,
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(
+        stderr.contains("does not identify itself as sic"),
+        "{stderr}"
+    );
+    assert_eq!(digest_of(&installed), before);
+    assert_eq!(leftovers(installed.parent().unwrap()), 2);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn a_binary_a_package_manager_installed_is_left_alone() {
+    let installed = install_copy("update-cargo", ".cargo/bin/sic");
+    let candidate = installed.with_file_name("candidate");
+    let mut bytes = std::fs::read(&installed).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(&candidate, &bytes).unwrap();
+    let digest = digest_of(&candidate);
+    let before = digest_of(&installed);
+
+    let (_, stderr, code) = sic_at(
+        &installed,
+        &[
+            "update",
+            "--to",
+            candidate.to_str().unwrap(),
+            "--sha256",
+            &digest,
+        ],
+    );
+    assert_eq!(code, 1);
+    assert!(stderr.contains("installed by cargo"), "{stderr}");
+    assert_eq!(digest_of(&installed), before);
+}
+
+fn leftovers(dir: &std::path::Path) -> usize {
+    std::fs::read_dir(dir).unwrap().count()
+}

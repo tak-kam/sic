@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 370 tests.
+Last updated at 377 tests.
 
 ---
 
@@ -30,8 +30,9 @@ Last updated at 370 tests.
 | 22, 23, 24, 25 | OTLP traces and metrics, `sic.` and GenAI attributes | `docs/design/observability.md` |
 | 27 | Secrets do not reach telemetry | the journal records digests, never values |
 | 28 | A debug section maps a pc to a line | every runtime failure names one |
-| 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `compile`, `verify`, `disasm`, `parse`, `hir` |
+| 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `update`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan` | `docs/design/plan.md` |
+| - | `sic update`: verify a binary against a digest and swap it in, fetching nothing | `docs/design/update.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
