@@ -1,0 +1,21 @@
+// Reading what a program said, and what that makes the value.
+//
+// `process.capture` returns standard output - but only when the program
+// succeeded, because what a program printed on its way to failing is not an
+// answer. The result is `Observed<String>`: nobody verified it, nobody
+// approved it, and a program printed it.
+//
+//     sic plan examples/capture.sic
+//     sic run examples/capture.sic
+//
+// Passing that value straight to `process.exec` does not compile. A string a
+// program printed must not decide what the next program runs, which is the
+// oldest injection there is. `approve` is the way through, and it puts a
+// person on the record: see docs/design/output.md.
+allow {
+    process.capture "/bin/echo" args ["sic:"];
+}
+
+fn main() -> Observed<String> {
+    return process.capture("/bin/echo", ["sic:", "read back"]);
+}

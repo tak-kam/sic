@@ -1152,7 +1152,10 @@ fn a_plan_can_be_made_from_bytecode_alone() {
     let (stdout, _, code) = sic(&["plan", &out_str]);
     assert_eq!(code, 0);
     assert!(stdout.contains("INVOKE"), "{stdout}");
-    assert!(stdout.contains("VERIFY Diagnosis"), "{stdout}");
+    // Not "VERIFY Diagnosis": the column a verb sits in is formatting, and a
+    // test that pins it fails every time a longer verb is added.
+    assert!(stdout.contains("VERIFY"), "{stdout}");
+    assert!(stdout.contains("Diagnosis"), "{stdout}");
     assert!(stdout.contains("at most 2 in a run"), "{stdout}");
 
     std::fs::remove_file(out).ok();
@@ -2073,4 +2076,106 @@ fn args_needs_a_list_of_strings() {
     let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
     assert_eq!(code, 1);
     assert!(stderr.contains("E0213"), "{stderr}");
+}
+
+// ---- reading what a program said ----
+
+#[test]
+fn a_program_can_read_what_it_ran() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/capture.sic");
+    let (stdout, stderr, code) = sic(&["run", path]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("sic: read back"), "{stdout}");
+}
+
+/// A plan is read by somebody deciding whether to run this, and "reads what it
+/// says" is a different thing to know than "runs it".
+#[test]
+fn a_plan_distinguishes_reading_from_running() {
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/capture.sic");
+    let (stdout, stderr, code) = sic(&["plan", path]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert!(stdout.contains("CAPTURE"), "{stdout}");
+}
+
+/// The oldest injection there is: a string a program printed deciding what the
+/// next program runs.
+#[test]
+fn what_a_program_printed_cannot_decide_what_runs() {
+    let entry = write_temp_program(
+        "capture-injection",
+        &[(
+            "main.sic",
+            "allow {\n    process.capture \"/bin/echo\" args [\"a\"];\n    process.exec \"/bin/echo\";\n}\n\
+             fn main() -> Int {\n    let said = process.capture(\"/bin/echo\", [\"a\"]);\n\
+             \x20   return process.exec(\"/bin/echo\", [said]);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0372"), "{stderr}");
+    assert!(stderr.contains("a program printed it"), "{stderr}");
+}
+
+/// `approve` is the way through, and it puts a person on the record.
+#[test]
+fn an_approval_lets_an_observed_value_through() {
+    let entry = write_temp_program(
+        "capture-approved",
+        &[(
+            "main.sic",
+            "allow {\n    process.capture \"/bin/echo\" args [\"a\"];\n\
+             \x20   process.exec \"/bin/echo\";\n    human.approve \"running what was read\";\n}\n\
+             fn main() -> Int {\n    let said = process.capture(\"/bin/echo\", [\"a\"]);\n\
+             \x20   let checked = approve(\"run this?\", said);\n\
+             \x20   return process.exec(\"/bin/echo\", [checked]);\n}\n",
+        )],
+    );
+    // It compiles, and stops to ask - which is exit code 3, not a failure.
+    let checkpoint = entry.with_extension("sicc");
+    let (_, stderr, code) = sic(&[
+        "run",
+        entry.to_str().unwrap(),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "stderr: {stderr}");
+    assert!(stderr.contains("running what was read"), "{stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}
+
+#[test]
+fn a_program_that_fails_produces_no_answer() {
+    let entry = write_temp_program(
+        "capture-failure",
+        &[(
+            "main.sic",
+            "allow {\n    process.capture \"/bin/sh\" args [\"-c\"];\n}\n\
+             fn main() -> Observed<String> {\n\
+             \x20   return process.capture(\"/bin/sh\", [\"-c\", \"echo trouble >&2; exit 3\"]);\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("exited 3"), "{stderr}");
+    // stderr is not a value the program receives, but a failure without it
+    // says nothing.
+    assert!(stderr.contains("trouble"), "{stderr}");
+}
+
+/// Running something and reading what it says are different authorities, so
+/// one grant does not cover the other.
+#[test]
+fn a_grant_to_run_is_not_a_grant_to_read() {
+    let entry = write_temp_program(
+        "capture-ungranted",
+        &[(
+            "main.sic",
+            "allow {\n    process.exec \"/bin/echo\";\n}\n\
+             fn main() -> Observed<String> {\n    return process.capture(\"/bin/echo\");\n}\n",
+        )],
+    );
+    let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0320"), "{stderr}");
 }

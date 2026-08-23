@@ -457,3 +457,98 @@ fn a_grant_that_pins_no_arguments_allows_none() {
         "leaving the vector off passes an empty one"
     );
 }
+
+// ---- reading what a program said ----
+
+fn capture_request(path: &str, args: &[&str]) -> CapRequest {
+    let mut request = exec_request(path, args);
+    request.name = "process.capture".into();
+    request
+}
+
+#[test]
+fn capture_returns_what_the_program_printed() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.capture",
+        CapKind::Exec,
+        "/bin/echo",
+        &["sic:"],
+    )]);
+    let outcome = broker
+        .call(&capture_request("/bin/echo", &["sic:", "hello"]))
+        .expect("the call should be allowed");
+    assert_eq!(
+        outcome,
+        CapOutcome::Value(CapValue::Str("sic: hello\n".into()))
+    );
+}
+
+/// What a program printed on its way to failing is not an answer, and the one
+/// useful part of the failure is what it said on stderr.
+#[test]
+fn a_non_zero_exit_is_a_failure_carrying_stderr() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.capture",
+        CapKind::Exec,
+        "/bin/sh",
+        &["-c"],
+    )]);
+    let err = broker
+        .call(&capture_request(
+            "/bin/sh",
+            &["-c", "echo trouble >&2; exit 3"],
+        ))
+        .expect_err("a program that failed produces no value");
+    assert!(err.message.contains("exited 3"), "{}", err.message);
+    assert!(err.message.contains("trouble"), "{}", err.message);
+}
+
+/// An answer that looks whole but is not would parse, validate, and be wrong.
+#[test]
+fn output_past_the_limit_fails_rather_than_truncates() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.capture",
+        CapKind::Exec,
+        "/bin/sh",
+        &["-c"],
+    )]);
+    let script = format!("yes sic | head -c {}", MAX_OUTPUT + 1);
+    let err = broker
+        .call(&capture_request("/bin/sh", &["-c", &script]))
+        .expect_err("more than the limit is a failure");
+    assert!(err.message.contains("more than"), "{}", err.message);
+}
+
+/// The grant is exec's grant: the same prefix rule decides both.
+#[test]
+fn capture_obeys_the_pinned_prefix() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.capture",
+        CapKind::Exec,
+        "/bin/echo",
+        &["sic:"],
+    )]);
+    assert!(
+        broker
+            .call(&capture_request("/bin/echo", &["elsewhere"]))
+            .is_err()
+    );
+}
+
+/// Honouring a deadline while draining a pipe needs a reader thread. Until
+/// then, refusing beats telling a program its call was bounded when it was not.
+#[test]
+fn capture_refuses_a_deadline_it_cannot_honour() {
+    let mut broker = Broker::new(vec![with_args(
+        "process.capture",
+        CapKind::Exec,
+        "/bin/echo",
+        &["sic:"],
+    )]);
+    let mut request = capture_request("/bin/echo", &["sic:"]);
+    request.timeout_ms = 500;
+    let err = broker
+        .call(&request)
+        .expect_err("a deadline nothing enforces is refused");
+    assert!(err.message.contains("timeout"), "{}", err.message);
+}

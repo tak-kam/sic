@@ -80,6 +80,19 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         optional_tail: false,
     },
     CapSig {
+        name: "process.capture",
+        // Running it is what it does; reading the answer is why. The kind is
+        // what the trust rule looks at, and this one runs a program.
+        kind: CapKind::Exec,
+        params: &[Types::STR, Types::LIST_STR],
+        // Only on a zero exit code: a program that failed did not produce an
+        // answer worth reading. See `docs/design/output.md`.
+        ret: Types::OBSERVED_STR,
+        requires_constraint: true,
+        accepts_pin: true,
+        optional_tail: true,
+    },
+    CapSig {
         name: "process.exec",
         kind: CapKind::Exec,
         // The path, then what to pass it. The vector may be left off, and

@@ -73,6 +73,9 @@ pub enum TrustKind {
     Llm,
     /// A person approved it.
     HumanApproved,
+    /// A program printed it. Not verified, not approved, and not written by
+    /// whoever wrote the program that read it.
+    Observed,
 }
 
 impl TrustKind {
@@ -80,6 +83,7 @@ impl TrustKind {
         match self {
             TrustKind::Llm => "LLM",
             TrustKind::HumanApproved => "HumanApproved",
+            TrustKind::Observed => "Observed",
         }
     }
 
@@ -87,6 +91,7 @@ impl TrustKind {
         match name {
             "LLM" => Some(TrustKind::Llm),
             "HumanApproved" => Some(TrustKind::HumanApproved),
+            "Observed" => Some(TrustKind::Observed),
             _ => None,
         }
     }
@@ -117,6 +122,8 @@ impl Types {
     /// An argument vector. Interned here so that a builtin capability
     /// signature, which is a `const`, can name it.
     pub const LIST_STR: TypeId = TypeId(6);
+    /// What a program printed. Interned here for the same reason.
+    pub const OBSERVED_STR: TypeId = TypeId(7);
 
     pub fn new() -> Self {
         let mut t = Self {
@@ -133,6 +140,10 @@ impl Types {
         assert_eq!(t.intern(Type::Str), Self::STR);
         assert_eq!(t.intern(Type::Error), Self::ERROR);
         assert_eq!(t.intern(Type::List(Self::STR)), Self::LIST_STR);
+        assert_eq!(
+            t.intern(Type::Trust(TrustKind::Observed, Self::STR)),
+            Self::OBSERVED_STR
+        );
         t
     }
 
@@ -203,7 +214,28 @@ impl Types {
     pub fn trust_of(&self, id: TypeId) -> Option<(TrustKind, TypeId)> {
         match self.get(id) {
             Type::Trust(kind, inner) => Some((*kind, *inner)),
+            // A vector of values a program printed is a value a program
+            // printed. Without this, `["checkout", sha]` would be a way past
+            // the rule that stops `sha` from deciding what runs.
+            Type::List(element) => self.trust_of(*element),
             _ => None,
+        }
+    }
+
+    /// The type without any provenance, at any depth.
+    ///
+    /// A capability erases trust, so `List<Observed<String>>` satisfies a
+    /// `List<String>` parameter - once the rule about where that value may go
+    /// has already been applied. `trust_of` looks through a list for the same
+    /// reason.
+    pub fn untrusted_deep(&mut self, id: TypeId) -> TypeId {
+        match *self.get(id) {
+            Type::Trust(_, inner) => self.untrusted_deep(inner),
+            Type::List(element) => {
+                let element = self.untrusted_deep(element);
+                self.list(element)
+            }
+            _ => id,
         }
     }
 

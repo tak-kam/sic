@@ -90,6 +90,10 @@ impl Action {
     /// The word a plan leads a line with.
     pub fn verb(&self) -> &'static str {
         match self {
+            // `process.capture` runs something, so its kind is `Exec`, but a
+            // plan is read by a person deciding whether to run this - and
+            // "reads what it says" is the part they need to see.
+            Action::Capability { name, .. } if name == "process.capture" => "CAPTURE",
             Action::Capability { kind, .. } => match kind {
                 CapKind::Read => "READ",
                 CapKind::Write => "WRITE",
@@ -245,7 +249,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
     for function in &plan.functions {
         out.push_str(&format!("\n  {}\n", function.name));
         for (i, step) in function.steps.iter().enumerate() {
-            out.push_str(&format!("    {}. {:<7}", i + 1, step.action.verb()));
+            out.push_str(&format!("    {}. {:<9}", i + 1, step.action.verb()));
             match &step.action {
                 Action::Capability {
                     name,
@@ -255,7 +259,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     timeout_ms,
                     ..
                 } => {
-                    out.push_str(&format!("{name:<14}{constraint:?}"));
+                    out.push_str(&format!("{name:<16}{constraint:?}"));
                     if let Some(budget) = budget {
                         out.push_str(&format!("  at most {budget} in a run"));
                     }
@@ -286,7 +290,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
     }
     for grant in &plan.capabilities {
         out.push_str(&format!(
-            "  {:<14}[{}]  {:?}",
+            "  {:<16}[{}]  {:?}",
             grant.name,
             grant.kind.name(),
             grant.constraint

@@ -28,9 +28,11 @@ v0.1 ships three, chosen because they need no credentials and no network:
 | `fs.read` | `(path: String) -> String` | read |
 | `fs.write` | `(path: String, data: String) -> Unit` | write |
 | `process.exec` | `(path: String, args: List<String>) -> Int` | exec |
+| `process.capture` | `(path: String, args: List<String>) -> Observed<String>` | exec |
 | `human.approve` | `(question: String) -> Bool` | invoke |
 
-`process.exec` is the only one whose last parameter may be left off:
+`process.exec` and `process.capture` are the ones whose last parameter may be
+left off:
 `process.exec("/usr/bin/true")` passes an empty vector, so a program written
 before arguments existed still says what it said. What a grant may pin about
 those arguments is in `docs/design/arguments.md`.

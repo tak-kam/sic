@@ -1227,24 +1227,33 @@ impl Checker {
         for (arg, want) in args.iter().zip(params) {
             let found = self.check_expr(arg);
             match self.types.trust_of(found) {
-                // A model's answer must not reach a capability that changes
-                // something. Reading or asking is fine - asking a model about a
-                // model's answer is ordinary - which is why the rule is about
-                // the capability's kind rather than about the value.
-                Some((TrustKind::Llm, _))
+                // A value nobody signed off must not reach a capability that
+                // changes something. Reading or asking is fine - asking a model
+                // about a model's answer is ordinary - which is why the rule is
+                // about the capability's kind rather than about the value.
+                Some((kind_of @ (TrustKind::Llm | TrustKind::Observed), _))
                     if matches!(kind, sic_core::CapKind::Write | sic_core::CapKind::Exec) =>
                 {
                     let name = self.types.name(found);
+                    let source = match kind_of {
+                        TrustKind::Observed => "a program printed it",
+                        _ => "this came from a model",
+                    };
                     self.error(
                         "E0372",
                         format!("{name} cannot be passed to `{full}`"),
                         arg.span,
-                        format!("`{full}` changes something, and this came from a model"),
+                        format!("`{full}` changes something, and {source}"),
                     );
-                    self.note("`approve(question, value)` turns a model's answer into one a person signed off");
+                    self.note("`approve(question, value)` turns it into one a person signed off");
                 }
-                Some((_, inner)) => self.expect_type(want, inner, arg.span, "this argument"),
-                None => self.expect_type(want, found, arg.span, "this argument"),
+                // A capability erases trust, so what is compared is the type
+                // underneath it - at any depth, or an approved value could not
+                // be put in an argument vector at all.
+                _ => {
+                    let erased = self.types.untrusted_deep(found);
+                    self.expect_type(want, erased, arg.span, "this argument")
+                }
             }
         }
         ret

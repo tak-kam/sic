@@ -114,8 +114,14 @@ digests, never values, so no value reaches telemetry regardless of what it is.
 When a credential capability arrives, `Secret<T>` comes with it, and it is the
 one trust type that cannot be erased - a runtime check is the point of it.
 
-The same goes for `Verified<T>`, `Observed<T>` and `UserProvided<T>`: each needs
-something that produces it before the type is worth anything.
+The same goes for `Verified<T>` and `UserProvided<T>`: each needs something
+that produces it before the type is worth anything.
+
+`Observed<T>` is no longer one of them. `process.capture` produces it - what a
+program printed was not verified, not approved, and not written by whoever wrote
+the program that read it - and it carries `LLM<T>`'s rule, because the sentence
+covers both: *a value nobody signed off cannot decide what gets changed or run*.
+See `docs/design/output.md` §5.
 
 ---
 

@@ -22,6 +22,13 @@ pub const MAX_READ_BYTES: u64 = 1 << 20;
 /// is roughly honoured, large enough that waiting is not a spin.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// The most a program may print into a value.
+///
+/// A capability that reads unbounded output is a way to exhaust memory through
+/// something that looks like it just runs `git`. Crossing this fails the call
+/// rather than truncating: see `docs/design/output.md`.
+const MAX_OUTPUT: usize = 1 << 20;
+
 /// How much of a file is hashed at a time. An executable can be large, and
 /// reading one into memory to check it would be its own problem.
 const HASH_CHUNK: usize = 64 * 1024;
@@ -54,6 +61,7 @@ impl Broker {
             "fs.write" => fs_write(&grant, request),
             "process.exec" => process_exec(&grant, request),
             "human.approve" => human_approve(&grant, request),
+            "process.capture" => process_capture(&grant, request),
             "llm.invoke" => llm_invoke(&grant, request),
             other => Err(CapError::new(format!(
                 "`{other}` is in the manifest but this broker cannot perform it"
@@ -109,7 +117,71 @@ fn fs_write(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapErr
     Ok(CapOutcome::Value(CapValue::Unit))
 }
 
-fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+/// Runs a program and returns what it printed, when it succeeded.
+///
+/// A non-zero exit is a failure rather than a value: what a program printed on
+/// its way to failing is not an answer, and the exit code is what
+/// `process.exec` is for. `docs/design/output.md` says why the two are separate
+/// capabilities.
+fn process_capture(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    // Draining a pipe and honouring a deadline at once needs a reader thread,
+    // and telling a program its call was bounded when it was not is worse than
+    // refusing the deadline.
+    reject_timeout(request)?;
+    let (path, args) = exec_target(grant, request)?;
+
+    let out = std::process::Command::new(&path)
+        .args(&args)
+        .env_clear()
+        .output()
+        .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
+
+    // A truncated answer that looks whole would parse, validate, and be wrong.
+    if out.stdout.len() > MAX_OUTPUT {
+        return Err(CapError::new(format!(
+            "`{}` printed more than {MAX_OUTPUT} bytes",
+            path.display()
+        )));
+    }
+    match out.status.code() {
+        Some(0) => {}
+        Some(code) => {
+            // stderr is not a value the program receives, but it is the only
+            // useful part of a failure, so it travels in the error.
+            let said = String::from_utf8_lossy(&out.stderr);
+            let said = said.trim();
+            let tail = if said.is_empty() {
+                String::new()
+            } else {
+                format!(": {said}")
+            };
+            return Err(CapError::new(format!(
+                "`{}` exited {code}{tail}",
+                path.display()
+            )));
+        }
+        None => {
+            return Err(CapError::new(format!(
+                "`{}` was terminated by a signal",
+                path.display()
+            )));
+        }
+    }
+    let text = String::from_utf8(out.stdout).map_err(|e| {
+        CapError::new(format!(
+            "`{}` printed something that is not UTF-8 (at byte {})",
+            path.display(),
+            e.utf8_error().valid_up_to()
+        ))
+    })?;
+    Ok(CapOutcome::Value(CapValue::Str(text)))
+}
+
+/// The path and arguments a call may use, or the reason it may not.
+///
+/// Shared by `process.exec` and `process.capture`: they perform different
+/// effects, and what a grant permits is the same question for both.
+fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<String>), CapError> {
     let args = exec_args(request)?;
     let path = allowed_path(grant, string_arg(request, 0, request.args.len())?)?;
 
@@ -157,6 +229,12 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
             }
         )));
     }
+
+    Ok((path, args))
+}
+
+fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    let (path, args) = exec_target(grant, request)?;
 
     let mut command = std::process::Command::new(&path);
     command.args(&args);

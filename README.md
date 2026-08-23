@@ -144,8 +144,19 @@ Remove the `allow` block and it stops compiling, with the fix in the message.
 **Capabilities.** Every external effect is declared, typed and constrained.
 Calling one the module did not grant is a compile error, so the manifest of a
 compiled module is complete by construction. `process.exec` takes an absolute
-path, never searches `PATH`, and can pin the binary's sha256.
-→ [capabilities.md](docs/design/capabilities.md)
+path, never searches `PATH`, can pin the binary's sha256, and can pin what its
+arguments must start with - a grant on `tmux` that cannot say which pane is a
+grant to drive every pane on the machine.
+→ [capabilities.md](docs/design/capabilities.md),
+[arguments.md](docs/design/arguments.md)
+
+**Reading what a program said is its own grant.** `process.capture` returns
+standard output, and only when the program succeeded. An exit code is one bit;
+standard output is everything the program can see, so the two are different
+authorities and `sic plan` prints them differently. What comes back is
+`Observed<String>`, which cannot decide what the next program runs without a
+person on the record.
+→ [output.md](docs/design/output.md)
 
 **Modules that cannot grant themselves anything.** `import "./lib/deploy.sic";`
 brings a local file in. A library declares what it needs with `requires`, and
@@ -221,6 +232,8 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
 | [plan.md](docs/design/plan.md) | `sic plan` |
+| [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
+| [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
 
