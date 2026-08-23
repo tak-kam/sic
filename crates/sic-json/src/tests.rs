@@ -118,6 +118,43 @@ fn a_nested_document_round_trips_its_shape() {
 }
 
 #[test]
+fn a_message_names_the_character_that_is_there() {
+    // What a model answers with is untrusted text in whatever language it
+    // chose, so this is the one input where non-ASCII is expected. Casting the
+    // byte would report `ã`, the Latin-1 reading of the first byte of `そ`,
+    // which is a character the document does not contain.
+    assert!(err("そうですね").contains("unexpected `そ`"));
+    assert!(err(r#""\そ""#).contains("unknown escape `\\そ`"));
+    let e = parse(r#""\そ""#).unwrap_err();
+    assert_eq!(&r#""\そ""#[e.offset..e.offset + 3], "そ");
+}
+
+#[test]
+fn bytes_that_are_not_utf8_are_reported_as_that() {
+    // A JSON document has to be UTF-8 (RFC 8259 §8.1). `parse` takes a `&str`,
+    // so the only place bytes that are not can turn up is this decode.
+    assert_eq!(char_at("そ".as_bytes(), 0), Some('そ'));
+    assert_eq!(char_at("aそ".as_bytes(), 1), Some('そ'));
+    // A character cut short, and a byte that is valid UTF-8 nowhere.
+    assert_eq!(char_at(b"\xE3\x81", 0), None);
+    assert_eq!(char_at(b"\xFF", 0), None);
+    assert_eq!(char_at(b"", 0), None);
+    assert!(not_utf8(0xE3).contains("not UTF-8"));
+    assert!(not_utf8(0xE3).contains("0xE3"));
+}
+
+#[test]
+fn an_escape_cut_by_a_character_is_refused_not_a_panic() {
+    // The four hex digits are read as bytes, because slicing the text four
+    // bytes on can land inside `そ`.
+    assert!(err(r#""\u00そ""#).contains("four hex digits"));
+    assert!(err(r#""\uそ""#).contains("four hex digits"));
+    // `from_str_radix` would have taken the sign; the grammar has no such digit.
+    assert!(err(r#""\u+041""#).contains("four hex digits"));
+    assert_eq!(ok(r#""\u0041""#), Json::Str("A".into()));
+}
+
+#[test]
 fn errors_say_where() {
     let e = parse("{\"a\": }").unwrap_err();
     assert_eq!(&"{\"a\": }"[e.offset..e.offset + 1], "}");

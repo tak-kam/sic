@@ -136,6 +136,15 @@ What it accepts is RFC 8259 and nothing more: no trailing commas, no comments,
 no `NaN`. A model that produces those has produced invalid JSON, and saying so
 is more useful than guessing.
 
+That includes the encoding: §8.1 says a document is UTF-8, so `parse` takes a
+`&str` and the type carries the rule - bytes that are not UTF-8 are refused
+where they become text, which for a program's answer is the broker. Parsing
+itself is done in bytes, since the structure of JSON is ASCII; a character is
+decoded only to name one in a message. Casting the byte instead names a
+character the document does not contain - `u8 as char` is Latin-1, so an answer
+beginning `そ` was reported as `ã` - and what a model answers with is the one
+input where non-ASCII is guaranteed.
+
 Limits, because the input is untrusted text from a model:
 
 - a nesting depth cap, so a deeply nested document cannot exhaust the stack

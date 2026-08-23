@@ -10,6 +10,11 @@
 //! produced invalid JSON, and saying so is more useful than guessing what was
 //! meant.
 //!
+//! A document is UTF-8, which RFC 8259 §8.1 requires; `parse` takes a `&str`,
+//! so that is the type rather than a check. The parsing itself is done in
+//! bytes, because the structure of JSON is ASCII, and a character is decoded
+//! only to name one in an error message.
+//!
 //! The input is untrusted, so the limits below are part of the contract rather
 //! than a detail: a document cannot exhaust memory or the stack.
 //!
@@ -131,7 +136,9 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             Ok(())
         } else {
-            Err(self.error(format!("expected `{}`", byte as char)))
+            // The byte named here is the one the grammar wants, always ASCII;
+            // nothing read from the document is rendered.
+            Err(self.error(format!("expected `{}`", char::from(byte))))
         }
     }
 
@@ -145,7 +152,10 @@ impl<'a> Parser<'a> {
             Some(b'[') => self.array(),
             Some(b'{') => self.object(),
             Some(b'-' | b'0'..=b'9') => self.number(),
-            Some(byte) => Err(self.error(format!("unexpected `{}`", byte as char))),
+            Some(byte) => Err(self.error(match char_at(self.bytes, self.pos) {
+                Some(ch) => format!("unexpected `{ch}`"),
+                None => not_utf8(byte),
+            })),
         }
     }
 
@@ -269,6 +279,7 @@ impl<'a> Parser<'a> {
         let Some(byte) = self.peek() else {
             return Err(self.error("the escape is not finished"));
         };
+        let at = self.pos;
         self.pos += 1;
         match byte {
             b'"' => out.push('"'),
@@ -303,18 +314,38 @@ impl<'a> Parser<'a> {
                     None => return Err(self.error("not a Unicode scalar value")),
                 }
             }
-            other => return Err(self.error(format!("unknown escape `\\{}`", other as char))),
+            other => {
+                // The offset is the escape itself, so the message and where it
+                // points name the same character.
+                let message = match char_at(self.bytes, at) {
+                    Some(ch) => format!("unknown escape `\\{ch}`"),
+                    None => not_utf8(other),
+                };
+                return Err(JsonError {
+                    message,
+                    offset: at,
+                });
+            }
         }
         Ok(())
     }
 
     fn hex4(&mut self) -> Result<u32> {
-        if self.pos + 4 > self.bytes.len() {
+        // The digits are read as bytes: slicing the text four bytes on could
+        // land inside a character and panic on input a model chose.
+        let Some(digits) = self.bytes.get(self.pos..self.pos + 4) else {
             return Err(self.error("a `\\u` escape needs four hex digits"));
+        };
+        let mut value = 0;
+        for byte in digits {
+            let digit = match byte {
+                b'0'..=b'9' => byte - b'0',
+                b'a'..=b'f' => byte - b'a' + 10,
+                b'A'..=b'F' => byte - b'A' + 10,
+                _ => return Err(self.error("a `\\u` escape needs four hex digits")),
+            };
+            value = value * 16 + u32::from(digit);
         }
-        let digits = &self.text[self.pos..self.pos + 4];
-        let value = u32::from_str_radix(digits, 16)
-            .map_err(|_| self.error("a `\\u` escape needs four hex digits"))?;
         self.pos += 4;
         Ok(value)
     }
@@ -378,6 +409,30 @@ impl<'a> Parser<'a> {
             }
         }
     }
+}
+
+/// The character at `pos`, or `None` when the bytes there are not UTF-8.
+///
+/// A message that casts the byte instead reports a character the document does
+/// not contain: `u8 as char` is the Latin-1 mapping, so the first byte of `そ`
+/// reads back as `ã`. Only an error message pays for this decode; the parsing
+/// stays byte by byte.
+fn char_at(bytes: &[u8], pos: usize) -> Option<char> {
+    // A character is at most four bytes, and the window can stop inside the one
+    // after it, so what is decoded is the part of it that is whole.
+    let window = bytes.get(pos..bytes.len().min(pos + 4))?;
+    let text = match std::str::from_utf8(window) {
+        Ok(text) => text,
+        Err(e) => std::str::from_utf8(&window[..e.valid_up_to()]).ok()?,
+    };
+    text.chars().next()
+}
+
+/// What to say instead, when there is no character there to name.
+fn not_utf8(byte: u8) -> String {
+    // RFC 8259 §8.1: a JSON document is UTF-8. Bytes that are not are a fault
+    // of their own, and worth saying so rather than rendering as something else.
+    format!("the document is not UTF-8 (byte {byte:#04X})")
 }
 
 #[cfg(test)]
