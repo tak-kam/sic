@@ -130,13 +130,15 @@ pub enum TypeDesc {
     Task(u32),
     /// A list, and the index of the type it holds.
     List(u32),
-    /// A record: its name, for diagnostics, and the type of each field in
-    /// order. Fields are addressed by position, because the compiler knows the
-    /// layout and a verifier comparing names would be doing the type checker's
-    /// work again.
+    /// A record: its name and its fields in order.
+    ///
+    /// Instructions address a field by position - the compiler knows the
+    /// layout, and a verifier comparing names would be doing the type checker's
+    /// work again. The names are here because validating a JSON document needs
+    /// them: a document addresses fields by name.
     Object {
         name: String,
-        fields: Vec<u32>,
+        fields: Vec<(String, u32)>,
     },
 }
 
@@ -190,11 +192,17 @@ impl TypeDesc {
     }
 
     /// The fields of a record, if this is one.
-    pub fn fields(&self) -> Option<&[u32]> {
+    pub fn fields(&self) -> Option<&[(String, u32)]> {
         match self {
             TypeDesc::Object { fields, .. } => Some(fields),
             _ => None,
         }
+    }
+
+    /// The type of each field, in order.
+    pub fn field_types(&self) -> Option<Vec<u32>> {
+        self.fields()
+            .map(|fields| fields.iter().map(|(_, t)| *t).collect())
     }
 }
 

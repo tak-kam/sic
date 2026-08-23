@@ -188,10 +188,13 @@ impl TypeSection {
                 fields: Vec::new(),
             });
             self.index.insert(ty, position);
-            let field_types: Vec<sic_core::TypeId> = def.fields.iter().map(|(_, t)| *t).collect();
-            let fields: Vec<u32> = field_types
+            let declared: Vec<(String, sic_core::TypeId)> = def.fields.clone();
+            let fields: Vec<(String, u32)> = declared
                 .into_iter()
-                .map(|t| self.intern(t, types))
+                .map(|(field_name, t)| {
+                    let index = self.intern(t, types);
+                    (field_name, index)
+                })
                 .collect();
             let name = types.object(*object).name.clone();
             self.descs[position as usize] = TypeDesc::Object { name, fields };
@@ -574,6 +577,11 @@ impl<'a> FnCompile<'a> {
             InstKind::Len { dst, src } => {
                 let (dst, src) = (self.reg(*dst), self.reg(*src));
                 self.emit(Inst::abc(Op::Len, dst, src, 0), span);
+            }
+            InstKind::FromJson { dst, ty, src } => {
+                let (dst, src) = (self.reg(*dst), self.reg(*src));
+                let type_index = self.type_index(*ty);
+                self.emit(Inst::abc(Op::FromJson, dst, type_index, src), span);
             }
             InstKind::Log { .. } => {
                 self.errors.push(CompileError::new(

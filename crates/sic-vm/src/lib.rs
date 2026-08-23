@@ -78,6 +78,9 @@ pub enum FailKind {
     CallStackTooDeep,
     /// A list index was outside the list.
     IndexOutOfRange,
+    /// A document did not parse, or did not fit the type it was checked
+    /// against. The detail says which and where.
+    Schema,
     /// A task was awaited whose result had already been taken.
     TaskAlreadyAwaited,
     /// The task being awaited failed.
@@ -103,6 +106,7 @@ impl FailKind {
             FailKind::OutOfFuel => "ran out of fuel",
             FailKind::CallStackTooDeep => "call stack too deep",
             FailKind::IndexOutOfRange => "the index is outside the list",
+            FailKind::Schema => "the document does not fit the type",
             FailKind::TaskAlreadyAwaited => "this task has already been awaited",
             FailKind::AwaitedTaskFailed => "the awaited task failed",
             FailKind::Deadlock => "every task is waiting for another task",
@@ -940,7 +944,7 @@ impl<'a> Vm<'a> {
                         .types
                         .get(b)
                         .and_then(|t| t.fields())
-                        .map(<[u32]>::len)
+                        .map(<[(String, u32)]>::len)
                         .unwrap_or(0);
                     let fields: Vec<Value> = (0..field_count)
                         .map(|i| self.get(index, base + c + i))
@@ -1003,6 +1007,18 @@ impl<'a> Vm<'a> {
                         ),
                     };
                     self.set(index, base + a, Value::I64(length as i64));
+                }
+                Op::FromJson => {
+                    let Value::Str(handle) = self.get(index, base + c) else {
+                        die!(FailKind::Internal("from_json of a non-string"), None, None);
+                    };
+                    let text = self.arena.str(handle).to_string();
+                    match self.value_from_json(&text, b as u32) {
+                        Ok(value) => self.set(index, base + a, value),
+                        // The run fails here, at the boundary, rather than
+                        // wherever the malformed value would first be used.
+                        Err(detail) => die!(FailKind::Schema, None, Some(detail)),
+                    }
                 }
                 Op::CallCap => {
                     let Some(decl) = self.program.caps.get(b) else {
@@ -1145,6 +1161,91 @@ impl<'a> Vm<'a> {
 
     // ---- values ----
 
+    /// Parses a document and builds a value of the given type from it.
+    ///
+    /// Validation happens in the VM rather than the broker: the value goes into
+    /// the VM's arena, and the broker has no business knowing about types.
+    fn value_from_json(&mut self, text: &str, ty: u32) -> Result<Value, String> {
+        let json = sic_json::parse(text).map_err(|e| e.to_string())?;
+        let mut path = String::new();
+        self.build_from_json(&json, ty, &mut path)
+    }
+
+    fn build_from_json(
+        &mut self,
+        json: &sic_json::Json,
+        ty: u32,
+        path: &mut String,
+    ) -> Result<Value, String> {
+        use sic_bytecode::TypeDesc;
+        use sic_json::Json;
+
+        let Some(desc) = self.program.types.get(ty as usize).cloned() else {
+            return Err(at(path, "the type is not in this program"));
+        };
+        let expected = self.program.type_name(ty);
+        match (&desc, json) {
+            (TypeDesc::Unit, Json::Null) => Ok(Value::Unit),
+            (TypeDesc::Bool, Json::Bool(v)) => Ok(Value::Bool(*v)),
+            (TypeDesc::Int, Json::Int(v)) => Ok(Value::I64(*v)),
+            // A whole number is a Float; the reverse is not true, because
+            // truncating would change the value.
+            (TypeDesc::Float, Json::Float(v)) => Ok(Value::F64(*v)),
+            (TypeDesc::Float, Json::Int(v)) => Ok(Value::F64(*v as f64)),
+            (TypeDesc::Str, Json::Str(s)) => {
+                let handle = self.arena.alloc_str(s.clone());
+                Ok(Value::Str(handle))
+            }
+            (TypeDesc::List(element), Json::Array(items)) => {
+                let element = *element;
+                let mut values = Vec::with_capacity(items.len());
+                for (i, item) in items.iter().enumerate() {
+                    let mark = path.len();
+                    path.push_str(&format!("[{i}]"));
+                    values.push(self.build_from_json(item, element, path)?);
+                    path.truncate(mark);
+                }
+                let handle = self.arena.alloc_list(values);
+                Ok(Value::List(handle))
+            }
+            (TypeDesc::Object { name, fields }, Json::Object(members)) => {
+                let declared = fields.clone();
+                let type_name = name.clone();
+                let field_names: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
+                let mut values = Vec::with_capacity(declared.len());
+                for (field_name, field_type) in &declared {
+                    let field_name = field_name.clone();
+                    let Some((_, value)) = members.iter().find(|(n, _)| *n == field_name) else {
+                        // Every field is required, so a missing one is a
+                        // mismatch rather than a default.
+                        return Err(at(
+                            path,
+                            &format!("`{type_name}` needs a field `{field_name}`"),
+                        ));
+                    };
+                    let mark = path.len();
+                    if !path.is_empty() {
+                        path.push('.');
+                    }
+                    path.push_str(&field_name);
+                    values.push(self.build_from_json(value, *field_type, path)?);
+                    path.truncate(mark);
+                }
+                for (name, _) in members {
+                    if !field_names.contains(name) {
+                        return Err(at(path, &format!("`{type_name}` has no field `{name}`")));
+                    }
+                }
+                let handle = self.arena.alloc_object(values);
+                Ok(Value::Object(handle))
+            }
+            (_, found) => Err(at(
+                path,
+                &format!("expected {expected}, found {}", found.kind()),
+            )),
+        }
+    }
+
     /// Copies a value out of the VM so it can cross the broker boundary.
     ///
     /// Handles are meaningless outside this arena, so a string is copied rather
@@ -1252,6 +1353,15 @@ impl<'a> Vm<'a> {
 }
 
 /// Converting between a live task and its saved form.
+/// Prefixes a message with the path in the document it is about.
+fn at(path: &str, message: &str) -> String {
+    if path.is_empty() {
+        message.to_string()
+    } else {
+        format!("{path}: {message}")
+    }
+}
+
 fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
     checkpoint::TaskSnapshot {
         state: match &task.state {

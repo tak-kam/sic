@@ -133,7 +133,7 @@ impl<'a> Verifier<'a> {
         for (i, desc) in p.types.iter().enumerate() {
             let referenced: Vec<u32> = match desc {
                 TypeDesc::Task(inner) | TypeDesc::List(inner) => vec![*inner],
-                TypeDesc::Object { fields, .. } => fields.clone(),
+                TypeDesc::Object { fields, .. } => fields.iter().map(|(_, t)| *t).collect(),
                 _ => Vec::new(),
             };
             for inner in referenced {
@@ -461,6 +461,18 @@ impl<'a> Verifier<'a> {
                     ok &= check_reg(self, inst.a(), "destination");
                     ok &= check_reg(self, inst.b(), "record");
                 }
+                Op::FromJson => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    ok &= check_reg(self, inst.c(), "document");
+                    if inst.b() as usize >= p.types.len() {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!("type index t{} is out of range", inst.b()),
+                        );
+                        ok = false;
+                    }
+                }
                 Op::MakeList => {
                     ok &= check_reg(self, inst.a(), "destination");
                     let last = inst.b() as usize + inst.c() as usize;
@@ -698,9 +710,8 @@ impl<'a> Verifier<'a> {
                 }
                 Op::MakeObject => {
                     let fields = p.types[inst.b() as usize]
-                        .fields()
-                        .expect("checked in the structure pass")
-                        .to_vec();
+                        .field_types()
+                        .expect("checked in the structure pass");
                     for (i, want) in fields.iter().enumerate() {
                         let reg = inst.c() + i as u8;
                         self.read(&name, pc, &state, reg, Some(*want));
@@ -713,7 +724,7 @@ impl<'a> Verifier<'a> {
                     let produced = match record {
                         Abst::Val(ty) => match p.types.get(ty as usize).and_then(|t| t.fields()) {
                             Some(fields) => match fields.get(inst.c() as usize) {
-                                Some(field) => Some(*field),
+                                Some((_, field)) => Some(*field),
                                 None => {
                                     self.error(
                                         Some(&name),
@@ -813,6 +824,11 @@ impl<'a> Verifier<'a> {
                         }
                     }
                     next[inst.a() as usize] = Abst::Val(INT);
+                    successors.push(index + 1);
+                }
+                Op::FromJson => {
+                    self.read(&name, pc, &state, inst.c(), Some(STR));
+                    next[inst.a() as usize] = Abst::Val(inst.b() as u32);
                     successors.push(index + 1);
                 }
                 Op::Return => {

@@ -10,6 +10,7 @@ members = [
     "crates/sic-verify",
     "crates/sic-vm",
     "crates/sic-journal",
+    "crates/sic-json",
     "crates/sic-broker",
     "crates/sic-cli",
 ]

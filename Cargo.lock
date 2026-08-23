@@ -63,6 +63,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "sic-json"
+version = "0.1.0"
+
+[[package]]
 name = "sic-syntax"
 version = "0.1.0"
 dependencies = [
@@ -92,4 +96,5 @@ dependencies = [
  "sic-bytecode",
  "sic-core",
  "sic-journal",
+ "sic-json",
 ]

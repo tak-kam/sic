@@ -1,0 +1,23 @@
+// Text becomes a typed value at one place, and a run fails there rather than
+// wherever the malformed value would first have been used.
+//
+//     raw text -> parse -> check against a type -> value
+//
+// This is what an agent's answer will go through in phase 7b. Nothing here is
+// specific to models: a capability that returns JSON needs exactly the same.
+type Evidence {
+    source: String,
+    weight: Int,
+}
+
+type Diagnosis {
+    cause: String,
+    confidence: Float,
+    evidence: List<Evidence>,
+}
+
+fn main() -> String {
+    let text = "{\"cause\": \"disk full\", \"confidence\": 0.9, \"evidence\": [{\"source\": \"syslog\", \"weight\": 3}]}";
+    let d: Diagnosis = from_json(text);
+    return d.evidence[0].source;
+}

@@ -277,6 +277,14 @@ impl<'a> FnLower<'a> {
                     Some(Res::Builtin(sic_types::Builtin::Len)) => {
                         self.emit(InstKind::Len { dst, src: args[0] }, e.span)
                     }
+                    Some(Res::Builtin(sic_types::Builtin::FromJson)) => self.emit(
+                        InstKind::FromJson {
+                            dst,
+                            ty,
+                            src: args[0],
+                        },
+                        e.span,
+                    ),
                     Some(Res::Cap(cap)) => self.emit(
                         InstKind::CallCap {
                             dst,

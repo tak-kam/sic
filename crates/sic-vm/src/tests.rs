@@ -1148,7 +1148,10 @@ fn record_program() -> Program {
     );
     p.types.push(TypeDesc::Object {
         name: "Point".into(),
-        fields: vec![index_of(TypeDesc::Int), index_of(TypeDesc::Int)],
+        fields: vec![
+            ("x".into(), index_of(TypeDesc::Int)),
+            ("y".into(), index_of(TypeDesc::Int)),
+        ],
     });
     p
 }
@@ -1273,4 +1276,94 @@ fn a_nested_value_survives_a_checkpoint() {
         vm.resume(sic_core::CapValue::I64(1)),
         Status::Finished(Value::I64(1))
     ));
+}
+
+// ---- schema validation ----
+
+/// `main` parses the constant document as `Wrapper { value: Int }`.
+fn json_program(document: &str) -> Program {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            2,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abc(Op::FromJson, 1, 5, 0),
+                Inst::abc(Op::GetField, 1, 1, 0),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::Str(document.into())],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![("value".into(), index_of(TypeDesc::Int))],
+    });
+    p.funcs[0].ret_type = index_of(TypeDesc::Int);
+    p
+}
+
+fn schema_error(document: &str) -> String {
+    let p = json_program(document);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::Schema);
+            info.detail.unwrap_or_default()
+        }
+        other => panic!("expected a schema failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_document_that_fits_becomes_a_value() {
+    let p = json_program(r#"{"value": 7}"#);
+    assert_eq!(run(&p, &[]), Value::I64(7));
+}
+
+#[test]
+fn a_mismatch_names_the_path_that_failed() {
+    assert!(
+        schema_error(r#"{"value": "seven"}"#).contains("value: expected Int, found a string"),
+        "{}",
+        schema_error(r#"{"value": "seven"}"#)
+    );
+}
+
+#[test]
+fn a_missing_field_is_a_mismatch_not_a_default() {
+    // Every field is required, so there is nothing to fill a missing one with
+    // that anybody chose.
+    assert!(schema_error("{}").contains("needs a field `value`"));
+}
+
+#[test]
+fn an_unexpected_field_is_refused() {
+    // Ignoring it would accept an answer that is not the shape that was asked
+    // for.
+    assert!(schema_error(r#"{"value": 1, "extra": 2}"#).contains("has no field `extra`"));
+}
+
+#[test]
+fn invalid_json_fails_at_the_boundary() {
+    assert!(schema_error("{\"value\": }").contains("at byte"));
+    // `not ...` starts like `null`, so the parser says what it expected.
+    assert!(schema_error("not json at all").contains("expected `null`"));
+}
+
+#[test]
+fn a_whole_number_fits_a_float_but_not_the_other_way() {
+    let mut p = json_program(r#"{"value": 2}"#);
+    // Change the field to a Float and read it back.
+    p.types[5] = TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![("value".into(), index_of(TypeDesc::Float))],
+    };
+    p.funcs[0].ret_type = index_of(TypeDesc::Float);
+    assert_eq!(run(&p, &[]), Value::F64(2.0));
+
+    // The reverse would change the value, so it is refused.
+    assert!(schema_error(r#"{"value": 1.5}"#).contains("expected Int, found a number"));
 }

@@ -49,9 +49,12 @@ pub enum Op {
     MakeList = 23,
     GetIndex = 24,
     Len = 25,
-    Return = 26,
-    Fail = 27,
-    Halt = 28,
+    /// Parses and validates a document against a type. The only way a value
+    /// enters a run from text.
+    FromJson = 26,
+    Return = 27,
+    Fail = 28,
+    Halt = 29,
 }
 
 impl Op {
@@ -87,9 +90,10 @@ impl Op {
             23 => MakeList,
             24 => GetIndex,
             25 => Len,
-            26 => Return,
-            27 => Fail,
-            28 => Halt,
+            26 => FromJson,
+            27 => Return,
+            28 => Fail,
+            29 => Halt,
             _ => return None,
         })
     }
@@ -123,6 +127,7 @@ impl Op {
             MakeList => "MAKE_LIST",
             GetIndex => "GET_INDEX",
             Len => "LEN",
+            FromJson => "FROM_JSON",
             Return => "RETURN",
             Fail => "FAIL",
             Halt => "HALT",

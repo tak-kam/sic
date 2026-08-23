@@ -113,6 +113,15 @@ pub enum InstKind {
         dst: LocalId,
         src: LocalId,
     },
+    /// Parses a document and checks it against a type.
+    ///
+    /// This is where a model's answer stops being text. A run fails here rather
+    /// than wherever the malformed value would first have been used.
+    FromJson {
+        dst: LocalId,
+        ty: TypeId,
+        src: LocalId,
+    },
 
     // ---- phase 3 and later ----
     // Defined here so the shape of the IR is settled, never generated in v0.1.

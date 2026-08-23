@@ -8,5 +8,6 @@ rust-version.workspace = true
 sic-core = { path = "../sic-core" }
 sic-bytecode = { path = "../sic-bytecode" }
 sic-journal = { path = "../sic-journal" }
+sic-json = { path = "../sic-json" }
 [lints]
 workspace = true

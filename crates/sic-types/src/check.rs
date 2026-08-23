@@ -27,6 +27,9 @@ pub enum Res {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Len,
+    /// `from_json(text)`, whose result type comes from the annotation on the
+    /// binding it initializes.
+    FromJson,
 }
 
 #[derive(Debug, Clone)]
@@ -106,6 +109,9 @@ struct Checker {
     locals: Vec<TypeId>,
     ret_ty: Option<TypeId>,
     ret_annotated: bool,
+    /// The type a `from_json` in this position has to produce, taken from the
+    /// annotation on the binding. `None` means there was none.
+    json_target: Option<TypeId>,
 }
 
 impl Checker {
@@ -124,6 +130,7 @@ impl Checker {
             locals: Vec::new(),
             ret_ty: None,
             ret_annotated: false,
+            json_target: None,
         }
     }
 
@@ -523,7 +530,17 @@ impl Checker {
                         self.node_types.insert(init.id, want);
                         want
                     }
-                    _ => self.check_expr(init),
+                    _ => {
+                        // The annotation is what a `from_json` in this position
+                        // produces.
+                        let saved = self.json_target.replace(annotated.unwrap_or(Types::ERROR));
+                        if annotated.is_none() {
+                            self.json_target = None;
+                        }
+                        let ty = self.check_expr(init);
+                        self.json_target = saved;
+                        ty
+                    }
                 };
                 let slot_ty = match annotated {
                     Some(want) => {
@@ -789,6 +806,10 @@ impl Checker {
                 self.res.insert(callee.id, Res::Builtin(Builtin::Len));
                 return self.check_len(args, span);
             }
+            if name.name == "from_json" {
+                self.res.insert(callee.id, Res::Builtin(Builtin::FromJson));
+                return self.check_from_json(args, span);
+            }
             for a in args {
                 self.check_expr(a);
             }
@@ -1015,6 +1036,42 @@ impl Checker {
             );
         }
         Types::INT
+    }
+
+    /// `from_json(text)`, whose result type is the annotation on the binding.
+    ///
+    /// There is nothing in the call itself to infer a type from, and inventing
+    /// one would move the error from the model boundary to wherever the value
+    /// is first used.
+    fn check_from_json(&mut self, args: &[Expr], span: Span) -> TypeId {
+        if args.len() != 1 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!("`from_json` takes 1 argument but {} were given", args.len()),
+                span,
+                "wrong number of arguments",
+            );
+            return Types::ERROR;
+        }
+        let text = self.check_expr(&args[0]);
+        self.expect_type(Types::STR, text, args[0].span, "this document");
+
+        match self.json_target {
+            Some(ty) => ty,
+            None => {
+                self.error(
+                    "E0353",
+                    "`from_json` needs to know what type to produce",
+                    span,
+                    "annotate the binding it initializes",
+                );
+                self.note("write `let d: Diagnosis = from_json(text);`");
+                Types::ERROR
+            }
+        }
     }
 
     fn check_struct(&mut self, name: &Ident, fields: &[FieldInit], span: Span) -> TypeId {

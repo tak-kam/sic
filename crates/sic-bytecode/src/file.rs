@@ -69,8 +69,9 @@ pub fn encode(p: &Program) -> Vec<u8> {
             TypeDesc::Object { name, fields } => {
                 w.str(name);
                 w.u8(fields.len() as u8);
-                for field in fields {
-                    w.u32(*field);
+                for (field_name, field_type) in fields {
+                    w.str(field_name);
+                    w.u32(*field_type);
                 }
             }
             _ => {}
@@ -267,7 +268,7 @@ fn decode_types(body: &[u8]) -> Result<Vec<TypeDesc>> {
                 let field_count = r.u8()? as usize;
                 let mut fields = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
-                    fields.push(r.u32()?);
+                    fields.push((r.str()?, r.u32()?));
                 }
                 TypeDesc::Object { name, fields }
             }

@@ -877,6 +877,43 @@ fn a_type_containing_itself_does_not_compile() {
 }
 
 #[test]
+fn the_structured_example_parses_and_validates() {
+    let (stdout, stderr, code) = sic(&["run", &example("structured.sic")]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "\"syslog\"\n");
+}
+
+#[test]
+fn a_document_that_does_not_fit_fails_at_the_boundary() {
+    let src = write_temp(
+        "schema.sic",
+        "type W { value: Int }\n\
+         fn main() -> Int {\n\
+             let text = \"{\\\"value\\\": \\\"no\\\"}\";\n\
+             let w: W = from_json(text);\n\
+             return w.value;\n\
+         }\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("does not fit the type"), "{stderr}");
+    assert!(stderr.contains("value: expected Int"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
+fn from_json_needs_to_know_its_type() {
+    let src = write_temp(
+        "from-json-untyped.sic",
+        "fn main() { let d = from_json(\"{}\"); }\n",
+    );
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("E0353"), "{stderr}");
+    std::fs::remove_file(src).ok();
+}
+
+#[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);
     assert_eq!(code, 0);
