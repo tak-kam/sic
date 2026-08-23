@@ -1,426 +1,223 @@
 # sic
 
-A language and execution environment for AI agents, workflows, and automation.
+[![CI](https://github.com/tak-kam/sic/actions/workflows/ci.yml/badge.svg)](https://github.com/tak-kam/sic/actions/workflows/ci.yml)
 
-The goal is not only to express *what to compute*, but to make **what may be
-executed**, **on what grounds it was executed**, and **what actually happened**
-first-class concerns of the language and its runtime.
-
-- Capability-based security: every external effect must be declared
-- A register-based VM running verified, purpose-built bytecode
-- Observability, audit, and replay derived from a single execution journal
-- Durable execution (suspend / save / resume)
-
-The implementation is Rust with **zero external crates**, because supply chain
-attacks are treated as a primary risk.
-
-## Status: phase 8 (OpenTelemetry)
-
-```text
-Source -> Lexer -> Parser -> AST -> Type Checker -> IR
-       -> Bytecode -> Verifier -> VM
-```
-
-```console
-$ sic run examples/milestone.sic
-30
-```
-
-Bytecode can also be written, checked and read on its own:
-
-```console
-$ sic compile examples/factorial.sic -o factorial.sicb
-wrote factorial.sicb (426 bytes)
-
-$ sic verify factorial.sicb
-ok: 2 function(s) verified
-required capabilities:
-  (none)
-
-$ sic disasm factorial.sicb
-...
-  0000  LOAD_CONST  r1, k0  ; 1  ; 5:13
-  0001  LE          r2, r0, r1  ; 5:8
-  0002  JUMP_IF_NOT r2, +2  ; -> 0005  ; 5:8
-```
-
-### What a program may do, before it does any of it
-
-```console
-$ sic plan examples/agent.sic
-Execution plan for examples/agent.sic
-bytecode sha256:5da4f16d8b7cbfc800e8fcebd029dc59888cfb76968ea65c0348eebac2ac6325
-
-  main
-    1. INVOKE llm.invoke    "claude-opus-4"  at most 2 in a run   ; 31:13
-    2. VERIFY Diagnosis   ; 31:13
-
-Capabilities:
-  llm.invoke    [invoke]  "claude-opus-4"
-
-At most 2 capability call(s).
-```
-
-`sic plan` reads bytecode and runs nothing - no socket, no process, no VM -
-which is what makes it worth having on a program nobody has decided to trust
-yet. Everything it needs is already in the file, because each phase put it there
-for this.
-
-It says what a program **may** do, not what it will, and it is careful about the
-difference. Only a `budget` bounds a call site over a whole run; `retry` bounds
-one visit, and how many visits there are depends on the path taken. So sites
-without a budget are counted and named rather than folded into a number that
-would be a guess dressed as a fact. See [docs/design/plan.md](docs/design/plan.md).
-
-### Effects are capabilities
-
-Reaching outside the program takes a grant, and the grant is part of the
-program:
+A language and runtime for AI agents, workflows and automation, where **what a
+program may do** is part of the program.
 
 ```text
 allow {
-    fs.read "./examples/greeting.txt";
+    llm.invoke "claude-opus-4";
+    human.approve "deploying";
+    process.exec "/usr/bin/deploy";
 }
 
-fn main() -> String {
-    return fs.read("./examples/greeting.txt");
-}
-```
-
-Calling a capability the module did not declare is a compile error, so the
-manifest of a compiled module is complete by construction. `sic verify` reports
-it without running anything:
-
-```console
-$ sic verify read-file.sicb
-ok: 1 function(s) verified
-required capabilities:
-  fs.read [read] "./examples/greeting.txt"
-```
-
-A grant can also pin **what** runs, not just where to look:
-
-```text
-allow {
-    process.exec "/usr/bin/true"
-        sha256 "7e419b0d95e2ae12993878ad13ad4b911ce5464c15cde7a6adce2fca7ee22706";
-}
-```
-
-The broker hashes the file on **every** call and refuses to run it if the digest
-does not match - a check that ran earlier only tells you what was true earlier.
-
-The VM never performs the effect itself. It suspends, the driver asks the
-broker, and the broker decides again - the manifest is the contract between
-them, not a formality the compiler already handled:
-
-```text
-CALL_CAP -> Suspended(request) -> broker -> resume(value) -> next instruction
-```
-
-`sic-broker` is the only crate that touches the outside world. See
-[docs/design/capabilities.md](docs/design/capabilities.md).
-
-### Where a value came from decides what it may be used for
-
-```text
-fn deploy(plan: HumanApproved<Plan>) -> Int { ... }
-
-fn main() -> Int {
-    let plan = make_plan(logs);                // LLM<Plan>
-    let approved = approve("deploy this?", plan); // HumanApproved<Plan>
-    return deploy(approved);
-}
-```
-
-Passing `plan` straight to `deploy` does not compile:
-
-```text
-error[E0301]: expected HumanApproved<Plan>, found LLM<Plan>
-```
-
-The model's answer and the answer a person signed off are different values, and
-a type system is where "different" is enforced rather than remembered. A
-provenance is never annotated onto a value - it is attached by whatever produced
-it - and reading a field keeps it: `LLM<Diagnosis>.cause` is `LLM<String>`.
-
-`approve` is the only way to produce a `HumanApproved<T>`, and it needs the
-`human.approve` capability like any other path to an effect. A model's answer
-also cannot reach a `write` or `exec` capability at all.
-
-**Trust is erased before the bytecode.** The rule being enforced is "this
-program may not be written", which is a claim about the program rather than
-about a run, so the VM has never heard of it. See
-[docs/design/trust.md](docs/design/trust.md).
-
-### Runs account for themselves
-
-Observability is not an SDK bolted on afterwards: the runtime produces the
-events, so a program needs no instrumentation to be observable.
-
-```console
-$ sic run examples/read-file.sic --journal run.jsonl
-run 64ddb0176b1919f74b4b8812783de41b -> run.jsonl
-"hello from a file\n"
-
-$ cat run.jsonl
-{"ts":...,"seq":0,...,"span":0,"parent":null,"event":"run_started","workflow":"main","args":"sha256:af5570f5..."}
-{"ts":...,"seq":1,...,"span":1,"parent":0,"event":"function_entered","func":"main"}
-{"ts":...,"seq":2,...,"span":2,"parent":1,"event":"capability_requested","cap":"fs.read","args":"sha256:88d243d0..."}
-{"ts":...,"seq":3,...,"span":2,"parent":1,"event":"capability_completed","cap":"fs.read","result":"sha256:31ddb35c..."}
-{"ts":...,"seq":4,...,"span":1,"parent":0,"event":"function_exited","func":"main"}
-{"ts":...,"seq":5,...,"span":0,"parent":null,"event":"run_completed","result":"sha256:31ddb35c..."}
-```
-
-Events carry **digests, not values**: neither the path read nor the contents
-that came back appear anywhere in that file. Telemetry is an exfiltration path
-like any other, and a default that copies values into it is a default that leaks
-secrets.
-
-`seq` is the order. The timestamp is added by the sink as it writes, so the
-journal itself reads no clock and a run stays reproducible - checked by a test
-that fails if `sic-journal` ever mentions `std::time`.
-
-This one stream is meant to be the single source for durability, tracing,
-metrics, audit and replay, rather than separate mechanisms that have to agree.
-
-### A run can outlive its process
-
-Some effects cannot answer within the call - a person has to approve something.
-The run stops, its state is written out, and it continues when the answer
-arrives:
-
-```console
-$ sic run examples/approval.sic --checkpoint deploy.sicc --journal deploy.jsonl
-waiting: [deploy to production] deploy build 42?
-saved 274 bytes to deploy.sicc
-$ echo $?
-3
-
-$ sic resume deploy.sicc examples/approval.sic --value true --journal deploy.jsonl
-0
-```
-
-Nothing had to be added to the VM for this. Because it suspends rather than
-calling the broker, everything needed to continue was already its state; a
-checkpoint is that state written down. The journal carries on across the two
-processes as one sequence, because a resumed run is the same run.
-
-The checkpoint records the digest of the bytecode it came from, so a run cannot
-be continued inside a program that has changed since. See
-[docs/design/durable-execution.md](docs/design/durable-execution.md).
-
-### Waiting concurrently
-
-```text
-allow { process.exec "/usr/bin/true"; }
-
-fn check() -> Int {
-    return process.exec("/usr/bin/true") retry 2;
-}
-
-fn main() -> Int {
-    let a = spawn check();
-    let b = spawn check();
-    return await a + await b;
-}
-```
-
-What is made concurrent is **waiting**, not computing. A workflow spends its
-time on capability calls, and the point of two tasks is that one can proceed
-while the other waits. There are no OS threads and no async runtime; the
-scheduler is cooperative and a task yields only where it is already waiting, at
-`CALL_CAP` and at `await`.
-
-```text
-seq= 7 task=1 capability_requested   cap=process.exec
-seq= 8 task=2 capability_requested   cap=process.exec
-seq= 9 task=1 capability_completed   cap=process.exec
-seq=12 task=2 capability_completed   cap=process.exec
-```
-
-`retry` and `timeout` attach to a capability call, and only to one - retrying a
-pure function computes the same answer again. They are enforced in different
-places on purpose: **retry belongs to the VM**, which records every attempt, so
-an audit shows what happened rather than only what worked; **timeout belongs to
-the broker**, the only side with a clock. See
-[docs/design/concurrency.md](docs/design/concurrency.md).
-
-### An agent is not a function that returns a string
-
-```text
-type Diagnosis { cause: String, confidence: Float }
-
-allow { llm.invoke "claude-opus-4"; }
-
-agent diagnose {
+agent make_plan {
     input: String,
-    output: Diagnosis,
+    output: Plan,
     budget: 2,
 }
 
-fn main() -> String {
-    let d = diagnose("disk usage is at 100%");
-    return d.cause;
+fn deploy(plan: HumanApproved<Plan>) -> Int {
+    return process.exec("/usr/bin/deploy");
+}
+
+fn main() -> Int {
+    let plan = make_plan("what should we deploy?");
+    return deploy(approve("deploy this?", plan));
 }
 ```
 
-What comes back from a model is text; what a workflow needs is a value it can
-branch on. An `agent` declaration is a **function the compiler writes**: a
-capability call and a validation.
+Passing `plan` to `deploy` without `approve` does not compile. Calling anything
+the `allow` block does not name does not compile. What the program may reach is
+readable from the compiled bytecode, before it runs, without running it.
+
+---
+
+## Why
+
+Most of what a workflow does is reach outside itself: a file, a process, an API,
+a model, a person. The interesting questions are not about the arithmetic.
+
+- What is this program allowed to touch?
+- On what grounds did it do that?
+- What actually happened?
+
+sic answers those in the language and the runtime rather than in convention. An
+effect has to be declared before it can be called; a value carries where it came
+from; a run keeps its own account of itself and can be stopped, moved and
+resumed.
+
+The implementation has **zero external crates**. Supply chain attacks are
+treated as a primary risk, so the lexer, parser, type checker, IR, bytecode
+compiler, verifier, VM, JSON parser, SHA-256, scheduler and journal are all
+written by hand.
+
+## Install
+
+Rust 1.85 or newer, and a C linker.
 
 ```console
-$ sic run examples/agent.sic --checkpoint ask.sicc
-waiting: [claude-opus-4] disk usage is at 100%
-
-$ sic resume ask.sicc examples/agent.sic \
-    --value '{"cause": "disk full", "confidence": 0.9}'
-"disk full"
+$ git clone https://github.com/tak-kam/sic
+$ cd sic
+$ cargo build --release
+$ ./target/release/sic run examples/milestone.sic
+30
 ```
 
-Nothing in the VM knows what an agent is - it sees `CALL_CAP` and `FROM_JSON` -
-and nothing reaches a model without a grant naming it. An answer that does not
-fit fails **at the boundary**, with the path that failed:
-
-```text
-error: the document does not fit the type: evidence[0].weight: expected Int, found a string
-```
-
-`sic-json` is a parser written by hand, accepting RFC 8259 and nothing more, with
-caps on document size and nesting because its input is untrusted text from a
-model. See [docs/design/agents.md](docs/design/agents.md).
-
-### A run can be kept, explained, and replayed
-
-```console
-$ sic run app.sic --record
-run 1fe3d3e5...  recorded in .sic/runs/1fe3d3e5...
-
-$ sic runs
-1fe3d3e5  main        completed   2 capability call(s)
-b59ad9db  main        failed      0 capability call(s)  division by zero
-
-$ sic explain 1fe3d3e5
-$ sic replay 1fe3d3e5
-replaying 1fe3d3e5... (main)
-  18 events matched
-```
-
-A run that stopped is detached, in the sense a terminal multiplexer means: it
-exists, it is not attached to a process, and something can come back to it.
-
-```console
-$ sic runs --waiting
-b4b6776d  main  llm.invoke  [claude-opus-4] what should we deploy?
-
-$ sic attach b4b6776d
-waiting: [claude-opus-4] what should we deploy?
-answer:  sic attach b4b6776d --value <String>
-
-$ sic attach b4b6776d --value '{"action": "restart the service"}'
-waiting: [deploying] deploy this?
-```
-
-**Reading the question is a separate step from answering it**, which is the half
-that makes this usable by something other than a person who already knows what
-the run wants. Whatever answers - a person, or an agent driving `sic` - finds its
-work with `sic runs --waiting` and does it with `sic attach`.
-
-That is also why a deferred `llm.invoke` is not a gap to be closed later: the
-thing outside that answers a model call can be whatever is driving `sic`.
-
-`replay` re-runs the **stored bytecode** against the answers the broker gave the
-first time, and compares the journal it produces with the one that was recorded.
-What that establishes is determinism: given the same program and the same
-answers, the VM does the same thing. It calls nothing - a replay that asked the
-broker again would be a second run, with a second set of effects.
-
-The answers live in their own file, not in the journal. The journal is an
-account of a run that leaves the process, so it records digests; replaying needs
-values. Keeping them apart means the file that is safe to ship stays safe to
-ship. Recording is opt-in for the same reason. See
-[docs/design/runs.md](docs/design/runs.md).
-
-### Telemetry is a view of the journal
-
-```console
-$ sic run app.sic --journal run.jsonl
-$ sic export run.jsonl --traces traces.json --metrics metrics.json
-```
-
-The journal is the canonical record; OpenTelemetry is an external interface. The
-arrow points one way, and none of the OTel vocabulary reaches back into the
-event model.
-
-The exporter **converts and does not send**. Sending telemetry is an external
-effect, and an external effect is a capability - a VM that could quietly post
-spans somewhere would be the exfiltration path the journal was careful not to
-build. It is also a pure function of the journal, so it can run long after the
-run finished, on a machine that never saw it.
-
-Spans come from events that already carry a span and a parent, so a trace is
-pairing starts with ends rather than reconstructing a tree. A span that never
-closed - a run that was killed - is exported with an error status rather than
-dropped, since those are the runs worth looking at. **Digests stay digests**:
-converting to another format is not a reason to start including values. See
-[docs/design/observability.md](docs/design/observability.md).
-
-Every phase is verified: `sic run` compiles, verifies, and only then executes.
-The VM never runs bytecode that has not passed the verifier, including bytecode
-this process just produced.
-
-Other commands: `sic parse` (AST), `sic hir` (high-level IR).
-
-See [docs/design/v0.1.md](docs/design/v0.1.md) for the design.
-
-## Building
-
-```console
-$ cargo test
-$ cargo run -p sic-cli -- parse examples/milestone.sic
-```
-
-Linking needs a C linker (`cc`). If you see `linker 'cc' not found`, install one
-(`sudo apt install build-essential` on Debian/Ubuntu). If you cannot, link with
-the `rust-lld` that rustup already ships, against the musl target:
+Without a C linker, link with the `rust-lld` that rustup already ships:
 
 ```console
 $ rustup target add x86_64-unknown-linux-musl
 $ LLD="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld"
 $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
-    cargo test --target x86_64-unknown-linux-musl
+    cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-## Layout
+## A first program
 
-| crate | role |
-|-------|------|
-| `sic-core` | `Span`, `SourceFile`, `Diagnostic`, shared ID newtypes |
-| `sic-syntax` | lexer, AST, parser (recursive descent; Pratt for expressions) |
-| `sic-types` | interned types, type checker, name resolution |
-| `sic-ir` | high-level IR, where workflow semantics still exist |
-| `sic-bytecode` | instruction set, `.sicb` format, disassembler |
-| `sic-compile` | HIR to bytecode |
-| `sic-verify` | the bytecode verifier |
-| `sic-vm` | the register VM |
-| `sic-journal` | the execution journal: events, digests, JSONL |
-| `sic-json` | a JSON parser, for what a model answers with |
-| `sic-plan` | what a program may do, read from its bytecode |
-| `sic-otel` | turns a journal into OTLP traces and metrics |
-| `sic-broker` | performs capability calls; the only crate with external effects |
-| `sic-cli` | the `sic` command |
+```text
+// hello.sic
+allow {
+    fs.read "./hello.sic";
+}
 
-`sic-vm` performs no external effects and does not depend on `sic-broker`; that boundary is where the VM and the capability
-broker will later split into separate processes, and it is checked by a test
-rather than left as an intention.
+fn main() -> Int {
+    return len(fs.read("./hello.sic"));
+}
+```
 
-## Adding a dependency
+```console
+$ sic plan hello.sic          # what it may do, running nothing
+Execution plan for hello.sic
+bytecode sha256:...
 
-`[dependencies]` stays empty. To propose a crate, document the following in
-`docs/design/` first:
+  main
+    1. READ   fs.read  "./hello.sic"
 
-1. why it is needed
-2. why `std` alone is insufficient
-3. how much the dependency tree grows
-4. the cost of implementing it by hand
-5. the security impact
+$ sic run hello.sic
+99
+```
+
+It reads its own source and returns its length.
+
+Remove the `allow` block and it stops compiling, with the fix in the message.
+
+## What it does
+
+**Capabilities.** Every external effect is declared, typed and constrained.
+Calling one the module did not grant is a compile error, so the manifest of a
+compiled module is complete by construction. `process.exec` takes an absolute
+path, never searches `PATH`, and can pin the binary's sha256.
+→ [capabilities.md](docs/design/capabilities.md)
+
+**The VM cannot reach outside.** It suspends at an effect and something else
+performs it. That boundary is checked by a test, not by convention, and it is
+where the VM and the broker will later split into separate processes.
+
+**Durable execution.** A run that cannot finish now is written to a checkpoint
+and continues later, in another process, on another day. Nothing had to be added
+to the VM for this: suspending was already how it worked.
+→ [durable-execution.md](docs/design/durable-execution.md)
+
+**Tasks.** `spawn` and `await` over a cooperative scheduler. What is made
+concurrent is waiting, not computing: while one task is stopped at a capability
+call, another runs. No OS threads, no async runtime.
+→ [concurrency.md](docs/design/concurrency.md)
+
+**Agents with typed output.** An agent is a model call and a validation. What
+comes back is text; what the program gets is a value that fit a declared type,
+and a run fails at the model boundary rather than three steps later.
+→ [agents.md](docs/design/agents.md)
+
+**Trust and provenance.** `LLM<T>` is attached by an agent, `HumanApproved<T>`
+by `approve`, and a model's answer cannot reach a capability that changes
+something. Reading a field keeps the label. It is all erased before the bytecode:
+the rule is about the program, not about a run.
+→ [trust.md](docs/design/trust.md)
+
+**A journal, not instrumentation.** The runtime produces the events, so a
+program needs none. It records digests, never values, because telemetry is an
+exfiltration path like any other. Traces and metrics are a view of it.
+→ [observability.md](docs/design/observability.md)
+
+**Runs you can come back to.** `sic runs --waiting` says what is waiting and for
+what; `sic attach <id>` answers it. Reading the question is a separate step from
+answering it, which is what makes it usable by something other than a person.
+`sic replay <id>` re-runs the stored bytecode against the stored answers and
+compares - which is a check on determinism, and calls nothing.
+→ [runs.md](docs/design/runs.md)
+
+## Commands
+
+```text
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record]
+sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
+sic runs [--waiting]               what has been recorded, or what is waiting
+sic attach <RUN-ID> [--value V]    see what a waiting run needs, or answer it
+sic resume <CHECKPOINT> <FILE.sic> --value <V>
+sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
+sic export <JOURNAL> [--traces P] [--metrics P]
+sic compile | verify | disasm | parse | hir
+```
+
+Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
+
+## Documentation
+
+| | |
+|---|---|
+| [status.md](docs/status.md) | where each part of the design stands |
+| [v0.1.md](docs/design/v0.1.md) | the language, the bytecode, the VM, the verifier |
+| [capabilities.md](docs/design/capabilities.md) | how effects are declared and performed |
+| [durable-execution.md](docs/design/durable-execution.md) | suspend, checkpoint, resume |
+| [concurrency.md](docs/design/concurrency.md) | tasks, retry, timeout |
+| [agents.md](docs/design/agents.md) | structured output and agents |
+| [trust.md](docs/design/trust.md) | provenance in the type system |
+| [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
+| [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
+| [plan.md](docs/design/plan.md) | `sic plan` |
+| [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
+
+Each design document records what was deliberately left out, and why. That is
+usually the more useful half.
+
+## How it is built
+
+```text
+Source → Lexer → Parser → AST → Type Checker → IR
+       → Bytecode → Verifier → VM → Capability Broker
+```
+
+Fourteen crates, no external dependencies, 30 instructions in a register VM that
+only runs bytecode a verifier has accepted. Three boundaries are enforced by
+tests rather than left as intentions:
+
+- only the broker and the CLI touch the outside world
+- the VM never depends on the broker
+- `sic-core` depends on nothing else in the workspace
+
+## Principles
+
+Simple, small, explicit, deterministic, testable, dependency-free, auditable.
+
+- No implicit network access, no implicit credentials, no runtime dependency
+  resolution, no dynamic plugin loading, no `PATH`-based executable resolution
+- No capability without an explicit declaration
+- No bytecode execution without verification
+- No secrets in telemetry by default
+- No abstraction built for a feature that does not exist yet
+
+Adding a dependency means first documenting, in `docs/design/`: why it is needed,
+why `std` is insufficient, how much the dependency tree grows, the cost of
+writing it by hand, and the security impact. "It is convenient" is not an
+argument.
+
+## Status
+
+Early, and honest about it. Phases 1 to 8 of the design are implemented and
+`docs/status.md` says exactly what is not. The largest gap is that there is no
+`import`, so a program is one file.
+
+Not a stable language. Not benchmarked. Not something to run untrusted code with
+yet, though most of the machinery for that is the point of the design.

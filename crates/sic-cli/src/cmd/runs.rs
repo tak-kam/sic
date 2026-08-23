@@ -343,9 +343,9 @@ pub fn replay(prefix: &str) -> ExitCode {
 /// something in the run was not as deterministic as it claimed to be.
 ///
 /// Suspending, checkpointing and resuming are left out of the comparison. They
-/// record how a run was carried out - in how many sittings the answers arrived
-/// - rather than what the program did, and a run that stopped twice for a
-/// person is the same run as one that was answered immediately.
+/// record how a run was carried out (in how many sittings the answers arrived)
+/// rather than what the program did. A run that stopped twice for a person is
+/// the same run as one that was answered immediately.
 fn compare(recorded: &[TimedEvent], replayed: &[sic_journal::Event]) -> Vec<String> {
     let original: Vec<&sic_journal::Event> = recorded
         .iter()
