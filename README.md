@@ -98,6 +98,18 @@ required capabilities:
   fs.read [read] "./examples/greeting.txt"
 ```
 
+A grant can also pin **what** runs, not just where to look:
+
+```text
+allow {
+    process.exec "/usr/bin/true"
+        sha256 "7e419b0d95e2ae12993878ad13ad4b911ce5464c15cde7a6adce2fca7ee22706";
+}
+```
+
+The broker hashes the file on **every** call and refuses to run it if the digest
+does not match - a check that ran earlier only tells you what was true earlier.
+
 The VM never performs the effect itself. It suspends, the driver asks the
 broker, and the broker decides again - the manifest is the contract between
 them, not a formality the compiler already handled:

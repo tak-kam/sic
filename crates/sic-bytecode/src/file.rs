@@ -100,6 +100,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.str(&c.name);
         w.u8(c.kind as u8);
         w.str(&c.constraints);
+        w.str(&c.pin);
         w.u8(c.params.len() as u8);
         for t in &c.params {
             w.u32(*t);
@@ -308,7 +309,7 @@ fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
 
 fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
     let mut r = Reader::new(body);
-    let n = r.count(14)?;
+    let n = r.count(18)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -316,6 +317,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
         let kind = CapKind::from_u8(raw)
             .ok_or_else(|| DecodeError::new(format!("unknown capability kind {raw}")))?;
         let constraints = r.str()?;
+        let pin = r.str()?;
         let param_count = r.u8()? as usize;
         let mut params = Vec::with_capacity(param_count);
         for _ in 0..param_count {
@@ -325,6 +327,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             name,
             kind,
             constraints,
+            pin,
             params,
             ret_type: r.u32()?,
         });
@@ -400,6 +403,7 @@ mod tests {
                 name: "process.exec".into(),
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
+                pin: "a".repeat(64),
                 params: vec![4],
                 ret_type: 2,
             }],

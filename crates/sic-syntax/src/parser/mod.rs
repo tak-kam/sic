@@ -383,6 +383,30 @@ impl Parser {
             }
             _ => None,
         };
+        // `sha256 "..."` pins what may run. It is an ordinary identifier, so
+        // nothing is reserved for it.
+        let sha256 = match self.peek().clone() {
+            TokenKind::Ident(name) if name == "sha256" => {
+                self.bump();
+                match self.peek().clone() {
+                    TokenKind::Str(text) => {
+                        let span = self.bump().span;
+                        Some(Ident2 { text, span })
+                    }
+                    other => {
+                        let span = self.span();
+                        self.error(
+                            "E0211",
+                            "`sha256` needs a digest",
+                            span,
+                            format!("found {}", other.describe()),
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        };
         if !self.expect(&TokenKind::Semi, "after a capability grant") {
             self.recover_to_grant_end();
         }
@@ -390,6 +414,7 @@ impl Parser {
             id,
             path,
             constraint,
+            sha256,
             span: Span::new(start, self.prev_end()),
         }
     }

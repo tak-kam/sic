@@ -25,6 +25,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
             name: "fs.read".into(),
             kind: CapKind::Read,
             constraints: "./a.txt".into(),
+            pin: String::new(),
             params: vec![4],
             ret_type: 4,
         }],
@@ -173,6 +174,7 @@ fn a_granted_but_uncalled_capability_is_named() {
         name: "process.exec".into(),
         kind: CapKind::Exec,
         constraints: "/usr/bin/true".into(),
+        pin: String::new(),
         params: vec![4],
         ret_type: 2,
     });
@@ -180,6 +182,21 @@ fn a_granted_but_uncalled_capability_is_named() {
     assert_eq!(plan.unused, vec!["process.exec".to_string()]);
     // It is still in the manifest, because the grant exists either way.
     assert_eq!(plan.capabilities.len(), 2);
+}
+
+#[test]
+fn a_plan_says_whether_a_grant_pins_what_runs() {
+    // It is what a reader most wants to know about a grant.
+    let unpinned = plan(&program_with_capability(None), digest());
+    assert!(render(&unpinned, "main.sic").contains("(not pinned)"));
+
+    let mut p = program_with_capability(None);
+    p.caps[0].pin = "b".repeat(64);
+    let text = render(&plan(&p, digest()), "main.sic");
+    assert!(
+        text.contains(&format!("sha256:{}", "b".repeat(64))),
+        "{text}"
+    );
 }
 
 #[test]

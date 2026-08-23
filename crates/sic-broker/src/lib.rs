@@ -12,7 +12,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue};
+use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
 /// The largest file `fs.read` will return. A capability that can exhaust the
 /// host's memory is not much of a boundary.
@@ -21,6 +21,10 @@ pub const MAX_READ_BYTES: u64 = 1 << 20;
 /// How often a timed-out child process is checked. Small enough that a deadline
 /// is roughly honoured, large enough that waiting is not a spin.
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+/// How much of a file is hashed at a time. An executable can be large, and
+/// reading one into memory to check it would be its own problem.
+const HASH_CHUNK: usize = 64 * 1024;
 
 #[derive(Debug, Clone)]
 pub struct Broker {
@@ -117,6 +121,20 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
         )));
     }
 
+    // A path says where to look, not what is there. When the grant pins the
+    // contents, they are checked on every call: a check that ran earlier tells
+    // you what was true earlier.
+    if !grant.pin.is_empty() {
+        let found = hash_file(&path)?;
+        if found != grant.pin.to_ascii_lowercase() {
+            return Err(CapError::new(format!(
+                "`{}` is sha256:{found}, but the grant pins sha256:{}",
+                path.display(),
+                grant.pin
+            )));
+        }
+    }
+
     let mut command = std::process::Command::new(&path);
     command.env_clear();
     let status = if request.timeout_ms == 0 {
@@ -188,6 +206,27 @@ fn run_with_deadline(
         }
         std::thread::sleep(POLL_INTERVAL);
     }
+}
+
+/// The sha256 of a file, read in chunks so that a large executable is not read
+/// into memory to check it.
+fn hash_file(path: &Path) -> Result<String, CapError> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| CapError::new(format!("cannot read `{}`: {e}", path.display())))?;
+    let mut hash = Sha256::new();
+    let mut buffer = vec![0u8; HASH_CHUNK];
+    loop {
+        let read = file
+            .read(&mut buffer)
+            .map_err(|e| CapError::new(format!("cannot read `{}`: {e}", path.display())))?;
+        if read == 0 {
+            break;
+        }
+        hash.update(&buffer[..read]);
+    }
+    Ok(hash.finish().hex())
 }
 
 /// Refuses a deadline this capability cannot honour.

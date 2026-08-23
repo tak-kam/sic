@@ -253,6 +253,13 @@ fn allow_block() {
 }
 
 #[test]
+fn a_grant_may_pin_what_runs() {
+    let out = ok("allow { process.exec \"/usr/bin/true\" sha256 \"abc\"; }\nfn main() { }");
+    assert!(out.contains("sha256 \"abc\""), "{out}");
+    assert!(codes("allow { process.exec \"/x\" sha256; }\nfn main() { }").contains(&"E0211"));
+}
+
+#[test]
 fn a_grant_may_omit_its_constraint() {
     let out = ok("allow { fs.read; }\nfn main() { }");
     assert!(out.contains("(fs.read)"), "{out}");

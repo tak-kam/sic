@@ -172,9 +172,37 @@ Rules in v0.1:
 - The process inherits no environment and no arguments; its exit code is the
   result. A signal is a failure, not an exit code.
 
+### Pinning what runs
+
+An absolute path says *where* to look, not *what is there*. A path that pointed
+at the right binary yesterday can point at a different one today - a package
+upgrade, a writable directory, someone with a shell. So a grant can pin the
+contents:
+
+```text
+allow {
+    process.exec "/usr/bin/true"
+        sha256 "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3";
+}
+```
+
+The broker hashes the file and refuses to run it if the digest does not match.
+That happens on every call, not once at startup: a check that ran earlier tells
+you what was true earlier.
+
+A pin is optional, because requiring one would make `process.exec` unusable
+where the binary legitimately changes. Whether a grant without one is acceptable
+is a question for whoever reads the plan, and `sic plan` says which grants are
+pinned.
+
+Only `process.exec` takes a pin. Pinning a path that `fs.read` will read is a
+different feature - it would have to say what the contents must be, which is not
+what a grant is for - and accepting the syntax while ignoring it would be worse
+than refusing it.
+
 Not in v0.1, and named so their absence is a decision rather than an oversight:
-binary hash pinning, path prefixes and globs, credential injection, timeouts,
-and any capability that opens a socket.
+path prefixes and globs, credential injection, and any capability that opens a
+socket.
 
 ---
 

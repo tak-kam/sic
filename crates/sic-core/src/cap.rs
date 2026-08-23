@@ -79,6 +79,9 @@ pub struct CapGrant {
     pub kind: CapKind,
     /// What the grant is limited to. Its meaning belongs to the capability.
     pub constraint: String,
+    /// The digest the file has to have, or empty for a grant that does not pin
+    /// what runs.
+    pub pin: String,
 }
 
 /// What the VM asks the broker to do.

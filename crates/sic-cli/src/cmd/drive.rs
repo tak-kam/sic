@@ -46,6 +46,7 @@ pub fn manifest(program: &Program) -> Vec<CapGrant> {
             name: c.name.clone(),
             kind: c.kind,
             constraint: c.constraints.clone(),
+            pin: c.pin.clone(),
         })
         .collect()
 }

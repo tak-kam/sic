@@ -373,6 +373,7 @@ fn exec_program() -> Program {
         name: "process.exec".into(),
         kind: sic_core::CapKind::Exec,
         constraints: "/usr/bin/true".into(),
+        pin: String::new(),
         params: vec![4],
         ret_type: 2,
     });

@@ -338,12 +338,36 @@ impl Checker {
                     }
                     None => String::new(),
                 };
+                let pin = match &grant.sha256 {
+                    Some(pin) if !sig.accepts_pin => {
+                        self.error(
+                            "E0327",
+                            format!("`{full}` cannot be pinned"),
+                            pin.span,
+                            "only `process.exec` takes a digest",
+                        );
+                        self.note("pinning what a capability reads would have to say what the contents must be, which is not what a grant is for");
+                        String::new()
+                    }
+                    Some(pin) if !is_sha256(&pin.text) => {
+                        self.error(
+                            "E0326",
+                            "a pin is a sha256 digest",
+                            pin.span,
+                            "expected 64 hexadecimal characters",
+                        );
+                        String::new()
+                    }
+                    Some(pin) => pin.text.to_ascii_lowercase(),
+                    None => String::new(),
+                };
                 let id = CapId(self.caps.len() as u32);
                 self.cap_ids.insert(full.clone(), id);
                 self.caps.push(CapEntry {
                     name: full,
                     kind: sig.kind,
                     constraint,
+                    pin,
                     params: sig.params.to_vec(),
                     ret: sig.ret,
                 });
@@ -1382,6 +1406,11 @@ impl Checker {
             self.diags,
         )
     }
+}
+
+/// Whether a string is 64 hexadecimal characters.
+fn is_sha256(text: &str) -> bool {
+    text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// Records an error type for a node and returns it.

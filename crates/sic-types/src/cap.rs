@@ -19,6 +19,13 @@ pub struct CapSig {
     /// Whether a grant must name what it is limited to. Every capability in
     /// v0.1 does: an unconstrained grant of `process.exec` is a shell.
     pub requires_constraint: bool,
+    /// Whether a grant may pin the file's digest.
+    ///
+    /// Only running a program takes one. Pinning what `fs.read` reads would
+    /// have to say what the contents must be, which is not what a grant is for,
+    /// and accepting the syntax while ignoring it would be worse than refusing
+    /// it.
+    pub accepts_pin: bool,
 }
 
 /// What v0.1 can do. Nothing here needs a credential or a socket.
@@ -29,6 +36,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         params: &[Types::STR],
         ret: Types::STR,
         requires_constraint: true,
+        accepts_pin: false,
     },
     CapSig {
         name: "fs.write",
@@ -36,6 +44,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         params: &[Types::STR, Types::STR],
         ret: Types::UNIT,
         requires_constraint: true,
+        accepts_pin: false,
     },
     CapSig {
         name: "llm.invoke",
@@ -47,6 +56,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         // The constraint names the model, so a manifest says which one a
         // module may talk to.
         requires_constraint: true,
+        accepts_pin: false,
     },
     CapSig {
         name: "human.approve",
@@ -57,6 +67,7 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         // An unconstrained approval would be an approval of anything, so a
         // grant has to say what it covers.
         requires_constraint: true,
+        accepts_pin: false,
     },
     CapSig {
         name: "process.exec",
@@ -66,6 +77,8 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         params: &[Types::STR],
         ret: Types::INT,
         requires_constraint: true,
+        // An absolute path says where to look, not what is there.
+        accepts_pin: true,
     },
 ];
 
@@ -84,6 +97,8 @@ pub struct CapEntry {
     pub name: String,
     pub kind: CapKind,
     pub constraint: String,
+    /// The digest the file has to have, or empty for a grant that does not pin.
+    pub pin: String,
     pub params: Vec<TypeId>,
     pub ret: TypeId,
 }

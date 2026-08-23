@@ -359,6 +359,37 @@ fn a_grant_must_be_constrained() {
 }
 
 #[test]
+fn only_running_a_program_can_be_pinned() {
+    let digest = "a".repeat(64);
+    ok(&format!(
+        "allow {{ process.exec \"/usr/bin/true\" sha256 \"{digest}\"; }}\n\
+         fn main() -> Int {{ return process.exec(\"/usr/bin/true\"); }}"
+    ));
+    // Pinning what a capability reads would have to say what the contents must
+    // be, which is not what a grant is for.
+    assert!(
+        codes(&format!(
+            "allow {{ fs.read \"a\" sha256 \"{digest}\"; }}\nfn main() {{ }}"
+        ))
+        .contains(&"E0327")
+    );
+}
+
+#[test]
+fn a_pin_is_a_sha256_digest() {
+    assert!(
+        codes("allow { process.exec \"/x\" sha256 \"nope\"; }\nfn main() { }").contains(&"E0326")
+    );
+    assert!(
+        codes(&format!(
+            "allow {{ process.exec \"/x\" sha256 \"{}\"; }}\nfn main() {{ }}",
+            "z".repeat(64)
+        ))
+        .contains(&"E0326")
+    );
+}
+
+#[test]
 fn a_capability_is_granted_once() {
     assert!(codes("allow { fs.read \"a\"; fs.read \"b\"; }\nfn main() { }").contains(&"E0323"));
 }

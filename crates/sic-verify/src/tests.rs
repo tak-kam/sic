@@ -404,6 +404,7 @@ fn with_exec_capability(reg_count: u8, consts: Vec<Const>, code: Vec<Inst>) -> P
         name: "process.exec".into(),
         kind: CapKind::Exec,
         constraints: "/usr/bin/true".into(),
+        pin: String::new(),
         params: vec![4],
         ret_type: 2,
     });

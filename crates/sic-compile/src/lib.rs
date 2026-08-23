@@ -67,6 +67,7 @@ pub fn compile(hir: &Hir, file: &SourceFile) -> Result<Program, Vec<CompileError
             name: c.name.clone(),
             kind: c.kind,
             constraints: c.constraint.clone(),
+            pin: c.pin.clone(),
             params: c
                 .params
                 .iter()

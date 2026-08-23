@@ -93,6 +93,15 @@ pub struct CapGrant {
     /// What the grant is limited to: a file path, an executable path. Its
     /// meaning belongs to the capability, not to the grammar.
     pub constraint: Option<String>,
+    /// The digest the file has to have, for a grant that pins what runs.
+    pub sha256: Option<Ident2>,
+    pub span: Span,
+}
+
+/// A string written in the source, with where it was written.
+#[derive(Debug, Clone)]
+pub struct Ident2 {
+    pub text: String,
     pub span: Span,
 }
 

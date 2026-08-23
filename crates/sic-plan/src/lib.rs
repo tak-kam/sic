@@ -100,6 +100,8 @@ pub struct Grant {
     pub name: String,
     pub kind: CapKind,
     pub constraint: String,
+    /// The digest the file has to have, if the grant pins what runs.
+    pub pin: String,
 }
 
 /// Reads a program and works out what it may do.
@@ -180,6 +182,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             name: c.name.clone(),
             kind: c.kind,
             constraint: c.constraints.clone(),
+            pin: c.pin.clone(),
         })
         .collect();
     let unused = program
@@ -250,11 +253,19 @@ pub fn render(plan: &Plan, source: &str) -> String {
     }
     for grant in &plan.capabilities {
         out.push_str(&format!(
-            "  {:<14}[{}]  {:?}\n",
+            "  {:<14}[{}]  {:?}",
             grant.name,
             grant.kind.name(),
             grant.constraint
         ));
+        // Whether a grant pins what runs is what a reader most wants to know
+        // about it, so it is on the same line.
+        if grant.pin.is_empty() {
+            out.push_str("  (not pinned)");
+        } else {
+            out.push_str(&format!("  sha256:{}", grant.pin));
+        }
+        out.push('\n');
     }
     for name in &plan.unused {
         out.push_str(&format!(

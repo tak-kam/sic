@@ -7,7 +7,22 @@ fn grant(name: &str, kind: CapKind, constraint: &str) -> CapGrant {
         name: name.into(),
         kind,
         constraint: constraint.into(),
+        pin: String::new(),
     }
+}
+
+fn pinned(name: &str, kind: CapKind, constraint: &str, pin: &str) -> CapGrant {
+    CapGrant {
+        pin: pin.into(),
+        ..grant(name, kind, constraint)
+    }
+}
+
+/// The sha256 of a file, as the broker computes it.
+fn digest_of(path: &str) -> String {
+    let mut hash = sic_core::Sha256::new();
+    hash.update(&std::fs::read(path).expect("the file should be readable"));
+    hash.finish().hex()
 }
 
 fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
@@ -189,29 +204,38 @@ fn an_approval_defers_rather_than_answering() {
     }
 }
 
-/// A script that runs longer than any deadline a test sets.
+/// Writes an executable script and returns its path.
 ///
-/// `process.exec` takes no arguments yet, so a slow child has to be a file
-/// rather than `sleep 5`.
+/// Each test uses its own name: they run in parallel, and a shared file would
+/// be busy or already deleted.
 #[cfg(unix)]
-fn slow_script() -> Option<String> {
+fn script(name: &str, body: &str) -> Option<String> {
     use std::os::unix::fs::PermissionsExt;
 
     if !std::path::Path::new("/bin/sh").exists() {
         return None;
     }
-    let path = temp_path("slow.sh");
-    std::fs::write(&path, "#!/bin/sh\nsleep 5\n").ok()?;
+    let path = temp_path(name);
+    std::fs::write(&path, body).ok()?;
     let mut perms = std::fs::metadata(&path).ok()?.permissions();
     perms.set_mode(0o755);
     std::fs::set_permissions(&path, perms).ok()?;
     Some(path)
 }
 
+/// A script that runs longer than any deadline a test sets.
+///
+/// `process.exec` takes no arguments yet, so a slow child has to be a file
+/// rather than `sleep 5`.
+#[cfg(unix)]
+fn slow_script(name: &str) -> Option<String> {
+    script(name, "#!/bin/sh\nsleep 5\n")
+}
+
 #[cfg(unix)]
 #[test]
 fn a_deadline_kills_a_slow_child() {
-    let Some(script) = slow_script() else {
+    let Some(script) = slow_script("deadline.sh") else {
         return;
     };
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
@@ -231,7 +255,7 @@ fn a_deadline_kills_a_slow_child() {
 #[test]
 fn without_a_deadline_a_slow_child_is_waited_for() {
     // The same script, with no timeout, runs to completion.
-    let Some(script) = slow_script() else {
+    let Some(script) = slow_script("waited.sh") else {
         return;
     };
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
@@ -251,4 +275,60 @@ fn a_capability_that_cannot_honour_a_deadline_says_so() {
     req.timeout_ms = 100;
     let err = broker.call(&req).unwrap_err();
     assert!(err.message.contains("cannot honour a timeout"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
+    // A path says where to look, not what is there.
+    let Some(script) = script("pinned.sh", "#!/bin/sh\nexit 0\n") else {
+        return;
+    };
+    let digest = digest_of(&script);
+
+    let mut broker = Broker::new(vec![pinned(
+        "process.exec",
+        CapKind::Exec,
+        &script,
+        &digest,
+    )]);
+    assert_eq!(
+        broker.call(&request(0, "process.exec", &[&script])),
+        Ok(CapOutcome::Value(CapValue::I64(0)))
+    );
+
+    // The file changing is the whole reason to pin it.
+    std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
+    let err = broker
+        .call(&request(0, "process.exec", &[&script]))
+        .unwrap_err();
+    assert!(err.message.contains("but the grant pins"), "{err}");
+
+    std::fs::remove_file(&script).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_pin_is_checked_on_every_call() {
+    // A check that ran earlier tells you what was true earlier.
+    let Some(script) = script("recheck.sh", "#!/bin/sh\nexit 0\n") else {
+        return;
+    };
+    let digest = digest_of(&script);
+    let mut broker = Broker::new(vec![pinned(
+        "process.exec",
+        CapKind::Exec,
+        &script,
+        &digest,
+    )]);
+
+    assert!(broker.call(&request(0, "process.exec", &[&script])).is_ok());
+    std::fs::write(&script, "#!/bin/sh\nexit 0\n# changed\n").unwrap();
+    assert!(
+        broker
+            .call(&request(0, "process.exec", &[&script]))
+            .is_err()
+    );
+
+    std::fs::remove_file(&script).ok();
 }

@@ -249,8 +249,11 @@ impl FuncDef {
 pub struct CapDecl {
     pub name: String,
     pub kind: CapKind,
-    /// Constraints such as an absolute path or a sha256 pin.
+    /// What the grant is limited to: an absolute path, a file path.
     pub constraints: String,
+    /// The digest the file has to have, or empty for a grant that does not pin
+    /// what runs.
+    pub pin: String,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

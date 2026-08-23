@@ -72,10 +72,14 @@ impl Printer {
         self.line("(allow");
         self.depth += 1;
         for g in &a.grants {
-            match &g.constraint {
-                Some(c) => self.line(&format!("({} {c:?})", g.path.full_name())),
-                None => self.line(&format!("({})", g.path.full_name())),
+            let mut parts = vec![g.path.full_name()];
+            if let Some(c) = &g.constraint {
+                parts.push(format!("{c:?}"));
             }
+            if let Some(pin) = &g.sha256 {
+                parts.push(format!("sha256 {:?}", pin.text));
+            }
+            self.line(&format!("({})", parts.join(" ")));
         }
         self.depth -= 1;
         self.push_close();
