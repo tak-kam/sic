@@ -105,10 +105,15 @@ that `Cargo.lock` agrees with the manifests. `main` refuses force pushes and
 deletion, so a mistake in a commit message is fixed by another commit rather
 than by rewriting history.
 
-Commits and tags are signed with an SSH key (`gpg.format ssh`), so who made a
-commit is a checkable fact rather than a name typed into a field. A release tag
-is a signed object; the binaries attached to it are pinned by digest instead,
-and `docs/design/update.md` says why those are two different claims.
+Commits and tags are signed with an SSH key (`gpg.format ssh`), and `main`
+requires signatures, so who made a commit is a checkable fact rather than a name
+typed into a field. A release tag is a signed object; the binaries attached to it
+are pinned by digest instead, and `docs/design/update.md` says why those are two
+different claims.
+
+That means a machine without the signing key cannot push to `main`. Set
+`user.signingkey`, `gpg.format ssh` and `commit.gpgsign` there too, rather than
+turning the requirement off.
 
 ## Building
 
