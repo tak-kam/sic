@@ -204,6 +204,40 @@ fn an_approval_defers_rather_than_answering() {
     }
 }
 
+/// Serializes the tests that write and then execute a script.
+///
+/// Tests run in parallel, and `Command::spawn` forks: a child started by one
+/// test inherits whatever file descriptors are open at that instant, including
+/// the write handle another test just opened. The kernel then refuses to
+/// execute that file with `ETXTBSY`. Naming each script differently is not
+/// enough, because the race is about when the fork happens rather than about
+/// which file it is.
+#[cfg(unix)]
+static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(unix)]
+fn scripts_lock() -> std::sync::MutexGuard<'static, ()> {
+    // A test that panicked while holding it poisoned nothing worth protecting.
+    SCRIPTS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Calls the broker, waiting out a file that is briefly busy.
+///
+/// This is the same race as above, from the other side: it can still be lost
+/// against a test that does not touch scripts at all.
+#[cfg(unix)]
+fn call_settled(broker: &mut Broker, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    for _ in 0..50 {
+        match broker.call(request) {
+            Err(e) if e.message.contains("Text file busy") => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            other => return other,
+        }
+    }
+    broker.call(request)
+}
+
 /// Writes an executable script and returns its path.
 ///
 /// Each test uses its own name: they run in parallel, and a shared file would
@@ -229,12 +263,15 @@ fn script(name: &str, body: &str) -> Option<String> {
 /// rather than `sleep 5`.
 #[cfg(unix)]
 fn slow_script(name: &str) -> Option<String> {
-    script(name, "#!/bin/sh\nsleep 5\n")
+    // Long enough to outlast a 100ms deadline by a wide margin, short enough
+    // that the test which waits for it does not cost five seconds every run.
+    script(name, "#!/bin/sh\nsleep 1\n")
 }
 
 #[cfg(unix)]
 #[test]
 fn a_deadline_kills_a_slow_child() {
+    let _serialized = scripts_lock();
     let Some(script) = slow_script("deadline.sh") else {
         return;
     };
@@ -243,7 +280,7 @@ fn a_deadline_kills_a_slow_child() {
     req.timeout_ms = 100;
 
     let started = std::time::Instant::now();
-    let err = broker.call(&req).unwrap_err();
+    let err = call_settled(&mut broker, &req).unwrap_err();
     assert!(err.message.contains("did not finish within"), "{err}");
     // The child was killed rather than waited out.
     assert!(started.elapsed() < std::time::Duration::from_secs(4));
@@ -255,11 +292,12 @@ fn a_deadline_kills_a_slow_child() {
 #[test]
 fn without_a_deadline_a_slow_child_is_waited_for() {
     // The same script, with no timeout, runs to completion.
+    let _serialized = scripts_lock();
     let Some(script) = slow_script("waited.sh") else {
         return;
     };
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
-    match broker.call(&request(0, "process.exec", &[&script])) {
+    match call_settled(&mut broker, &request(0, "process.exec", &[&script])) {
         Ok(CapOutcome::Value(CapValue::I64(code))) => assert_eq!(code, 0),
         other => panic!("expected an exit code, got {other:?}"),
     }
@@ -281,6 +319,7 @@ fn a_capability_that_cannot_honour_a_deadline_says_so() {
 #[test]
 fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
     // A path says where to look, not what is there.
+    let _serialized = scripts_lock();
     let Some(script) = script("pinned.sh", "#!/bin/sh\nexit 0\n") else {
         return;
     };
@@ -293,15 +332,13 @@ fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
         &digest,
     )]);
     assert_eq!(
-        broker.call(&request(0, "process.exec", &[&script])),
+        call_settled(&mut broker, &request(0, "process.exec", &[&script])),
         Ok(CapOutcome::Value(CapValue::I64(0)))
     );
 
     // The file changing is the whole reason to pin it.
     std::fs::write(&script, "#!/bin/sh\nexit 1\n").unwrap();
-    let err = broker
-        .call(&request(0, "process.exec", &[&script]))
-        .unwrap_err();
+    let err = call_settled(&mut broker, &request(0, "process.exec", &[&script])).unwrap_err();
     assert!(err.message.contains("but the grant pins"), "{err}");
 
     std::fs::remove_file(&script).ok();
@@ -311,6 +348,7 @@ fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
 #[test]
 fn a_pin_is_checked_on_every_call() {
     // A check that ran earlier tells you what was true earlier.
+    let _serialized = scripts_lock();
     let Some(script) = script("recheck.sh", "#!/bin/sh\nexit 0\n") else {
         return;
     };
