@@ -277,6 +277,9 @@ impl<'a> FnLower<'a> {
                     Some(Res::Builtin(sic_types::Builtin::Len)) => {
                         self.emit(InstKind::Len { dst, src: args[0] }, e.span)
                     }
+                    Some(Res::Builtin(sic_types::Builtin::Approve)) => {
+                        self.approve(dst, args[0], args[1], e.span)
+                    }
                     // An agent is a model call and a validation. Nothing below
                     // this point knows what an agent is.
                     Some(Res::Agent(agent)) => {
@@ -394,7 +397,9 @@ impl<'a> FnLower<'a> {
                 dst
             }
             ExprKind::Field { base, name } => {
-                let base_ty = self.typed.type_of(base.id);
+                // Trust is erased here: the layout of a record does not depend
+                // on where the value came from.
+                let base_ty = self.typed.types.untrusted(self.typed.type_of(base.id));
                 let base = self.expr(base);
                 let Some(object) = self.typed.types.as_object(base_ty) else {
                     unreachable!("field access needs a record type");
@@ -420,6 +425,55 @@ impl<'a> FnLower<'a> {
                 unreachable!("rejected by the type checker")
             }
         }
+    }
+
+    /// `approve(question, value)`: ask a person, and fail the run if the answer
+    /// is no.
+    ///
+    /// The value itself is untouched - trust is a compile-time distinction, and
+    /// the same bytes come out - so what this lowers to is the question, the
+    /// branch, and the failure.
+    fn approve(&mut self, dst: LocalId, question: LocalId, value: LocalId, span: Span) {
+        let Some(cap) = self
+            .typed
+            .caps
+            .iter()
+            .position(|c| c.name == "human.approve")
+        else {
+            unreachable!("the checker required the grant");
+        };
+        let answered = self.temp(sic_types::Types::BOOL);
+        self.emit(
+            InstKind::CallCap {
+                dst: answered,
+                cap: sic_core::CapId(cap as u32),
+                args: vec![question],
+                policy: crate::hir::CallPolicy::default(),
+            },
+            span,
+        );
+        self.emit(InstKind::Move { dst, src: value }, span);
+
+        let refused = self.new_block();
+        let join = self.new_block();
+        self.terminate(
+            Term::Branch {
+                cond: answered,
+                then_bb: join,
+                else_bb: refused,
+            },
+            span,
+        );
+
+        self.switch_to(refused);
+        let message = self.constant(
+            Const::Str("the approval was refused".into()),
+            sic_types::Types::STR,
+            span,
+        );
+        self.terminate(Term::Fail(message), span);
+
+        self.switch_to(join);
     }
 
     /// `&&` and `||` evaluate the right-hand side only when it can change the

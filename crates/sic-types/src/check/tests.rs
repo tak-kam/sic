@@ -440,8 +440,9 @@ agent diagnose { input: String, output: Diagnosis, budget: 2 }\n";
 
 #[test]
 fn an_agent_is_called_like_a_function_and_returns_its_output_type() {
+    // A field of the answer is still the answer, so the return type says so.
     let typed = ok(&format!(
-        "{AGENT}fn main() -> String {{ let d = diagnose(\"logs\"); return d.cause; }}"
+        "{AGENT}fn main() -> LLM<String> {{ let d = diagnose(\"logs\"); return d.cause; }}"
     ));
     assert_eq!(typed.agents.len(), 1);
     assert_eq!(typed.agents[0].name, "diagnose");
@@ -486,4 +487,106 @@ fn an_agent_cannot_share_a_name_with_a_function() {
         "{AGENT}fn diagnose(s: String) -> String {{ return s; }}\nfn main() {{ }}"
     ));
     assert!(cs.contains(&"E0361"), "{cs:?}");
+}
+
+// ---- trust and provenance ----
+
+const TRUST: &str = "type Plan { action: String }\n\
+allow { llm.invoke \"m\"; human.approve \"deploying\"; process.exec \"/usr/bin/true\"; }\n\
+agent make_plan { input: String, output: Plan }\n";
+
+#[test]
+fn an_agents_answer_carries_where_it_came_from() {
+    let typed = ok(&format!("{TRUST}fn main() {{ let p = make_plan(\"x\"); }}"));
+    assert_eq!(typed.types.name(typed.fns[0].local_types[0]), "LLM<Plan>");
+}
+
+#[test]
+fn approve_is_the_only_way_to_produce_a_human_approved_value() {
+    let typed = ok(&format!(
+        "{TRUST}fn main() {{ let p = make_plan(\"x\"); let a = approve(\"ok?\", p); }}"
+    ));
+    assert_eq!(
+        typed.types.name(typed.fns[0].local_types[1]),
+        "HumanApproved<Plan>"
+    );
+    // Asking a person is an effect like any other.
+    assert!(
+        codes(
+            "type P { a: String }\nallow { llm.invoke \"m\"; }\n\
+               agent f { input: String, output: P }\n\
+               fn main() { let p = f(\"x\"); let a = approve(\"ok?\", p); }"
+        )
+        .contains(&"E0370")
+    );
+}
+
+#[test]
+fn the_specification_example_is_a_compile_error() {
+    // `deploy(LLM<Plan>)` must not compile; `deploy(HumanApproved<Plan>)` must.
+    ok(&format!(
+        "{TRUST}fn deploy(p: HumanApproved<Plan>) -> Int {{ return 1; }}\n\
+         fn main() -> Int {{\n\
+             let p = make_plan(\"x\");\n\
+             return deploy(approve(\"ok?\", p));\n\
+         }}"
+    ));
+    let cs = codes(&format!(
+        "{TRUST}fn deploy(p: HumanApproved<Plan>) -> Int {{ return 1; }}\n\
+         fn main() -> Int {{ let p = make_plan(\"x\"); return deploy(p); }}"
+    ));
+    assert!(cs.contains(&"E0301"), "{cs:?}");
+}
+
+#[test]
+fn provenance_follows_a_field() {
+    // A field of a model's answer is still the model's answer.
+    let typed = ok(&format!(
+        "{TRUST}fn main() {{ let p = make_plan(\"x\"); let a = p.action; }}"
+    ));
+    assert_eq!(typed.types.name(typed.fns[0].local_types[1]), "LLM<String>");
+}
+
+#[test]
+fn a_trusted_value_is_not_its_inner_type() {
+    // Arithmetic is exactly where provenance gets lost.
+    assert!(
+        codes(&format!(
+            "{TRUST}fn main() -> String {{ let p = make_plan(\"x\"); return p.action + \"!\"; }}"
+        ))
+        .contains(&"E0371")
+    );
+    assert!(
+        codes(&format!(
+            "{TRUST}fn main() {{ let p = make_plan(\"x\"); let n = !p; }}"
+        ))
+        .contains(&"E0371")
+    );
+}
+
+#[test]
+fn a_models_answer_cannot_reach_a_capability_that_changes_something() {
+    let cs = codes(&format!(
+        "{TRUST}fn main() -> Int {{\n\
+             let p = make_plan(\"x\");\n\
+             return process.exec(p.action);\n\
+         }}"
+    ));
+    assert!(cs.contains(&"E0372"), "{cs:?}");
+}
+
+#[test]
+fn asking_a_model_about_a_models_answer_is_ordinary() {
+    // The rule is about the capability's kind, not about the value.
+    ok(&format!(
+        "{TRUST}fn main() {{\n\
+             let p = make_plan(\"x\");\n\
+             let again = make_plan(p.action);\n\
+         }}"
+    ));
+}
+
+#[test]
+fn a_trust_type_needs_its_argument() {
+    assert!(codes("fn f(p: LLM) { }").contains(&"E0310"));
 }

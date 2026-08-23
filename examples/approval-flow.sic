@@ -1,0 +1,40 @@
+// Where a value came from decides what it may be used for.
+//
+// `make_plan` produces `LLM<Plan>` - a model made it. `deploy` takes
+// `HumanApproved<Plan>`, and the only way to produce one is `approve`, which
+// asks a person and fails the run if the answer is no.
+//
+// Passing `plan` straight to `deploy` does not compile. That is the point: the
+// model's answer and the answer a person signed off are different values, and a
+// type system is where "different" is enforced rather than remembered.
+//
+//     sic run examples/approval-flow.sic --checkpoint step.sicc
+//     sic resume step.sicc examples/approval-flow.sic \
+//         --value '{"action": "restart the service"}' --checkpoint step2.sicc
+//     sic resume step2.sicc examples/approval-flow.sic --value true
+//
+// Trust is erased before the bytecode: see docs/design/trust.md.
+type Plan {
+    action: String,
+}
+
+allow {
+    llm.invoke "claude-opus-4";
+    human.approve "deploying";
+    process.exec "/usr/bin/true";
+}
+
+agent make_plan {
+    input: String,
+    output: Plan,
+}
+
+fn deploy(plan: HumanApproved<Plan>) -> Int {
+    return process.exec("/usr/bin/true");
+}
+
+fn main() -> Int {
+    let plan = make_plan("what should we deploy?");
+    let approved = approve("deploy this?", plan);
+    return deploy(approved);
+}

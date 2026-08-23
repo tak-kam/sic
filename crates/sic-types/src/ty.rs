@@ -56,8 +56,11 @@ pub enum Type {
     /// A user-defined record.
     Object(ObjectId),
     Fn(FnSigId),
-    /// Section 19 of the specification. Never constructed in v0.1; the variant
-    /// exists so that adding it later does not reshape every match.
+    /// Where a value came from. See docs/design/trust.md.
+    ///
+    /// This is a compile-time distinction only: trust is erased before the
+    /// bytecode, because the rule being enforced is "this program may not be
+    /// written", which is a claim about the program rather than about a run.
     Trust(TrustKind, TypeId),
     /// The result of an error. Using it produces no further diagnostics, which
     /// is what stops one mistake from cascading.
@@ -66,12 +69,27 @@ pub enum Type {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TrustKind {
+    /// A model produced it.
     Llm,
-    Verified,
+    /// A person approved it.
     HumanApproved,
-    Observed,
-    UserProvided,
-    Secret,
+}
+
+impl TrustKind {
+    pub fn name(self) -> &'static str {
+        match self {
+            TrustKind::Llm => "LLM",
+            TrustKind::HumanApproved => "HumanApproved",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<TrustKind> {
+        match name {
+            "LLM" => Some(TrustKind::Llm),
+            "HumanApproved" => Some(TrustKind::HumanApproved),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +189,32 @@ impl Types {
         }
     }
 
+    /// Wraps a type in a provenance.
+    ///
+    /// Wrapping something already wrapped replaces the provenance rather than
+    /// nesting: a value has one origin, and `LLM<HumanApproved<T>>` would say
+    /// nothing useful.
+    pub fn trust(&mut self, kind: TrustKind, inner: TypeId) -> TypeId {
+        let inner = self.untrusted(inner);
+        self.intern(Type::Trust(kind, inner))
+    }
+
+    /// The provenance of a type, if it has one.
+    pub fn trust_of(&self, id: TypeId) -> Option<(TrustKind, TypeId)> {
+        match self.get(id) {
+            Type::Trust(kind, inner) => Some((*kind, *inner)),
+            _ => None,
+        }
+    }
+
+    /// The type without its provenance.
+    pub fn untrusted(&self, id: TypeId) -> TypeId {
+        match self.get(id) {
+            Type::Trust(_, inner) => *inner,
+            _ => id,
+        }
+    }
+
     /// What a list holds, if this is a list type.
     pub fn list_element(&self, id: TypeId) -> Option<TypeId> {
         match self.get(id) {
@@ -214,7 +258,7 @@ impl Types {
                 format!("fn({}) -> {}", params.join(", "), self.name(s.ret))
             }
             Type::Object(object) => self.object(*object).name.clone(),
-            Type::Trust(kind, inner) => format!("{kind:?}<{}>", self.name(*inner)),
+            Type::Trust(kind, inner) => format!("{}<{}>", kind.name(), self.name(*inner)),
             Type::Error => "<error>".into(),
         }
     }

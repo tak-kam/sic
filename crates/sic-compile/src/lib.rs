@@ -179,6 +179,15 @@ impl TypeSection {
         if let Some(existing) = self.index.get(&ty) {
             return *existing;
         }
+        // Trust is erased: the rule it enforces is "this program may not be
+        // written", which is a claim about the program rather than about a run,
+        // and the bytecode has no use for it.
+        if let sic_types::Type::Trust(_, inner) = types.get(ty) {
+            let index = self.intern(*inner, types);
+            self.index.insert(ty, index);
+            return index;
+        }
+
         // A record is reserved before its fields are interned: a type may
         // reach itself through a list, and the reservation is what stops that
         // from recursing forever.

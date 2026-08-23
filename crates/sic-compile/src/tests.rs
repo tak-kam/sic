@@ -146,3 +146,33 @@ fn capability_arguments_go_into_consecutive_registers() {
     assert_eq!(asm.matches("MOVE").count(), 2, "{asm}");
     assert!(asm.contains("CALL_CAP"), "{asm}");
 }
+
+#[test]
+fn trust_is_erased_before_the_bytecode() {
+    // The rule it enforces is "this program may not be written", which is a
+    // claim about the program rather than about a run.
+    let src = "type Plan { action: String }\n\
+        allow { llm.invoke \"m\"; human.approve \"d\"; }\n\
+        agent make_plan { input: String, output: Plan }\n\
+        fn takes(p: HumanApproved<Plan>) -> Int { return 1; }\n\
+        fn main() -> Int { let p = make_plan(\"x\"); return takes(approve(\"ok?\", p)); }";
+    let hir = sic_ir::lower::compile_to_hir(src).unwrap();
+    let file = SourceFile::new("t.sic", src);
+    let program = compile(&hir, &file).unwrap();
+
+    // Nothing in the type section mentions provenance, and `takes` sees the
+    // same type an unwrapped Plan would be.
+    let names: Vec<String> = (0..program.types.len() as u32)
+        .map(|i| program.type_name(i))
+        .collect();
+    assert!(!names.iter().any(|n| n.contains("LLM")), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.contains("HumanApproved")),
+        "{names:?}"
+    );
+
+    // The approval is a capability call and a branch, and nothing else.
+    let asm = disassemble(&program);
+    assert!(asm.contains("human.approve"), "{asm}");
+    assert!(asm.contains("FAIL"), "{asm}");
+}

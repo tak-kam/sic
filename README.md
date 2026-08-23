@@ -121,6 +121,38 @@ CALL_CAP -> Suspended(request) -> broker -> resume(value) -> next instruction
 `sic-broker` is the only crate that touches the outside world. See
 [docs/design/capabilities.md](docs/design/capabilities.md).
 
+### Where a value came from decides what it may be used for
+
+```text
+fn deploy(plan: HumanApproved<Plan>) -> Int { ... }
+
+fn main() -> Int {
+    let plan = make_plan(logs);                // LLM<Plan>
+    let approved = approve("deploy this?", plan); // HumanApproved<Plan>
+    return deploy(approved);
+}
+```
+
+Passing `plan` straight to `deploy` does not compile:
+
+```text
+error[E0301]: expected HumanApproved<Plan>, found LLM<Plan>
+```
+
+The model's answer and the answer a person signed off are different values, and
+a type system is where "different" is enforced rather than remembered. A
+provenance is never annotated onto a value - it is attached by whatever produced
+it - and reading a field keeps it: `LLM<Diagnosis>.cause` is `LLM<String>`.
+
+`approve` is the only way to produce a `HumanApproved<T>`, and it needs the
+`human.approve` capability like any other path to an effect. A model's answer
+also cannot reach a `write` or `exec` capability at all.
+
+**Trust is erased before the bytecode.** The rule being enforced is "this
+program may not be written", which is a claim about the program rather than
+about a run, so the VM has never heard of it. See
+[docs/design/trust.md](docs/design/trust.md).
+
 ### Runs account for themselves
 
 Observability is not an SDK bolted on afterwards: the runtime produces the

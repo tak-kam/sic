@@ -11,7 +11,7 @@ use sic_core::{AgentId, CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span,
 use sic_syntax::ast::*;
 
 use crate::cap::{self, CapEntry};
-use crate::ty::{ObjectId, Type, Types};
+use crate::ty::{ObjectId, TrustKind, Type, Types};
 
 /// What a name in an expression refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,6 +29,9 @@ pub enum Res {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Builtin {
     Len,
+    /// `approve(question, value)`, which asks a person and fails if the answer
+    /// is no.
+    Approve,
     /// `from_json(text)`, whose result type comes from the annotation on the
     /// binding it initializes.
     FromJson,
@@ -505,6 +508,21 @@ impl Checker {
     fn resolve_type(&mut self, t: &TypeExpr) -> TypeId {
         // `Task` is the only type with an argument in v0.1. A list type is a
         // separate piece of work.
+        // `LLM<T>` and `HumanApproved<T>` can be written in a signature, which
+        // is the useful direction: a function says what it will accept.
+        if let Some(kind) = TrustKind::from_name(&t.name.name) {
+            if t.args.len() != 1 {
+                self.error(
+                    "E0310",
+                    format!("`{}` takes exactly one type argument", t.name.name),
+                    t.span,
+                    "write `LLM<T>`",
+                );
+                return Types::ERROR;
+            }
+            let inner = self.resolve_type(&t.args[0]);
+            return self.types.trust(kind, inner);
+        }
         if t.name.name == "List" {
             if t.args.len() != 1 {
                 self.error(
@@ -820,6 +838,9 @@ impl Checker {
         if self.types.is_error(ty) {
             return Types::ERROR;
         }
+        if self.reject_trust(ty, operand.span, "an operand") {
+            return Types::ERROR;
+        }
         let want = match op {
             UnOp::Neg => Types::INT,
             UnOp::Not => Types::BOOL,
@@ -844,6 +865,13 @@ impl Checker {
         let l = self.check_expr(lhs);
         let r = self.check_expr(rhs);
         if self.types.is_error(l) || self.types.is_error(r) {
+            return Types::ERROR;
+        }
+        // Arithmetic on a value whose provenance matters is exactly where
+        // provenance gets lost.
+        if self.reject_trust(l, lhs.span, "an operand")
+            || self.reject_trust(r, rhs.span, "an operand")
+        {
             return Types::ERROR;
         }
         if l != r {
@@ -946,6 +974,10 @@ impl Checker {
             if name.name == "len" {
                 self.res.insert(callee.id, Res::Builtin(Builtin::Len));
                 return self.check_len(args, span);
+            }
+            if name.name == "approve" {
+                self.res.insert(callee.id, Res::Builtin(Builtin::Approve));
+                return self.check_approve(args, span);
             }
             if name.name == "from_json" {
                 self.res.insert(callee.id, Res::Builtin(Builtin::FromJson));
@@ -1093,9 +1125,29 @@ impl Checker {
             );
             return ret;
         }
+        let kind = entry.kind;
         for (arg, want) in args.iter().zip(params) {
             let found = self.check_expr(arg);
-            self.expect_type(want, found, arg.span, "this argument");
+            match self.types.trust_of(found) {
+                // A model's answer must not reach a capability that changes
+                // something. Reading or asking is fine - asking a model about a
+                // model's answer is ordinary - which is why the rule is about
+                // the capability's kind rather than about the value.
+                Some((TrustKind::Llm, _))
+                    if matches!(kind, sic_core::CapKind::Write | sic_core::CapKind::Exec) =>
+                {
+                    let name = self.types.name(found);
+                    self.error(
+                        "E0372",
+                        format!("{name} cannot be passed to `{full}`"),
+                        arg.span,
+                        format!("`{full}` changes something, and this came from a model"),
+                    );
+                    self.note("`approve(question, value)` turns a model's answer into one a person signed off");
+                }
+                Some((_, inner)) => self.expect_type(want, inner, arg.span, "this argument"),
+                None => self.expect_type(want, found, arg.span, "this argument"),
+            }
         }
         ret
     }
@@ -1163,7 +1215,10 @@ impl Checker {
             );
             return Types::INT;
         }
-        let ty = self.check_expr(&args[0]);
+        // How long something is says nothing about where it came from, so a
+        // length is a plain Int.
+        let found = self.check_expr(&args[0]);
+        let ty = self.types.untrusted(found);
         if self.types.is_error(ty) {
             return Types::INT;
         }
@@ -1206,8 +1261,53 @@ impl Checker {
             return info.output;
         }
         let found = self.check_expr(&args[0]);
+        // Asking a model about a model's answer is ordinary, so a prompt keeps
+        // its provenance without being refused for it. An agent is an
+        // `llm.invoke`, and invoking changes nothing.
+        let found = self.types.untrusted(found);
         self.expect_type(info.input, found, args[0].span, "this prompt");
-        info.output
+        // The model produced it, and that is part of what it is.
+        self.types.trust(TrustKind::Llm, info.output)
+    }
+
+    /// `approve(question, value)`: asks a person, and fails the run if the
+    /// answer is no.
+    ///
+    /// There is no third outcome to return. Without an option type, "approved
+    /// or not" would have to be a `Bool` beside the value, and nothing would
+    /// stop the program from ignoring it.
+    fn check_approve(&mut self, args: &[Expr], span: Span) -> TypeId {
+        if args.len() != 2 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!("`approve` takes 2 arguments but {} were given", args.len()),
+                span,
+                "write `approve(question, value)`",
+            );
+            return Types::ERROR;
+        }
+        let question = self.check_expr(&args[0]);
+        self.expect_type(Types::STR, question, args[0].span, "this question");
+        let value = self.check_expr(&args[1]);
+
+        // Asking a person is an effect like any other.
+        if !self.cap_ids.contains_key("human.approve") {
+            self.error(
+                "E0370",
+                "`approve` needs `human.approve`",
+                span,
+                "no grant covers asking a person",
+            );
+            self.note("declare it: allow { human.approve \"what this covers\"; }");
+            return Types::ERROR;
+        }
+        if self.types.is_error(value) {
+            return Types::ERROR;
+        }
+        self.types.trust(TrustKind::HumanApproved, value)
     }
 
     /// `from_json(text)`, whose result type is the annotation on the binding.
@@ -1309,6 +1409,11 @@ impl Checker {
         if self.types.is_error(base_ty) {
             return Types::ERROR;
         }
+        // A field of a model's answer is still the model's answer. Losing the
+        // label at the first field access would make the whole thing
+        // decorative.
+        let provenance = self.types.trust_of(base_ty).map(|(kind, _)| kind);
+        let base_ty = self.types.untrusted(base_ty);
         let Some(object) = self.types.as_object(base_ty) else {
             let found = self.types.name(base_ty);
             self.error(
@@ -1320,7 +1425,10 @@ impl Checker {
             return Types::ERROR;
         };
         match self.types.object(object).field(&name.name) {
-            Some((_, ty)) => ty,
+            Some((_, ty)) => match provenance {
+                Some(kind) => self.types.trust(kind, ty),
+                None => ty,
+            },
             None => {
                 let type_name = self.types.object(object).name.clone();
                 self.error(
@@ -1360,12 +1468,20 @@ impl Checker {
     fn check_index(&mut self, base: &Expr, index: &Expr, span: Span) -> TypeId {
         let base_ty = self.check_expr(base);
         let index_ty = self.check_expr(index);
+        let index_ty = self.types.untrusted(index_ty);
         self.expect_type(Types::INT, index_ty, index.span, "this index");
         if self.types.is_error(base_ty) {
             return Types::ERROR;
         }
+        // An element of a model's answer is still the model's answer, the same
+        // way a field is.
+        let provenance = self.types.trust_of(base_ty).map(|(kind, _)| kind);
+        let base_ty = self.types.untrusted(base_ty);
         match self.types.list_element(base_ty) {
-            Some(element) => element,
+            Some(element) => match provenance {
+                Some(kind) => self.types.trust(kind, element),
+                None => element,
+            },
             None => {
                 let found = self.types.name(base_ty);
                 self.error(
@@ -1377,6 +1493,26 @@ impl Checker {
                 Types::ERROR
             }
         }
+    }
+
+    /// Reports a value whose provenance makes it unusable here.
+    fn reject_trust(&mut self, ty: TypeId, span: Span, what: &str) -> bool {
+        let Some((kind, inner)) = self.types.trust_of(ty) else {
+            return false;
+        };
+        let (outer, inner) = (self.types.name(ty), self.types.name(inner));
+        self.error(
+            "E0371",
+            format!("{outer} cannot be used as {what}"),
+            span,
+            format!("this is where a {inner} came from, not a {inner}"),
+        );
+        if kind == TrustKind::Llm {
+            self.note(
+                "`approve(question, value)` turns a model's answer into one a person signed off",
+            );
+        }
+        true
     }
 
     fn finish(self) -> (Typed, Vec<Diagnostic>) {

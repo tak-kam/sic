@@ -1165,6 +1165,105 @@ fn a_program_with_no_effects_plans_to_nothing() {
     assert!(stdout.contains("No capability calls."), "{stdout}");
 }
 
+// ---- trust and provenance ----
+
+#[test]
+fn a_models_answer_reaches_a_deploy_only_through_an_approval() {
+    let first = write_temp("trust-1.sicc", "");
+    let second = write_temp("trust-2.sicc", "");
+
+    // Stop 1: the model.
+    let (_, stderr, code) = sic(&[
+        "run",
+        &example("approval-flow.sic"),
+        "--checkpoint",
+        first.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "stderr: {stderr}");
+
+    // Stop 2: the person.
+    let (_, stderr, code) = sic(&[
+        "resume",
+        first.to_str().unwrap(),
+        &example("approval-flow.sic"),
+        "--value",
+        r#"{"action": "restart the service"}"#,
+        "--checkpoint",
+        second.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "stderr: {stderr}");
+    assert!(stderr.contains("[deploying] deploy this?"), "{stderr}");
+
+    let (stdout, stderr, code) = sic(&[
+        "resume",
+        second.to_str().unwrap(),
+        &example("approval-flow.sic"),
+        "--value",
+        "true",
+    ]);
+    assert_eq!(code, 0, "stderr: {stderr}");
+    assert_eq!(stdout, "0\n");
+
+    std::fs::remove_file(first).ok();
+    std::fs::remove_file(second).ok();
+}
+
+#[test]
+fn refusing_an_approval_fails_the_run() {
+    // There is no third outcome to return: without an option type, "approved
+    // or not" would be a Bool beside the value that nothing forces you to read.
+    let first = write_temp("refuse-1.sicc", "");
+    let second = write_temp("refuse-2.sicc", "");
+    let (_, _, code) = sic(&[
+        "run",
+        &example("approval-flow.sic"),
+        "--checkpoint",
+        first.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+    let (_, _, code) = sic(&[
+        "resume",
+        first.to_str().unwrap(),
+        &example("approval-flow.sic"),
+        "--value",
+        r#"{"action": "restart"}"#,
+        "--checkpoint",
+        second.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        second.to_str().unwrap(),
+        &example("approval-flow.sic"),
+        "--value",
+        "false",
+    ]);
+    assert_eq!(code, 1);
+    assert!(stderr.contains("approval was refused"), "{stderr}");
+
+    std::fs::remove_file(first).ok();
+    std::fs::remove_file(second).ok();
+}
+
+#[test]
+fn passing_a_models_answer_straight_to_a_deploy_does_not_compile() {
+    let source = std::fs::read_to_string(example("approval-flow.sic")).unwrap();
+    let without_approval = source.replace(
+        "let approved = approve(\"deploy this?\", plan);",
+        "let approved = plan;",
+    );
+    let src = write_temp("trust-bad.sic", &without_approval);
+
+    let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+    assert_eq!(code, 1);
+    assert!(
+        stderr.contains("expected HumanApproved<Plan>, found LLM<Plan>"),
+        "{stderr}"
+    );
+    std::fs::remove_file(src).ok();
+}
+
 #[test]
 fn version_and_help() {
     let (stdout, _, code) = sic(&["version"]);

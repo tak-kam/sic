@@ -27,7 +27,10 @@ agent diagnose {
     budget: 2,
 }
 
-fn main() -> String {
+// The return type says where the value came from: a field of the model's answer
+// is still the model's answer. Losing that at the first field access would make
+// the whole thing decorative - see docs/design/trust.md.
+fn main() -> LLM<String> {
     let d = diagnose("disk usage is at 100%");
     return d.cause;
 }
