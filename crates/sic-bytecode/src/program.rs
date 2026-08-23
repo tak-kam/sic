@@ -39,6 +39,10 @@ pub struct PolicyEntry {
     /// limit. Counting calls is what can be enforced honestly today; tokens and
     /// cost need the broker to report them.
     pub budget: u32,
+    /// Which conversation this call belongs to, or 0 for a fresh one every
+    /// time. The broker keeps one per conversation and task, which is what
+    /// `memory: task` on an agent declaration asks for.
+    pub conversation: u32,
 }
 
 impl Program {

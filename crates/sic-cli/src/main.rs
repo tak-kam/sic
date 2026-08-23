@@ -24,9 +24,10 @@ Usage:
                                   answers llm.invoke by driving that agent in a
                                   pane instead of stopping to ask a person
   sic runs [--waiting]            list recorded runs, or only those waiting
-  sic attach <RUN-ID> [--value V] [--because WHY]
+  sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
                                   see what a waiting run needs, or answer it -
-                                  `--because` records why, next to the answer
+                                  `--because` records why, next to the answer,
+                                  and `--llm` picks up the run's own agent panes
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
@@ -83,10 +84,13 @@ fn main() -> ExitCode {
             [flag] if flag == "--waiting" => cmd::runs::list_waiting(),
             _ => usage_error("`runs` takes at most `--waiting`"),
         },
-        "attach" => match parse_flags(rest, &["--value", "--because"], 1) {
-            Ok((files, flags)) => {
-                cmd::runs::attach(&files[0], flags[0].as_deref(), flags[1].as_deref())
-            }
+        "attach" => match parse_flags(rest, &["--value", "--because", "--llm"], 1) {
+            Ok((files, flags)) => cmd::runs::attach(
+                &files[0],
+                flags[0].as_deref(),
+                flags[1].as_deref(),
+                flags[2].as_deref(),
+            ),
             Err(msg) => usage_error(msg),
         },
         "explain" => with_one_file(rest, "explain", cmd::runs::explain),

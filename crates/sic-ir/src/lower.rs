@@ -302,6 +302,7 @@ impl<'a> FnLower<'a> {
                                 args,
                                 policy: crate::hir::CallPolicy {
                                     budget: info.budget,
+                                    conversation: info.conversation,
                                     ..Default::default()
                                 },
                             },

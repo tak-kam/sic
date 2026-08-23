@@ -17,10 +17,10 @@ use crate::program::*;
 
 pub const MAGIC: [u8; 4] = *b"SICB";
 pub const VERSION_MAJOR: u16 = 0;
-/// Bumped from 2 for argument vectors: a manifest entry now carries the prefix
-/// a call's arguments have to start with, and a reader that does not know that
-/// would mistake it for the parameter count.
-pub const VERSION_MINOR: u16 = 3;
+/// Bumped from 3 for conversations: a policy entry now says which conversation
+/// a call belongs to, and a reader that stopped after the budget would take the
+/// next entry's `pc` for it.
+pub const VERSION_MINOR: u16 = 4;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -129,6 +129,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(policy.attempts);
         w.u32(policy.timeout_ms);
         w.u32(policy.budget);
+        w.u32(policy.conversation);
     }
     sections.push((section::POLICIES, w.finish()));
 
@@ -367,7 +368,7 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 
 fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
     let mut r = Reader::new(body);
-    let n = r.count(16)?;
+    let n = r.count(20)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(PolicyEntry {
@@ -375,6 +376,7 @@ fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
             attempts: r.u32()?,
             timeout_ms: r.u32()?,
             budget: r.u32()?,
+            conversation: r.u32()?,
         });
     }
     r.expect_end("policies")?;
@@ -440,6 +442,7 @@ mod tests {
                 attempts: 3,
                 timeout_ms: 500,
                 budget: 8,
+                conversation: 0,
             }],
             debug: DebugInfo {
                 sources: vec!["main.sic".into()],

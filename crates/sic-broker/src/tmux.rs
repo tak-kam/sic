@@ -11,7 +11,9 @@ use std::time::{Duration, Instant};
 
 use sic_core::CapError;
 
-use crate::agent::{AgentDriver, DriverInfo, answer_from, ask_text, check_size, new_marker_id};
+use crate::agent::{
+    AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
+};
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.
@@ -56,12 +58,33 @@ const POLL: Duration = Duration::from_millis(750);
 /// an interface that is still drawing itself.
 const SETTLE: Duration = Duration::from_millis(1500);
 
+/// What the driver is being opened for.
+#[derive(Debug, Clone)]
+pub struct Session {
+    /// The run. The tmux session is named after it, so a run continued in
+    /// another process finds its own panes without anything having to be
+    /// looked up.
+    pub run: String,
+    /// Whether this run is being continued rather than started. It decides what
+    /// a missing pane means: nothing on a fresh run, and a lost conversation on
+    /// one that is coming back.
+    pub continuing: bool,
+    /// Where the driver may write down which conversations it opened. Without
+    /// one, a conversation cannot outlive the process.
+    pub state: Option<PathBuf>,
+}
+
 #[derive(Debug)]
 pub struct TmuxDriver {
     tmux: PathBuf,
     agent: PathBuf,
     name: String,
     info: DriverInfo,
+    session: String,
+    continuing: bool,
+    state: Option<PathBuf>,
+    /// The conversations this run has open, as `(conversation, task)`.
+    open: Vec<(u32, u32)>,
 }
 
 impl TmuxDriver {
@@ -71,7 +94,7 @@ impl TmuxDriver {
     /// tmux exists, that the agent exists, and what version each of them is.
     /// A run that is going to fail for want of a tool should fail before it has
     /// done anything.
-    pub fn open(spec: &str) -> Result<TmuxDriver, CapError> {
+    pub fn open(spec: &str, session: Session) -> Result<TmuxDriver, CapError> {
         let (multiplexer, agent) = spec.split_once(':').ok_or_else(|| {
             CapError::new(format!(
                 "`{spec}` is not a driver: write `<multiplexer>:<agent>`, as in `tmux:claude`"
@@ -101,11 +124,100 @@ impl TmuxDriver {
             agent: first_line(&version_of(&path, "--version")?),
             multiplexer: first_line(&version_of(&tmux, "-V")?),
         };
+        // Read before anything is opened: what a run had open last time is how
+        // a conversation that is gone can be told from one that never existed.
+        let open = match &session.state {
+            Some(path) => read_state(path),
+            None => Vec::new(),
+        };
         Ok(TmuxDriver {
             tmux,
             agent: path,
             name,
             info,
+            session: format!("sic-{}", &session.run[..session.run.len().min(12)]),
+            continuing: session.continuing,
+            state: session.state,
+            open,
+        })
+    }
+
+    /// The run's session, made if this is the first call, with `window` as its
+    /// first window.
+    fn ensure_session(&self, window: &str) -> Result<(), CapError> {
+        if self.tmux(&["has-session", "-t", &self.session]).is_ok() {
+            return self.new_window(window);
+        }
+        // The pane starts where `sic` was started. A coding agent reads the
+        // directory it is in, so this decides what it can see, and leaving it
+        // to whatever tmux picked would leave that to chance.
+        let here = self.here()?;
+        self.tmux(&[
+            "new-session",
+            "-d",
+            "-s",
+            &self.session,
+            "-n",
+            window,
+            "-c",
+            &here,
+            "-x",
+            COLUMNS,
+            "-y",
+            ROWS,
+            &sh_quote(&self.agent),
+        ])?;
+        Ok(())
+    }
+
+    fn new_window(&self, window: &str) -> Result<(), CapError> {
+        let here = self.here()?;
+        self.tmux(&[
+            "new-window",
+            "-d",
+            "-t",
+            &self.session,
+            "-n",
+            window,
+            "-c",
+            &here,
+            &sh_quote(&self.agent),
+        ])?;
+        Ok(())
+    }
+
+    fn here(&self) -> Result<String, CapError> {
+        std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .map_err(|e| CapError::new(format!("cannot tell where this is running: {e}")))
+    }
+
+    fn window_exists(&self, window: &str) -> bool {
+        match self.tmux(&["list-windows", "-F", "#{window_name}", "-t", &self.session]) {
+            Ok(names) => names.lines().any(|n| n == window),
+            Err(_) => false,
+        }
+    }
+
+    /// Remembers that a conversation is open, so that a later process can tell
+    /// a pane that was closed from one that was never made.
+    fn remember(&mut self, thread: Thread) -> Result<(), CapError> {
+        let entry = (thread.conversation, thread.task);
+        if !self.open.contains(&entry) {
+            self.open.push(entry);
+        }
+        let Some(path) = &self.state else {
+            return Ok(());
+        };
+        let mut text = String::new();
+        for (conversation, task) in &self.open {
+            text.push_str(&format!("{conversation} {task}\n"));
+        }
+        std::fs::write(path, text).map_err(|e| {
+            CapError::new(format!(
+                "cannot record the conversation in `{}`: {e}",
+                path.display()
+            ))
         })
     }
 
@@ -181,21 +293,25 @@ impl TmuxDriver {
         }
     }
 
-    /// The whole of one call, once the session exists.
-    fn converse(&self, session: &str, prompt: &str) -> Result<String, CapError> {
+    /// The whole of one call, once the pane exists.
+    fn converse(&self, target: &str, ask: Ask<'_>, fresh: bool) -> Result<String, CapError> {
         let id = new_marker_id();
-        self.wait_ready(session)?;
+        // A pane that has answered before is ready by definition; only one that
+        // has just been started has to be waited for.
+        if fresh {
+            self.wait_ready(target)?;
+        }
 
         let buffer = format!("sic-{id}");
-        self.load_buffer(&buffer, &ask_text(prompt, &id))?;
+        self.load_buffer(&buffer, &ask_text(ask.prompt, &id, ask.json))?;
         // `-p` pastes in bracketed-paste mode, so an interface that knows about
         // pastes takes the newlines as text rather than as twenty submissions.
-        self.tmux(&["paste-buffer", "-p", "-d", "-b", &buffer, "-t", session])?;
-        self.tmux(&["send-keys", "-t", session, "Enter"])?;
+        self.tmux(&["paste-buffer", "-p", "-d", "-b", &buffer, "-t", target])?;
+        self.tmux(&["send-keys", "-t", target, "Enter"])?;
 
         let deadline = Instant::now() + ANSWER_DEADLINE;
         loop {
-            if let Some(answer) = answer_from(&self.screen(session)?, &id) {
+            if let Some(answer) = answer_from(&self.screen(target)?, &id, ask.json) {
                 return Ok(answer);
             }
             if Instant::now() >= deadline {
@@ -219,33 +335,81 @@ impl AgentDriver for TmuxDriver {
         &self.info
     }
 
-    fn ask(&mut self, prompt: &str) -> Result<String, CapError> {
-        let session = format!("sic-{}", new_marker_id());
-        // The pane starts where `sic` was started. A coding agent reads the
-        // directory it is in, so this decides what it can see, and leaving it
-        // to whatever tmux picked would leave that to chance.
-        let here = std::env::current_dir()
-            .map_err(|e| CapError::new(format!("cannot tell where this is running: {e}")))?;
-        self.tmux(&[
-            "new-session",
-            "-d",
-            "-s",
-            &session,
-            "-c",
-            &here.display().to_string(),
-            "-x",
-            COLUMNS,
-            "-y",
-            ROWS,
-            &sh_quote(&self.agent),
-        ])?;
-        let answer = self.converse(&session, prompt);
-        // The pane is closed whichever way the call went. For a call with no
-        // memory the journal already holds the prompt and the answer, so the
-        // pane keeps nothing the record does not.
-        let _ = self.tmux(&["kill-session", "-t", &session]);
+    fn ask(&mut self, ask: Ask<'_>) -> Result<String, CapError> {
+        match ask.thread.remembers() {
+            true => self.ask_remembering(ask),
+            false => self.ask_once(ask),
+        }
+    }
+
+    fn finish(&mut self, waiting: bool) {
+        // A run that stopped to be continued keeps whatever it was holding: it
+        // will come back, and it should not come back to a stranger. A run that
+        // is over keeps nothing, because the journal already holds the prompts
+        // and the answers, and what a pane has beyond that is context nobody
+        // can ask for any more.
+        if waiting {
+            return;
+        }
+        let _ = self.tmux(&["kill-session", "-t", &self.session]);
+        if let Some(path) = &self.state {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+impl TmuxDriver {
+    /// A call with no memory: a window of its own, closed when the answer is
+    /// in. The journal already holds the prompt and the answer, so the pane
+    /// keeps nothing the record does not.
+    fn ask_once(&mut self, ask: Ask<'_>) -> Result<String, CapError> {
+        let window = format!("ask-{}", new_marker_id());
+        self.ensure_session(&window)?;
+        let target = format!("{}:{window}", self.session);
+        let answer = self.converse(&target, ask, true);
+        let _ = self.tmux(&["kill-window", "-t", &target]);
         answer
     }
+
+    /// A call that continues a conversation: one window per conversation and
+    /// task, kept for as long as the run can still come back to it.
+    fn ask_remembering(&mut self, ask: Ask<'_>) -> Result<String, CapError> {
+        let thread = ask.thread;
+        let window = format!("c{}t{}", thread.conversation, thread.task);
+        let target = format!("{}:{window}", self.session);
+        let mut fresh = false;
+        if !self.window_exists(&window) {
+            // A conversation this run is known to have opened, whose pane is
+            // not there, is one that cannot be continued. Starting a fresh one
+            // would change what the run means without saying so.
+            if self.continuing && self.open.contains(&(thread.conversation, thread.task)) {
+                return Err(CapError::new(format!(
+                    "the conversation this run was holding for task {} is gone: its pane was \
+                     closed, or the machine it was on restarted. It cannot be continued",
+                    thread.task
+                )));
+            }
+            self.ensure_session(&window)?;
+            self.remember(thread)?;
+            fresh = true;
+        }
+        self.converse(&target, ask, fresh)
+    }
+}
+
+/// The conversations a run had open, as it left them.
+pub(crate) fn read_state(path: &Path) -> Vec<(u32, u32)> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let conversation = parts.next()?.parse().ok()?;
+            let task = parts.next()?.parse().ok()?;
+            Some((conversation, task))
+        })
+        .collect()
 }
 
 /// The options that come before any tmux command.

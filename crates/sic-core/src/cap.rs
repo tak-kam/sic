@@ -122,6 +122,13 @@ pub struct CapRequest {
     /// The deadline is enforced here because the broker is the only side with
     /// a clock, and the VM must stay unable to read one.
     pub timeout_ms: u32,
+    /// Which conversation this call belongs to, or 0 for one that starts fresh.
+    ///
+    /// The number identifies the caller; the task identifies which of its
+    /// conversations. Both are needed, because two agents that each keep one
+    /// must not end up in the same one, and the same agent in two tasks must
+    /// not either.
+    pub conversation: u32,
 }
 
 /// What came back from a capability call.

@@ -1,0 +1,37 @@
+// An agent that keeps one conversation for as long as the task.
+//
+//     sic plan examples/memory.sic
+//     sic run examples/memory.sic --llm tmux:claude --record
+//
+// Without `memory: task` every call is a fresh conversation, and the journal
+// holds everything that shaped the answer: the prompt and the answer are the
+// whole story. With it, the second call is asked in a conversation that
+// remembers the first, and what accumulated lives in the agent rather than in
+// the record. That is the cost, and it is why the choice is written in the
+// declaration where a reader will see it.
+//
+// The pane is kept for as long as the run can still come back to it, so a run
+// that stops to wait keeps its conversation, and `sic attach <RUN-ID> --llm
+// tmux:claude` picks it up where it was left.
+type Patch {
+    file: String,
+    reason: String,
+}
+
+allow {
+    llm.invoke "claude";
+}
+
+agent refactorer {
+    input: String,
+    output: Patch,
+    budget: 4,
+    memory: task,
+}
+
+fn main() -> LLM<String> {
+    let first = refactorer("which file in this repository is hardest to read?");
+    // The second call does not have to say what the first one was about.
+    let second = refactorer("what would you change about it, and why?");
+    return second.reason;
+}

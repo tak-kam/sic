@@ -99,7 +99,12 @@ pub fn list() -> ExitCode {
 ///
 /// The read-only form matters as much as the other: whatever is going to answer
 /// has to be able to find out what the question is first.
-pub fn attach(prefix: &str, value: Option<&str>, because: Option<&str>) -> ExitCode {
+pub fn attach(
+    prefix: &str,
+    value: Option<&str>,
+    because: Option<&str>,
+    llm: Option<&str>,
+) -> ExitCode {
     let dir = match store::find(prefix) {
         Ok(dir) => dir,
         Err(msg) => {
@@ -174,11 +179,29 @@ pub fn attach(prefix: &str, value: Option<&str>, because: Option<&str>) -> ExitC
         eprintln!("warning: {msg}");
     }
 
-    let mut broker = sic_broker::Broker::new(super::drive::manifest(&program));
+    // Continuing, not starting: the run's session is named after its id, so a
+    // conversation it was holding is found without anything being looked up -
+    // and a pane that is gone is a failure rather than a fresh start.
+    let session = sic_broker::tmux::Session {
+        run: run_id_of(&dir),
+        continuing: true,
+        state: Some(dir.join(store::CONVERSATIONS)),
+    };
+    let mut broker = match super::run::open_driver(llm, session, None) {
+        Ok(Some(driver)) => {
+            sic_broker::Broker::with_driver(super::drive::manifest(&program), driver)
+        }
+        Ok(None) => sic_broker::Broker::new(super::drive::manifest(&program)),
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
     let status = vm.resume(answer);
     let outcome = super::drive::drive_recording(&mut vm, &mut broker, status, Some(&dir));
 
     let still_waiting = matches!(outcome, super::drive::Outcome::Suspended { .. });
+    broker.finish(still_waiting);
     let hint = format!("sic attach {prefix} --value <VALUE>");
     let code = super::run::finish(
         &mut vm,
@@ -244,6 +267,13 @@ pub fn explain(prefix: &str) -> ExitCode {
         }
     }
     ExitCode::SUCCESS
+}
+
+/// The run a directory holds, which is what it is named.
+fn run_id_of(dir: &Path) -> String {
+    dir.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// One question a person answered, read back out of `responses.jsonl`.

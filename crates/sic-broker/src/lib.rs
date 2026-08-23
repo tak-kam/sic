@@ -17,7 +17,7 @@ use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 pub mod agent;
 pub mod tmux;
 
-pub use agent::{AgentDriver, DriverInfo};
+pub use agent::{AgentDriver, Ask, DriverInfo, Thread};
 pub use tmux::TmuxDriver;
 
 /// The largest file `fs.read` will return. A capability that can exhaust the
@@ -66,6 +66,16 @@ impl Broker {
 
     pub fn manifest(&self) -> &[CapGrant] {
         &self.manifest
+    }
+
+    /// Tells whatever is answering model calls that the run is over.
+    ///
+    /// `waiting` means the run stopped to be continued later, which is the one
+    /// case where a conversation has to outlive the process holding it.
+    pub fn finish(&mut self, waiting: bool) {
+        if let Some(driver) = self.driver.as_mut() {
+            driver.finish(waiting);
+        }
     }
 
     /// Performs one capability call.
@@ -411,7 +421,7 @@ fn reject_timeout(request: &CapRequest) -> Result<(), CapError> {
 /// later or in another process.
 fn llm_invoke(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     reject_timeout(request)?;
-    let asked = asked_for(request)?;
+    let (asked, _) = asked_for(request)?;
     Ok(CapOutcome::Deferred {
         question: format!("[{}] {asked}", grant.constraint),
     })
@@ -423,7 +433,7 @@ fn llm_invoke(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapE
 /// Composed here rather than in the driver so that a person answering a
 /// deferred call is told exactly what a model would have been told. They are
 /// answering the same question.
-fn asked_for(request: &CapRequest) -> Result<String, CapError> {
+fn asked_for(request: &CapRequest) -> Result<(String, bool), CapError> {
     let prompt = string_arg_of(request, 0)?;
     let shape = match request.args.len() {
         1 => "",
@@ -436,10 +446,11 @@ fn asked_for(request: &CapRequest) -> Result<String, CapError> {
         }
     };
     if shape.is_empty() {
-        return Ok(prompt.to_string());
+        return Ok((prompt.to_string(), false));
     }
-    Ok(format!(
-        "{prompt}\n\nReply with JSON of this shape, and nothing else:\n{shape}"
+    Ok((
+        format!("{prompt}\n\nReply with JSON of this shape, and nothing else:\n{shape}"),
+        true,
     ))
 }
 
@@ -455,7 +466,7 @@ fn llm_driven(
     driver: &mut dyn AgentDriver,
 ) -> Result<CapOutcome, CapError> {
     reject_timeout(request)?;
-    let asked = asked_for(request)?;
+    let (asked, json) = asked_for(request)?;
     if grant.constraint != driver.agent_name() {
         return Err(CapError::new(format!(
             "the grant asks `{}` to answer, but the driver runs `{}`",
@@ -463,7 +474,14 @@ fn llm_driven(
             driver.agent_name()
         )));
     }
-    let answer = driver.ask(&asked)?;
+    let answer = driver.ask(Ask {
+        prompt: &asked,
+        thread: Thread {
+            task: request.task,
+            conversation: request.conversation,
+        },
+        json,
+    })?;
     Ok(CapOutcome::Value(CapValue::Str(answer)))
 }
 

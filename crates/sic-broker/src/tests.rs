@@ -35,6 +35,7 @@ fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
         task: 0,
         attempt: 1,
         timeout_ms: 0,
+        conversation: 0,
     }
 }
 
@@ -120,6 +121,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         task: 0,
         attempt: 1,
         timeout_ms: 0,
+        conversation: 0,
     };
     assert!(
         broker
@@ -136,6 +138,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         task: 0,
         attempt: 1,
         timeout_ms: 0,
+        conversation: 0,
     };
     assert!(
         broker
@@ -556,7 +559,7 @@ fn capture_refuses_a_deadline_it_cannot_honour() {
 // ---- driving an agent CLI: docs/design/driving.md ----
 
 use crate::agent::{
-    AgentDriver, DriverInfo, answer_from, ask_text, begin_marker, check_size, end_marker,
+    AgentDriver, Ask, DriverInfo, answer_from, ask_text, begin_marker, check_size, end_marker,
     new_marker_id,
 };
 
@@ -600,13 +603,18 @@ impl AgentDriver for FakeAgent {
     fn info(&self) -> &DriverInfo {
         &self.info
     }
-    fn ask(&mut self, prompt: &str) -> Result<String, CapError> {
-        self.asked.borrow_mut().push(prompt.to_string());
+    fn ask(&mut self, ask: Ask<'_>) -> Result<String, CapError> {
+        self.asked.borrow_mut().push(format!(
+            "t{}c{} {}",
+            ask.thread.task, ask.thread.conversation, ask.prompt
+        ));
         match self.said.is_empty() {
             true => Err(CapError::new("the agent has nothing left to say")),
             false => Ok(self.said.remove(0)),
         }
     }
+
+    fn finish(&mut self, _waiting: bool) {}
 }
 
 fn invoke(prompt: &str) -> CapRequest {
@@ -615,6 +623,14 @@ fn invoke(prompt: &str) -> CapRequest {
 
 fn invoke_shaped(prompt: &str, shape: &str) -> CapRequest {
     request(0, "llm.invoke", &[prompt, shape])
+}
+
+fn a_session() -> crate::tmux::Session {
+    crate::tmux::Session {
+        run: "0123456789abcdef".into(),
+        continuing: false,
+        state: None,
+    }
 }
 
 #[test]
@@ -677,12 +693,12 @@ fn the_instructions_never_contain_the_marker_they_describe() {
     // back into it, so instructions holding the literal marker would put a
     // complete-looking answer on screen before the agent had answered anything.
     let id = "9f2c1a4b";
-    let text = ask_text("why is it slow?", id);
+    let text = ask_text("why is it slow?", id, true);
     assert!(!text.contains(&begin_marker(id)), "{text}");
     assert!(!text.contains(&end_marker(id)), "{text}");
     // And it is not because the id is missing: the pieces are all there.
     assert!(text.contains(id));
-    assert!(answer_from(&text, id).is_none());
+    assert!(answer_from(&text, id, true).is_none());
 }
 
 #[test]
@@ -694,7 +710,7 @@ fn an_answer_is_what_lies_between_the_markers() {
         end_marker(id)
     );
     assert_eq!(
-        answer_from(&screen, id).as_deref(),
+        answer_from(&screen, id, false).as_deref(),
         Some("{\"cause\": \"disk full\"}")
     );
 }
@@ -703,8 +719,8 @@ fn an_answer_is_what_lies_between_the_markers() {
 fn an_unfinished_answer_is_not_one() {
     let id = "abc123";
     let screen = format!("{}\n{{\"cause\": \"disk", begin_marker(id));
-    assert_eq!(answer_from(&screen, id), None);
-    assert_eq!(answer_from("nothing at all", id), None);
+    assert_eq!(answer_from(&screen, id, false), None);
+    assert_eq!(answer_from("nothing at all", id, false), None);
 }
 
 #[test]
@@ -717,7 +733,7 @@ fn the_last_answer_on_the_screen_is_the_one_that_counts() {
         b = begin_marker(id),
         e = end_marker(id)
     );
-    assert_eq!(answer_from(&screen, id).as_deref(), Some("second"));
+    assert_eq!(answer_from(&screen, id, false).as_deref(), Some("second"));
 }
 
 #[test]
@@ -727,7 +743,7 @@ fn a_marker_from_another_call_does_not_end_this_one() {
         begin_marker("old00000"),
         end_marker("old00000")
     );
-    assert_eq!(answer_from(&screen, "new00000"), None);
+    assert_eq!(answer_from(&screen, "new00000", false), None);
 }
 
 #[test]
@@ -749,7 +765,7 @@ fn the_interface_is_stripped_from_the_answer() {
         e = end_marker(id)
     );
     assert_eq!(
-        answer_from(&screen, id).as_deref(),
+        answer_from(&screen, id, false).as_deref(),
         Some("{\n\"cause\": \"disk full\"\n}")
     );
 }
@@ -770,13 +786,13 @@ fn a_pane_too_large_to_be_an_answer_is_refused() {
 #[test]
 fn a_driver_spec_says_what_drives_what() {
     // These fail on the spec, before anything is looked for on the machine.
-    let error = crate::TmuxDriver::open("claude").expect_err("no multiplexer");
+    let error = crate::TmuxDriver::open("claude", a_session()).expect_err("no multiplexer");
     assert!(error.message.contains("tmux:claude"), "{}", error.message);
 
-    let error = crate::TmuxDriver::open("screen:claude").expect_err("not tmux");
+    let error = crate::TmuxDriver::open("screen:claude", a_session()).expect_err("not tmux");
     assert!(error.message.contains("only one"), "{}", error.message);
 
-    let error = crate::TmuxDriver::open("tmux:").expect_err("no agent");
+    let error = crate::TmuxDriver::open("tmux:", a_session()).expect_err("no agent");
     assert!(
         error.message.contains("names no agent"),
         "{}",
@@ -837,4 +853,73 @@ fn no_shape_means_nothing_is_added() {
             question: "[claude] summarize this".into()
         })
     );
+}
+
+/// The driver is told which conversation a call belongs to, because the pair -
+/// the caller and the task - is what identifies one.
+#[test]
+fn a_call_says_which_conversation_it_belongs_to() {
+    let heard = Heard::default();
+    let mut broker = Broker::with_driver(
+        vec![grant("llm.invoke", CapKind::Invoke, "claude")],
+        Box::new(FakeAgent::listening("claude", &["ok", "ok"], heard.clone())),
+    );
+
+    let mut first = invoke("what is wrong?");
+    first.task = 2;
+    first.conversation = 1;
+    broker.call(&first).expect("answered");
+
+    // The default is a fresh conversation, which is what an agent without
+    // `memory: task` means.
+    broker.call(&invoke("and this?")).expect("answered");
+
+    let heard = heard.borrow();
+    assert!(heard[0].starts_with("t2c1 "), "{}", heard[0]);
+    assert!(heard[1].starts_with("t0c0 "), "{}", heard[1]);
+}
+
+/// What a run had open is read back, so a pane that was closed can be told from
+/// one that was never made.
+#[test]
+fn the_conversations_a_run_left_open_are_read_back() {
+    let path = std::path::PathBuf::from(temp_path("conversations"));
+    std::fs::write(&path, "1 0\n1 2\n\nnonsense\n2 0\n").expect("writable");
+    assert_eq!(crate::tmux::read_state(&path), vec![(1, 0), (1, 2), (2, 0)]);
+    // A run that never opened one has nothing to lose.
+    assert!(crate::tmux::read_state(std::path::Path::new("/nowhere/at/all")).is_empty());
+    std::fs::remove_file(&path).ok();
+}
+
+/// The interface draws an answer at the width it has, so a long JSON string
+/// comes back with a line break inside it - where a literal newline is not even
+/// legal. Joining repairs the wrap exactly, because JSON needs whitespace
+/// nowhere.
+#[test]
+fn a_wrapped_json_answer_is_put_back_together() {
+    let id = "abc123";
+    let screen = format!(
+        "{b}\n{{\"reason\": \"a line long enough that the interface broke it in\nhalf\"}}\n{e}\n",
+        b = begin_marker(id),
+        e = end_marker(id)
+    );
+    assert_eq!(
+        answer_from(&screen, id, true).as_deref(),
+        Some("{\"reason\": \"a line long enough that the interface broke it inhalf\"}")
+    );
+
+    // Prose has no such property, so its line breaks are left alone - the
+    // interface's among them.
+    assert_eq!(
+        answer_from(&screen, id, false).as_deref(),
+        Some("{\"reason\": \"a line long enough that the interface broke it in\nhalf\"}")
+    );
+}
+
+/// An answer asked for as JSON is asked for on one line, so that there is less
+/// for the interface to break.
+#[test]
+fn json_is_asked_for_on_one_line() {
+    assert!(ask_text("q", "abc123", true).contains("single line"));
+    assert!(!ask_text("q", "abc123", false).contains("single line"));
 }

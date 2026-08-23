@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 439 tests.
+Last updated at 449 tests.
 
 ---
 
@@ -33,7 +33,7 @@ Last updated at 439 tests.
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `explain`, `inspect-run`, `replay`, `export`, `update`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan` | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
-| - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take | `docs/design/driving.md` |
+| - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take, and `memory: task` keeps one conversation for as long as a task | `docs/design/driving.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
@@ -41,14 +41,17 @@ Last updated at 439 tests.
 
 ## Partly built
 
-**§17, agents.** An agent is a model call and a validation, with a budget. A
-driver can now put that call in front of a real agent CLI
-(`docs/design/driving.md`), which is where the rest of the section starts to
-cost something: the agent runs its own loop of tool uses inside one call, so the
+**§17, agents.** An agent is a model call, a validation and a budget, and with
+`memory: task` a conversation that outlives the call
+(`docs/design/driving.md`). Memory is implemented by not implementing it: the
+conversation holds it, the pane holds the conversation, and sic stores nothing -
+which is also its cost, and why the choice is written in the declaration.
+
+Tools are what is left, and they are where the rest of the section starts to
+cost something: an agent with tools runs its own loop inside one call, so the
 driver counts 1 where the machine did 200, and the grant that let the program
 ask says nothing about what the agent did while answering. `sic plan` prints
-that as a warning rather than leaving it out. Memory - one conversation for as
-long as a task - is the other half of the driving work.
+that as a warning rather than leaving it out.
 
 **§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
 `HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because

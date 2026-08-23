@@ -44,6 +44,7 @@ reason.
 | E0207 | `retry` or `timeout` without a positive number |
 | E0208 | `budget` without a positive number |
 | E0209 | an unknown setting in an `agent` body |
+| E0210 | `memory` with anything but `task` |
 | E0210 | a word reserved for a later phase |
 | E0211 | `sha256` without a digest |
 | E0212 | `import` without a path |

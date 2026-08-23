@@ -22,6 +22,9 @@ pub const CHECKPOINT: &str = "checkpoint.sicc";
 /// What answered the run's model calls, when anything did - see
 /// docs/design/driving.md §6.
 pub const DRIVER: &str = "driver.json";
+/// Which conversations the run has open. Written by the driver, not by this
+/// crate: it is the driver's own state, and this only says where to keep it.
+pub const CONVERSATIONS: &str = "conversations";
 
 pub fn store_root() -> PathBuf {
     match std::env::var(STORE_VAR) {

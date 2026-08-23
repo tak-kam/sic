@@ -302,20 +302,10 @@ true: an answer pasted in by a person also came from outside the manifest.
 
 ---
 
-## 9. Part two: memory, sessions, resume
+## 9. Memory: one conversation for as long as a task
 
-Split off so that this part is one mechanism rather than four.
-
-### A session is sic's session with a person
-
-**One session per run, and the session is where the human is** - not a
-conversation with a model. `sic attach <RUN-ID>` already means "come to this
-run"; it grows into attaching to that run's session, `spawn` becomes a layout
-with a pane per task, and `human.approve` can be asked in the pane instead of
-suspending the run. The deferring path stays, because a headless run still
-needs it.
-
-### Two kinds of agent call, and the declaration says which
+One-shot is the default, which means it is not written at all. The only thing a
+program spells is the case that keeps something:
 
 ```sic
 agent triage {          // one-shot: a fresh conversation every call
@@ -332,37 +322,133 @@ agent refactorer {      // one conversation, for as long as the task
 }
 ```
 
-There is deliberately no `memory: call` to write: a value whose only use is to
-say "the default" is vocabulary that earns nothing.
+There is deliberately no `memory: call` to write. A value whose only use is to
+say "the default" is vocabulary that earns nothing, and the absence of the field
+already reads as what it means. `task` is the only scope for the same reason at
+the other end: a conversation lasting a whole run is what a program that never
+spawns already gets, and one lasting a call is what not writing this means.
 
 | | one-shot (the default) | `memory: task` |
 |---|---|---|
-| pane | one per call, closed after | one per task, alive as long as the task |
+| pane | one per call, closed after | one per task, kept |
 | conversation | fresh every time | continues |
 | what `retry` means | ask again | ask again *in a conversation that remembers the first answer* |
-| resume needs | nothing | the conversation id, per task |
 | the journal | holds everything that shaped the answer | holds the prompts and the answers; the accumulated context lives in the agent |
 
-Scoping memory to the **task** rather than the run means a program that never
-spawns gets one conversation for the whole run without that having to be
-declared. The last row is why the choice belongs in the declaration, where
-whoever reads the program will see it.
+The last row is why the choice belongs in the declaration, where whoever reads
+the program will see it, and why `sic plan` prints it:
 
-### Resume should resume the conversation too
+```text
+1. INVOKE   llm.invoke   "claude"  in one conversation per task  at most 4 in a run
+```
 
-A run that comes back in another process should not come back to a stranger.
-`claude --resume <id>` exists, so a checkpoint and a conversation id line up -
-and that raises where the id lives (the run store, most likely, because the
-broker has been stateless between calls until now), what happens when the
-session is gone (fail loudly; silently starting fresh changes what the run means
-without saying so), and whether a conversation id belongs in a journal that
-records digests.
+Two calls that continue one conversation are not two independent calls, and a
+plan that did not say so would describe a program that does not exist.
+
+### It travels in the policy table, not in the manifest
+
+`budget` is attached to a call site in the policy table and reaches the VM from
+there; this takes the same path, for the same reason. The manifest was the
+alternative and it is the wrong granularity: a grant names the model, and two
+agents may share one grant while only one of them remembers.
+
+What travels is a **number**, not a flag. A conversation is identified by the
+pair `(conversation, task)`: the number says which caller keeps it, the task
+says which of that caller's conversations this is. A flag would leave two agents
+that both remember talking into the same pane, and one agent running in two
+tasks doing the same.
+
+### The run's session
+
+Every pane a run opens lives in one tmux session named after the run's id. A
+one-shot call gets a window that is killed when the call returns; a
+`memory: task` call gets a window named for its conversation and task, and keeps
+it.
+
+Naming the session after the run is what makes it findable again without
+anything being written down: a run continued in another process derives the same
+name and its panes are there. The run's own directory does keep a list of which
+conversations were opened, and that file exists for one purpose - telling a pane
+that was closed apart from one that was never made. Without it, a resumed run
+that reached a remembering agent for the first time would be indistinguishable
+from one whose conversation was lost.
+
+### When it is over
+
+| | |
+|---|---|
+| the run finished, or failed | the session is killed |
+| the run stopped to wait | the session is kept |
+
+A run that stopped to be continued will come back, and it should not come back
+to a stranger. A run that is over keeps nothing: the journal already holds the
+prompts and the answers, and what a pane has beyond that is context nobody can
+ask for any more.
+
+A pane also outlives the task that opened it, until the run ends. A task
+finishing is not something the broker is told about - the VM suspends at an
+effect and nothing announces the rest - and inventing a channel to say so would
+be paying for tidiness with a hole in the boundary.
+
+### Coming back to it
+
+```console
+$ sic attach <RUN-ID> --value V --llm tmux:claude
+```
+
+`attach` knows which run it is answering, so it derives the session name and
+finds the panes. `resume` does not: a checkpoint is a run's state and does not
+say which run it came from. Rather than opening a fresh conversation and
+continuing as though it were the old one, `resume` refuses a driver for a
+program that keeps a conversation, and says which command does it instead.
+
+A pane that should be there and is not - the machine restarted, or somebody
+closed it - fails the call:
+
+```text
+error: the conversation this run was holding for task 0 is gone: its pane was
+       closed, or the machine it was on restarted. It cannot be continued
+```
+
+Failing loudly is the whole point. Silently starting a fresh conversation would
+change what the run means without saying so, and the record would show a call
+that looked exactly like the one before it.
 
 ---
 
-## 10. Not here
+## 10. What the interface does to a long answer
 
-- **Everything in §9**, which is the second half of this work.
+A terminal user interface draws an answer at the width it has, and a line too
+long for that comes back with a break in the middle of whatever it was drawing.
+This is not the terminal wrapping - `capture-pane -J` puts that back together -
+but the agent's own renderer, which emits the break itself. Nothing on the
+screen says which breaks are the answer's and which are the interface's.
+
+For JSON there is no need to tell them apart. The grammar requires whitespace
+nowhere, and a newline inside a string is not legal, so **joining every line
+with nothing between them** repairs a wrap exactly and leaves a document that
+was already whole unchanged. The instructions also ask for the JSON on one line,
+so that there is less to break in the first place.
+
+Prose has no such property. An answer meant to be read by a person comes back
+with the interface's line breaks in it, and that is stated rather than papered
+over: `llm.invoke` without a shape is the one call this cannot serve faithfully.
+It is also the reason the broker tells the driver whether a shape was asked for
+(§5) rather than the driver guessing.
+
+---
+
+## 11. Not here
+
+- **The run's session as the person's session.** `sic attach <RUN-ID>` still
+  answers a waiting run rather than attaching to its panes, `spawn` is not a
+  layout with a pane per task, and `human.approve` is not asked in the pane. The
+  session outliving the process is what those need and is now there; they are a
+  change to the CLI and to the scheduler rather than to this mechanism.
+- **Resuming a conversation from a loose checkpoint.** `claude --resume <id>`
+  exists, but the id is written where the agent keeps its own state, and reading
+  that is a coupling to one agent's internals rather than to its interface. The
+  pane is the conversation here, and tmux is what keeps it.
 - **Making the grant reach the agent** (§8): permission translation, capabilities
   offered back to the agent through the broker, a hook that puts tool uses in the
   journal, and a `budget` that counts something an agent with tools can exceed.
@@ -380,7 +466,7 @@ records digests.
 
 ---
 
-## 11. Units of work
+## 12. Units of work
 
 | # | Unit | Done when |
 |---|------|-----------|
@@ -391,4 +477,5 @@ records digests.
 | 5 | The shape of the answer, carried with the prompt | an `agent` call asks for JSON of its `output` type |
 | 6 | What answered, recorded and explained | `sic explain` names the version of the agent |
 | 7 | The plan's warning | `sic plan` says what a grant of `llm.invoke` does not cover |
-| 8 | §9 | a second commit |
+| 8 | `memory: task`, from the declaration to the pane | a second call is answered in a conversation that remembers the first |
+| 9 | The run's session, and coming back to it | `sic attach --llm` continues; `resume` says it cannot |

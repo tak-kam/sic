@@ -2452,3 +2452,58 @@ fn a_plan_says_what_a_model_grant_does_not_cover() {
     let (stdout, _, _) = sic(&["plan", &example("decision.sic")]);
     assert!(!stdout.contains("while answering"), "{stdout}");
 }
+
+/// A call that continues a conversation is not the same act as one that starts
+/// fresh, and a plan that did not say so would describe calls that look
+/// independent and are not.
+#[test]
+fn a_plan_says_when_a_call_keeps_a_conversation() {
+    let (stdout, stderr, code) = sic(&["plan", &example("memory.sic")]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("in one conversation per task"), "{stdout}");
+
+    let (stdout, _, _) = sic(&["plan", &example("driven.sic")]);
+    assert!(!stdout.contains("conversation"), "{stdout}");
+}
+
+/// A conversation lives in its run's session, and a loose checkpoint does not
+/// say which run it came from. Starting a fresh one and calling it the old one
+/// would change what the run means without saying so.
+#[test]
+fn resume_will_not_pretend_to_continue_a_conversation() {
+    let checkpoint = write_temp("memory.sicc", "");
+    let (_, _, code) = sic(&[
+        "run",
+        &example("memory.sic"),
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3);
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &example("memory.sic"),
+        "--value",
+        "{\"file\": \"a.rs\", \"reason\": \"long\"}",
+        "--llm",
+        "tmux:claude",
+    ]);
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("keeps a conversation"), "{stderr}");
+    assert!(stderr.contains("sic attach"), "{stderr}");
+
+    // Without a driver it resumes as it always did: it answers the first call
+    // and stops at the second, with nothing being continued.
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        &example("memory.sic"),
+        "--value",
+        "{\"file\": \"a.rs\", \"reason\": \"long\"}",
+        "--checkpoint",
+        checkpoint.to_str().unwrap(),
+    ]);
+    assert_eq!(code, 3, "{stderr}");
+    std::fs::remove_file(checkpoint).ok();
+}

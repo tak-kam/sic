@@ -105,7 +105,12 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 
     // Opened before the run starts, so a run that is going to fail for want of
     // a tool fails before it has done anything.
-    let mut broker = match open_driver(options.llm, recording.as_deref()) {
+    let session = sic_broker::tmux::Session {
+        run: run_id.to_string(),
+        continuing: false,
+        state: recording.as_ref().map(|dir| dir.join(store::CONVERSATIONS)),
+    };
+    let mut broker = match open_driver(options.llm, session, recording.as_deref()) {
         Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
         Ok(None) => Broker::new(manifest(&program)),
         Err(message) => {
@@ -117,6 +122,9 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let status = vm.run(entry, &[]);
     let outcome = drive_recording(&mut vm, &mut broker, status, recording.as_deref());
+    // A run that stopped to be continued keeps whatever conversation it was
+    // holding; one that is over keeps nothing.
+    broker.finish(matches!(outcome, Outcome::Suspended { .. }));
 
     // A recorded run that has to wait keeps its checkpoint too, so `sic resume`
     // can find it beside everything else.
@@ -146,12 +154,13 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 /// lying around, which is the same argument as refusing to search `PATH`.
 pub fn open_driver(
     spec: Option<&str>,
+    session: sic_broker::tmux::Session,
     recording: Option<&std::path::Path>,
 ) -> Result<Option<Box<dyn sic_broker::AgentDriver>>, String> {
     let Some(spec) = spec else {
         return Ok(None);
     };
-    let driver = sic_broker::TmuxDriver::open(spec).map_err(|e| e.message)?;
+    let driver = sic_broker::TmuxDriver::open(spec, session).map_err(|e| e.message)?;
     let info = driver.info().clone();
     if let Some(dir) = recording {
         store::record_driver(dir, &info)?;

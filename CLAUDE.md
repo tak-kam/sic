@@ -97,6 +97,23 @@ out and why. `docs/status.md` says where each section of the specification
 stands - read it before deciding what to work on. `docs/diagnostics.md` indexes
 every diagnostic code, and a test fails if it drifts from the source.
 
+## Issues
+
+One issue is one piece of work. When a review, an audit or a survey turns up a
+list of improvements, the list is not the issue: each item that could be picked
+up and finished on its own gets its own issue, with the argument for it written
+out. A summary issue may hold the whole picture and link to them.
+
+The reason is the same one the design documents are written for. An issue
+carrying eight loosely related items records no decision about any of them, is
+never closed, and cannot be handed to anybody - so the work it describes does
+not happen. An issue that argues for one change either convinces its reader or
+is closed with a reason, and both of those are progress.
+
+Keep an issue in the register of the design documents: prose that argues, a
+table where a table earns its place, and a section on what is deliberately not
+in it.
+
 ## CI
 
 `.github/workflows/ci.yml` runs formatting, clippy with warnings denied, the

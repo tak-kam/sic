@@ -80,6 +80,13 @@ pub struct AgentDecl {
     pub output: Option<TypeExpr>,
     /// How many times the agent may call its model in a whole run.
     pub budget: Option<u32>,
+    /// Whether the agent keeps one conversation for as long as a task, instead
+    /// of starting a fresh one every call. Written `memory: task`.
+    ///
+    /// There is deliberately no value meaning the default: a word whose only
+    /// use is to say "the usual" is vocabulary that earns nothing, and the
+    /// absence of the field already reads as what it means.
+    pub memory: bool,
     pub span: Span,
 }
 

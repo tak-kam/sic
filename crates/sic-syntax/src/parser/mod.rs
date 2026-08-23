@@ -319,7 +319,7 @@ impl Parser {
     }
 
     /// ```text
-    /// agent diagnose { input: String, output: Diagnosis, budget: 8 }
+    /// agent diagnose { input: String, output: Diagnosis, budget: 8, memory: task }
     /// ```
     fn parse_agent(&mut self) -> AgentDecl {
         let id = self.id();
@@ -332,6 +332,7 @@ impl Parser {
             input: None,
             output: None,
             budget: None,
+            memory: false,
             span: Span::empty(start),
         };
         if self.expect(&TokenKind::LBrace, "to open an agent body") {
@@ -380,12 +381,30 @@ impl Parser {
                     );
                 }
             },
+            // `task` is the only scope there is. A conversation that lasted a
+            // whole run would be one a program that never spawns already has,
+            // and one that lasted a call is what not writing this means.
+            "memory" => match self.peek().clone() {
+                TokenKind::Ident(word) if word == "task" => {
+                    self.bump();
+                    decl.memory = true;
+                }
+                other => {
+                    let span = self.span();
+                    self.error(
+                        "E0210",
+                        "`memory` takes `task`",
+                        span,
+                        format!("found {}, and `task` is the only scope", other.describe()),
+                    );
+                }
+            },
             other => {
                 self.error(
                     "E0209",
                     format!("`{other}` is not an agent setting"),
                     key.span,
-                    "expected `input`, `output` or `budget`",
+                    "expected `input`, `output`, `budget` or `memory`",
                 );
                 // Skip whatever it was, so one unknown setting does not
                 // derail the rest of the body.

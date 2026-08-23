@@ -37,6 +37,38 @@ pub struct DriverInfo {
     pub multiplexer: String,
 }
 
+/// Which conversation a call belongs to.
+///
+/// The pair is the identity: the conversation number says which caller keeps
+/// it, and the task says which of that caller's conversations this is. Two
+/// agents that each remember must not end up in the same one, and neither must
+/// the same agent running in two tasks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Thread {
+    pub task: u32,
+    /// 0 for a call that starts fresh every time, which is the default and is
+    /// what an agent without `memory: task` means.
+    pub conversation: u32,
+}
+
+impl Thread {
+    /// Whether anything has to be kept after the answer arrives.
+    pub fn remembers(&self) -> bool {
+        self.conversation != 0
+    }
+}
+
+/// One question, and everything about how to ask it.
+#[derive(Debug, Clone, Copy)]
+pub struct Ask<'a> {
+    pub prompt: &'a str,
+    pub thread: Thread,
+    /// Whether the answer has to be JSON, because the caller said what shape it
+    /// must take. It decides how a wrapped line is put back together - see
+    /// `fold` - so it is part of asking rather than part of the prompt.
+    pub json: bool,
+}
+
 /// Something that can put a prompt in front of an agent and read the answer.
 ///
 /// The broker holds one of these or none. None is not a degraded mode: it is
@@ -48,7 +80,14 @@ pub trait AgentDriver: std::fmt::Debug {
     fn info(&self) -> &DriverInfo;
 
     /// Asks, and does not return until there is a whole answer or a failure.
-    fn ask(&mut self, prompt: &str) -> Result<String, CapError>;
+    fn ask(&mut self, ask: Ask<'_>) -> Result<String, CapError>;
+
+    /// The run is over.
+    ///
+    /// `waiting` means it stopped to be continued later, so anything holding a
+    /// conversation has to survive this process - a run that comes back should
+    /// not come back to a stranger.
+    fn finish(&mut self, waiting: bool);
 }
 
 /// The line an agent prints before its answer.
@@ -85,7 +124,14 @@ pub fn new_marker_id() -> String {
 /// instructions containing the literal marker would put a complete-looking
 /// answer on screen before the agent had answered anything. Spelled this way,
 /// "the marker appeared" and "the agent printed it" are the same statement.
-pub fn ask_text(prompt: &str, id: &str) -> String {
+pub fn ask_text(prompt: &str, id: &str, json: bool) -> String {
+    // An interface that wraps a long line puts a line break inside whatever it
+    // was drawing, so an answer that has to survive one is asked for on a
+    // single line. `fold` puts back together what happens anyway.
+    let shape = match json {
+        true => "Print the JSON on a single line.\n",
+        false => "",
+    };
     format!(
         "{prompt}\n\n\
          ---\n\
@@ -93,6 +139,7 @@ pub fn ask_text(prompt: &str, id: &str) -> String {
          with nothing else between them.\n\
          A marker line is `<<<S` and `IC-BEGIN-{id}>>>` joined with nothing \
          between them. The closing marker is the same, with END where BEGIN is.\n\
+         {shape}\
          Print nothing after the closing marker.\n"
     )
 }
@@ -101,12 +148,34 @@ pub fn ask_text(prompt: &str, id: &str) -> String {
 ///
 /// The last begin marker rather than the first: an agent that answered twice -
 /// a retry inside its own conversation - has the answer that counts last.
-pub fn answer_from(screen: &str, id: &str) -> Option<String> {
+pub fn answer_from(screen: &str, id: &str, json: bool) -> Option<String> {
     let begin = begin_marker(id);
     let end = end_marker(id);
     let start = screen.rfind(&begin)? + begin.len();
     let stop = start + screen[start..].find(&end)?;
-    Some(clean(&screen[start..stop]))
+    let text = clean(&screen[start..stop]);
+    Some(match json {
+        true => fold(&text),
+        false => text,
+    })
+}
+
+/// Puts a wrapped line back together.
+///
+/// A terminal user interface draws an answer at the width it has, and a line
+/// too long for that comes back with a break in the middle of whatever it was
+/// drawing - inside a JSON string, where a literal newline is not even legal.
+/// Nothing on the screen says which breaks are the answer's and which are the
+/// interface's.
+///
+/// For JSON there is no need to tell them apart: the grammar requires
+/// whitespace nowhere, and a newline inside a string is invalid, so joining
+/// every line with nothing between them repairs a wrap exactly and leaves a
+/// document that was already whole unchanged. Prose has no such property, which
+/// is why this is not done to it - and why an answer meant to be read by a
+/// person comes back with the interface's line breaks in it.
+fn fold(text: &str) -> String {
+    text.lines().collect::<Vec<&str>>().join("")
 }
 
 /// Strips what the interface drew from what the agent said.

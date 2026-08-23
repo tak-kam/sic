@@ -80,6 +80,11 @@ pub enum Action {
         /// choices somebody will be asked to make between is the thing a plan
         /// is being read for.
         alternatives: Option<u32>,
+        /// Whether the call continues a conversation rather than starting one.
+        /// What an agent was told earlier shapes what it answers now, and a
+        /// plan that did not say so would describe calls that look independent
+        /// and are not.
+        remembers: bool,
     },
     /// A document checked against a type.
     Verify {
@@ -225,6 +230,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         budget,
                         attempts,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
+                        remembers: policy.map(|p| p.conversation != 0).unwrap_or(false),
                     }
                 }
                 Op::FromJson => Action::Verify {
@@ -307,11 +313,15 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     attempts,
                     timeout_ms,
                     alternatives,
+                    remembers,
                     ..
                 } => {
                     out.push_str(&format!("{name:<16}{constraint:?}"));
                     if let Some(n) = alternatives {
                         out.push_str(&format!("  {n} options"));
+                    }
+                    if *remembers {
+                        out.push_str("  in one conversation per task");
                     }
                     if let Some(budget) = budget {
                         out.push_str(&format!("  at most {budget} in a run"));

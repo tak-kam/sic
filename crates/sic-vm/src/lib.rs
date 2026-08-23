@@ -146,6 +146,10 @@ pub(crate) struct PendingCap {
     /// How many attempts the policy allows in total.
     pub attempts: u32,
     pub timeout_ms: u32,
+    /// Which conversation the call belongs to, from the policy table. It
+    /// travels in the pending call because a retry re-issues the request, and
+    /// a retry that started a new conversation would not be one.
+    pub conversation: u32,
     pub span: SpanId,
     pub parent: Option<SpanId>,
 }
@@ -605,6 +609,7 @@ impl<'a> Vm<'a> {
                     task: index as u32,
                     attempt: pending.attempt,
                     timeout_ms: pending.timeout_ms,
+                    conversation: pending.conversation,
                 };
                 self.answering = Some(index);
                 return Status::Suspended(request);
@@ -1105,6 +1110,7 @@ impl<'a> Vm<'a> {
                         attempt: 1,
                         attempts: policy.map(|p| p.attempts).unwrap_or(1).max(1),
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
+                        conversation: policy.map(|p| p.conversation).unwrap_or(0),
                         span,
                         parent: frame_span,
                     });
@@ -1435,6 +1441,7 @@ fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
                     attempt: pending.attempt,
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
+                    conversation: pending.conversation,
                     span: pending.span.0,
                     parent: pending.parent.map(|s| s.0),
                 })
@@ -1493,6 +1500,7 @@ fn restore_task(saved: &checkpoint::TaskSnapshot) -> Task {
                     attempt: pending.attempt,
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
+                    conversation: pending.conversation,
                     span: SpanId(pending.span),
                     parent: pending.parent.map(SpanId),
                 })

@@ -65,6 +65,14 @@ pub struct AgentInfo {
     pub output: TypeId,
     /// How many model calls the agent may make in a whole run.
     pub budget: Option<u32>,
+    /// The conversation this agent's calls belong to, when it keeps one, and
+    /// `None` when every call starts a fresh one.
+    ///
+    /// A number rather than a flag because two agents that both remember must
+    /// not end up talking into the same conversation: what identifies one is
+    /// the agent and the task, and the task is the only half the broker can
+    /// see for itself.
+    pub conversation: Option<u32>,
     /// The manifest entry for `llm.invoke`.
     pub cap: CapId,
 }
@@ -549,11 +557,18 @@ impl Checker {
 
             let id = AgentId(self.agents.len() as u32);
             self.agent_ids.insert(decl.name.name.clone(), id);
+            // Numbered from one, so that zero can mean "no conversation" once
+            // this reaches the bytecode, where there are no options.
+            let conversation = match decl.memory {
+                true => Some(self.agents.len() as u32 + 1),
+                false => None,
+            };
             self.agents.push(AgentInfo {
                 name: decl.name.name.clone(),
                 input,
                 output,
                 budget: decl.budget,
+                conversation,
                 cap,
             });
         }

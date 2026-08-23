@@ -27,7 +27,9 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 1 for tasks: a phase 5 checkpoint holds one implicit task and
 /// cannot be read as this. Refusing it is better than half-understanding it.
 /// Bumped from 2 for argument vectors, which a suspended call may carry.
-pub const VERSION_MINOR: u16 = 3;
+/// Bumped from 3 for conversations: a suspended call says which one it belongs
+/// to, and a reader that stopped after the timeout would take that for a span.
+pub const VERSION_MINOR: u16 = 4;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -104,6 +106,10 @@ pub struct Pending {
     pub attempt: u32,
     pub attempts: u32,
     pub timeout_ms: u32,
+    /// Which conversation the call belongs to. A resumed run that retried this
+    /// call would otherwise start a new one, which is the opposite of what
+    /// remembering means.
+    pub conversation: u32,
     pub span: u64,
     pub parent: Option<u64>,
 }
@@ -460,6 +466,7 @@ fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {
             w.u32(pending.attempt);
             w.u32(pending.attempts);
             w.u32(pending.timeout_ms);
+            w.u32(pending.conversation);
             w.u64(pending.span);
             write_option_u64(w, pending.parent);
         }
@@ -502,6 +509,7 @@ fn read_state(r: &mut Reader<'_>) -> Result<TaskStateSnapshot> {
                 attempt: r.u32()?,
                 attempts: r.u32()?,
                 timeout_ms: r.u32()?,
+                conversation: r.u32()?,
                 span: r.u64()?,
                 parent: read_option_u64(r)?,
             })

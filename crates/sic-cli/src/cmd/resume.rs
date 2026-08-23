@@ -88,7 +88,25 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         }
     };
 
-    let mut broker = match super::run::open_driver(options.llm, None) {
+    // A conversation lives in its run's session, and a loose checkpoint does
+    // not say which run it came from. Starting a fresh one and continuing as if
+    // it were the old one would change what the run means without saying so.
+    if options.llm.is_some() && program.policies.iter().any(|p| p.conversation != 0) {
+        eprintln!(
+            "error: this program keeps a conversation, and a checkpoint does not say which run \
+             it belongs to"
+        );
+        eprintln!(
+            "       continue a recorded run instead: sic attach <RUN-ID> --value V --llm <SPEC>"
+        );
+        return ExitCode::from(EXIT_USAGE);
+    }
+    let session = sic_broker::tmux::Session {
+        run: super::journal::new_run_id().to_string(),
+        continuing: false,
+        state: None,
+    };
+    let mut broker = match super::run::open_driver(options.llm, session, None) {
         Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
         Ok(None) => Broker::new(manifest(&program)),
         Err(message) => {
@@ -98,5 +116,6 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     };
     let status = vm.resume(value);
     let outcome = drive(&mut vm, &mut broker, status);
+    broker.finish(matches!(outcome, super::drive::Outcome::Suspended { .. }));
     finish(&mut vm, &program, outcome, options.checkpoint, None)
 }

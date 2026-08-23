@@ -371,3 +371,17 @@ fn an_import_needs_a_path() {
 fn a_requirement_is_a_capability_name() {
     assert!(codes("requires { process; }").contains(&"E0200"));
 }
+
+/// `memory: task` is how an agent says it keeps a conversation. `task` is the
+/// only scope: one lasting a whole run is what a program that never spawns
+/// already gets, and one lasting a call is what not writing this means.
+#[test]
+fn an_agent_may_keep_a_conversation() {
+    let dump = ok("agent r { input: String, output: P, budget: 2, memory: task }\nfn main() { }");
+    assert!(dump.contains("memory"), "{dump}");
+
+    assert!(codes("agent r { memory: run }\nfn main() { }").contains(&"E0210"));
+    assert!(codes("agent r { memory: 3 }\nfn main() { }").contains(&"E0210"));
+    // An unknown setting still says what the settings are.
+    assert!(codes("agent r { recall: task }\nfn main() { }").contains(&"E0209"));
+}

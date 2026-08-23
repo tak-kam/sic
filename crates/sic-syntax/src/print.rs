@@ -110,6 +110,9 @@ impl Printer {
         if let Some(budget) = a.budget {
             parts.push(format!("(budget {budget})"));
         }
+        if a.memory {
+            parts.push("(memory task)".to_string());
+        }
         self.line(&format!("{})", parts.join(" ")));
     }
 

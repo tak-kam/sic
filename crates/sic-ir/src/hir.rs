@@ -179,6 +179,10 @@ pub struct CallPolicy {
     pub timeout_ms: Option<u32>,
     /// How many times this call site may run in a whole run.
     pub budget: Option<u32>,
+    /// Which conversation the call belongs to, when the caller keeps one.
+    /// `None` is a fresh conversation every time, which is what an agent
+    /// without `memory: task` means.
+    pub conversation: Option<u32>,
     /// Phase 8: what makes a retry safe to repeat.
     pub idempotency_key: Option<LocalId>,
 }
@@ -188,6 +192,7 @@ impl CallPolicy {
         self.attempts.is_none()
             && self.timeout_ms.is_none()
             && self.budget.is_none()
+            && self.conversation.is_none()
             && self.idempotency_key.is_none()
     }
 }
