@@ -80,6 +80,38 @@ lying in the one place this project cannot afford it.
 So: the gate is what routes and records, and the sandbox is what bounds. Where
 the sandbox is not there, the plan says the gate is what it has.
 
+### What the gate cannot hold, in this agent, today
+
+Two of these were found by reading the agent's documentation rather than by
+reasoning about gates in general, and both change what a plan is allowed to say.
+
+**A set of read-only shell commands is always allowed and is not
+configurable.** `dontAsk` - the mode that makes an allowlist mean what it says,
+because it denies an unnamed tool without prompting, and the only mode a pane
+with nobody watching it can run in - still permits `ls`, `cat`, `echo`, `pwd`,
+`head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd` and
+the read-only forms of `git`.
+
+`cat` reads any file on the machine. So a `Read(./docs)` rule bounds the *Read
+tool*; it does not bound *reading*. The plan may say the first and must not say
+the second, and the difference is not pedantry: a program whose manifest grants
+`fs.read "./docs"` is running an agent that can read `~/.ssh/id_ed25519`.
+Bounding that needs the filesystem half of a sandbox, which §11 lists as not
+here.
+
+**Allow rules merge across settings scopes.** A rule in the machine's
+`~/.claude/settings.json` or in the project's `.claude/settings.json` is added
+to the ones sic passes, so the manifest is not by itself the whole story. Deny
+rules are the exception - they apply across every scope and no allow rule
+anywhere overrides them - which is why the network denial (§6) rests on a deny
+and not on the absence of an allow.
+
+The flag that would close this is `--setting-sources`, which takes some of
+`user`, `project`, `local`; whether it accepts an empty list is not something
+this design has verified, and guessing would be the silent widening this
+document exists to prevent. Until it is verified, a plan describing path scopes
+is describing what sic asked for rather than what is in force.
+
 ---
 
 ## 3. Translate what can be translated
@@ -310,16 +342,23 @@ like:
 ```text
 Capabilities:
   llm.invoke      [invoke]  "claude"  skill sha256:9f2c1a4b
-    the agent may read    ./docs                 (its own permissions)
-    the agent may edit    ./src                  (its own permissions)
-    the agent may run     /usr/bin/cargo         (through the broker, pinned)
-    the agent may not     reach the network      (sandboxed, no egress)
+    the agent's Read       ./docs                 (its own permissions)
+    the agent's Edit       ./src                  (its own permissions)
+    the agent may run      /usr/bin/cargo         (through the broker, pinned)
+    the agent may not      reach the network      (sandboxed, no egress)
+    but it may read anything a shell can read     (not bounded)
     at most 20 model calls, 200 tool uses, 30m per answer
 ```
 
 Every line names **where** it is enforced, because §2 is the whole point: a
 reader has to be able to tell a gate from a boundary. A line with nothing in
 parentheses would be a claim with no mechanism behind it.
+
+The first two lines say "the agent's Read" rather than "the agent may read" for
+the reason in §2: those rules bound a tool, and `cat` is not that tool. The
+fifth line is there until the filesystem half of a sandbox is, and it is the
+line that will be least comfortable to print - which is the argument for
+printing it.
 
 And the warning in `driving.md` §8 is removed only when the plan can print this
 for the manifest in front of it. Until then the warning is the true statement,

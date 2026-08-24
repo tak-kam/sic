@@ -2827,3 +2827,42 @@ fn a_program_in_two_files_keeps_the_capability_call_its_source_has() {
     assert_eq!(stdout, "\"kept\"\n");
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// The agent's authority is the program's manifest, so a grant nothing can
+/// enforce against the agent stops the run before it starts - not at the first
+/// call. A manifest that cannot be enforced is worse than none once `sic plan`
+/// has printed it.
+#[test]
+fn a_grant_that_cannot_reach_the_agent_refuses_the_run() {
+    // Granted and never called: the refusal is about what the manifest permits
+    // the agent to do, not about what this run happens to reach.
+    let src = write_temp(
+        "unenforceable.sic",
+        concat!(
+            "allow {\n",
+            "    llm.invoke \"claude\";\n",
+            "    process.exec \"/bin/echo\";\n",
+            "}\n",
+            "\n",
+            "fn main() -> Int {\n",
+            "    return 7;\n",
+            "}\n",
+        ),
+    );
+    let path = src.to_str().unwrap();
+
+    let (_, stderr, code) = sic(&["run", path, "--llm", "tmux:claude"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("process.exec"), "{stderr}");
+    assert!(
+        stderr.contains("cannot be enforced against the agent"),
+        "{stderr}"
+    );
+
+    // Without a driver there is no agent, so there is nothing to enforce it
+    // against and the program runs as it always did.
+    let (stdout, stderr, code) = sic(&["run", path]);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(stdout, "7\n");
+    std::fs::remove_file(src).ok();
+}

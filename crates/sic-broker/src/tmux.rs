@@ -14,6 +14,7 @@ use sic_core::CapError;
 use crate::agent::{
     AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
 };
+use crate::authority::Authority;
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.
@@ -85,6 +86,8 @@ pub struct TmuxDriver {
     state: Option<PathBuf>,
     /// The conversations this run has open, as `(conversation, task)`.
     open: Vec<(u32, u32)>,
+    /// What the agent may do, from the program's manifest.
+    authority: Authority,
 }
 
 impl TmuxDriver {
@@ -139,7 +142,25 @@ impl TmuxDriver {
             continuing: session.continuing,
             state: session.state,
             open,
+            authority: Authority::default(),
         })
+    }
+
+    /// Hands the driver what the manifest says the agent may do.
+    ///
+    /// Separate from `open` because opening checks the machine - is there a
+    /// tmux, is there an agent - and this is about one program. A driver opened
+    /// and never given an authority runs the agent with nothing allowed, which
+    /// is the right way round for a mistake to fail.
+    pub fn authorize(&mut self, authority: Authority) {
+        self.authority = authority;
+    }
+
+    /// The command a pane runs: the agent, and what it may do.
+    fn agent_command(&self) -> String {
+        let mut parts = vec![sh_quote(&self.agent)];
+        parts.extend(self.authority.arguments().iter().map(|a| sh_quote_str(a)));
+        parts.join(" ")
     }
 
     /// The run's session, made if this is the first call, with `window` as its
@@ -165,7 +186,7 @@ impl TmuxDriver {
             COLUMNS,
             "-y",
             ROWS,
-            &sh_quote(&self.agent),
+            &self.agent_command(),
         ])?;
         Ok(())
     }
@@ -181,7 +202,7 @@ impl TmuxDriver {
             window,
             "-c",
             &here,
-            &sh_quote(&self.agent),
+            &self.agent_command(),
         ])?;
         Ok(())
     }
@@ -504,5 +525,9 @@ fn file_name(path: &Path) -> String {
 
 /// One argument for the shell tmux runs a pane's command with.
 fn sh_quote(path: &Path) -> String {
-    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+    sh_quote_str(&path.display().to_string())
+}
+
+fn sh_quote_str(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
 }

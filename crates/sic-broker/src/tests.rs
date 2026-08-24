@@ -923,3 +923,127 @@ fn json_is_asked_for_on_one_line() {
     assert!(ask_text("q", "abc123", true).contains("single line"));
     assert!(!ask_text("q", "abc123", false).contains("single line"));
 }
+
+// ---- what the agent may do: docs/design/authority.md ----
+
+use crate::authority::{Authority, Reach, Rule, authority_of, reach_of};
+
+fn rules(grant: &CapGrant) -> Vec<String> {
+    match reach_of(grant) {
+        Reach::Translated(rules) => rules.iter().map(|r| r.to_string()).collect(),
+        other => panic!("expected a translation, got {other:?}"),
+    }
+}
+
+/// A path scope is a thing a permission system can hold, so these become rules
+/// in the agent's own configuration rather than calls back into the broker.
+#[test]
+fn a_path_grant_becomes_a_rule_the_agent_enforces() {
+    assert_eq!(
+        rules(&grant("fs.read", CapKind::Read, "./docs/x.txt")),
+        vec!["Read(./docs/x.txt)"]
+    );
+    // Writing a whole file and editing part of one are the same authority here,
+    // because `fs.write` replaces the file either way.
+    assert_eq!(
+        rules(&grant("fs.write", CapKind::Write, "./out.txt")),
+        vec!["Write(./out.txt)", "Edit(./out.txt)"]
+    );
+}
+
+/// The grant that summoned the agent is not authority the agent has.
+#[test]
+fn the_grant_that_summons_the_agent_is_not_the_agents() {
+    let manifest = vec![grant("llm.invoke", CapKind::Invoke, "claude")];
+    assert_eq!(reach_of(&manifest[0]), Reach::Summons);
+    assert_eq!(authority_of(&manifest), Ok(Authority::default()));
+}
+
+/// A shell rule looks like it fits `process.exec` and does not: a command
+/// string can invoke anything it likes, and a digest pin has no equivalent at
+/// all. Widening a grant to fit the configuration's vocabulary is the one thing
+/// a translation must never do.
+#[test]
+fn running_a_binary_is_not_running_a_shell_command() {
+    assert!(matches!(
+        reach_of(&pinned(
+            "process.exec",
+            CapKind::Exec,
+            "/usr/bin/cargo",
+            "abc"
+        )),
+        Reach::Routed(_)
+    ));
+    assert!(matches!(
+        reach_of(&grant("process.capture", CapKind::Exec, "/usr/bin/git")),
+        Reach::Routed(_)
+    ));
+    // Asking a person is not a tool the agent has, and it suspends the run.
+    assert!(matches!(
+        reach_of(&grant("human.approve", CapKind::Invoke, "deploying")),
+        Reach::Routed(_)
+    ));
+}
+
+/// A manifest that cannot be enforced is worse than none once `sic plan` has
+/// printed it, so the run does not start - and the refusal names the grant and
+/// says which half was missing.
+#[test]
+fn a_grant_nothing_can_enforce_stops_the_run_before_it_starts() {
+    let manifest = vec![
+        grant("llm.invoke", CapKind::Invoke, "claude"),
+        grant("fs.read", CapKind::Read, "./docs"),
+        grant("process.exec", CapKind::Exec, "/usr/bin/cargo"),
+    ];
+    let refused = authority_of(&manifest).expect_err("nothing can enforce the exec grant");
+    assert!(refused.grant.contains("process.exec"), "{refused}");
+    assert!(refused.grant.contains("/usr/bin/cargo"), "{refused}");
+    assert!(refused.to_string().contains("routed"), "{refused}");
+}
+
+/// Everything the agent may do comes from the manifest, in the order the
+/// manifest names it.
+#[test]
+fn the_agents_authority_is_the_programs_manifest() {
+    let manifest = vec![
+        grant("fs.read", CapKind::Read, "./docs"),
+        grant("llm.invoke", CapKind::Invoke, "claude"),
+        grant("fs.write", CapKind::Write, "./out"),
+    ];
+    let authority = authority_of(&manifest).expect("all of it translates");
+    let names: Vec<String> = authority.allowed.iter().map(Rule::to_string).collect();
+    assert_eq!(names, ["Read(./docs)", "Write(./out)", "Edit(./out)"]);
+    assert!(authority.routed.is_empty());
+}
+
+/// A tool named nowhere has to be denied without prompting, because the pane
+/// has nobody watching it: any mode that can prompt would hang.
+#[test]
+fn the_agent_is_started_with_an_allowlist_and_no_way_to_ask() {
+    let manifest = vec![
+        grant("llm.invoke", CapKind::Invoke, "claude"),
+        grant("fs.read", CapKind::Read, "./docs"),
+    ];
+    let args = authority_of(&manifest).expect("it translates").arguments();
+    let line = args.join(" ");
+
+    assert!(line.contains("--permission-mode dontAsk"), "{line}");
+    assert!(line.contains("--allowedTools Read(./docs)"), "{line}");
+    // The two tools that reach the network without going through the Bash
+    // sandbox. A deny rule is the only part of this configuration that another
+    // settings file cannot widen.
+    assert!(
+        line.contains("--disallowedTools WebFetch WebSearch"),
+        "{line}"
+    );
+}
+
+/// A program that grants nothing beyond summoning the agent gives the agent
+/// nothing - not an unbounded session.
+#[test]
+fn a_manifest_that_grants_nothing_allows_nothing() {
+    let manifest = vec![grant("llm.invoke", CapKind::Invoke, "claude")];
+    let args = authority_of(&manifest).expect("it translates").arguments();
+    assert!(!args.iter().any(|a| a == "--allowedTools"), "{args:?}");
+    assert!(args.iter().any(|a| a == "dontAsk"), "{args:?}");
+}

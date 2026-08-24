@@ -100,9 +100,10 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         continuing: false,
         state: None,
     };
-    let mut broker = match super::run::open_driver(options.llm, session, None) {
-        Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
-        Ok(None) => Broker::new(manifest(&program)),
+    let grants = manifest(&program);
+    let mut broker = match super::run::open_driver(options.llm, session, &grants, None) {
+        Ok(Some(driver)) => Broker::with_driver(grants, driver),
+        Ok(None) => Broker::new(grants),
         Err(message) => {
             eprintln!("error: {message}");
             return ExitCode::from(EXIT_FAILURE);

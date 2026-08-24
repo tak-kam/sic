@@ -184,11 +184,10 @@ pub fn attach(
         continuing: true,
         state: Some(dir.join(store::CONVERSATIONS)),
     };
-    let mut broker = match super::run::open_driver(llm, session, None) {
-        Ok(Some(driver)) => {
-            sic_broker::Broker::with_driver(super::drive::manifest(&program), driver)
-        }
-        Ok(None) => sic_broker::Broker::new(super::drive::manifest(&program)),
+    let grants = super::drive::manifest(&program);
+    let mut broker = match super::run::open_driver(llm, session, &grants, None) {
+        Ok(Some(driver)) => sic_broker::Broker::with_driver(grants, driver),
+        Ok(None) => sic_broker::Broker::new(grants),
         Err(message) => {
             eprintln!("error: {message}");
             return ExitCode::from(EXIT_FAILURE);

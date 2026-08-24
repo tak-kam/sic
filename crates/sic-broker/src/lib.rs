@@ -15,9 +15,11 @@ use std::time::{Duration, Instant};
 use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
 pub mod agent;
+pub mod authority;
 pub mod tmux;
 
 pub use agent::{AgentDriver, Ask, DriverInfo, Thread};
+pub use authority::{Authority, Reach, Refused, Rule, authority_of};
 pub use tmux::TmuxDriver;
 
 /// The largest file `fs.read` will return. A capability that can exhaust the

@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use sic_broker::{AgentDriver, Broker};
 use sic_bytecode::Program;
-use sic_core::Digest;
+use sic_core::{CapGrant, Digest};
 use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
@@ -100,9 +100,10 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         continuing: false,
         state: recording.as_ref().map(|dir| dir.join(store::CONVERSATIONS)),
     };
-    let mut broker = match open_driver(options.llm, session, recording.as_deref()) {
-        Ok(Some(driver)) => Broker::with_driver(manifest(&program), driver),
-        Ok(None) => Broker::new(manifest(&program)),
+    let manifest = manifest(&program);
+    let mut broker = match open_driver(options.llm, session, &manifest, recording.as_deref()) {
+        Ok(Some(driver)) => Broker::with_driver(manifest, driver),
+        Ok(None) => Broker::new(manifest),
         Err(message) => {
             eprintln!("error: {message}");
             return ExitCode::from(EXIT_FAILURE);
@@ -145,12 +146,19 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 pub fn open_driver(
     spec: Option<&str>,
     session: sic_broker::tmux::Session,
+    manifest: &[CapGrant],
     recording: Option<&std::path::Path>,
 ) -> Result<Option<Box<dyn sic_broker::AgentDriver>>, String> {
     let Some(spec) = spec else {
+        // No driver, no agent: `llm.invoke` defers and a person answers it, so
+        // there is nothing here whose authority has to be worked out.
         return Ok(None);
     };
-    let driver = sic_broker::TmuxDriver::open(spec, session).map_err(|e| e.message)?;
+    // Before anything runs. A manifest that cannot be enforced against the
+    // agent is worse than no manifest, because `sic plan` printed it.
+    let authority = sic_broker::authority_of(manifest).map_err(|refused| refused.to_string())?;
+    let mut driver = sic_broker::TmuxDriver::open(spec, session).map_err(|e| e.message)?;
+    driver.authorize(authority);
     let info = driver.info().clone();
     if let Some(dir) = recording {
         store::record_driver(dir, &info)?;
