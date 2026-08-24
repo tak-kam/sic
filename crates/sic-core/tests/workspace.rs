@@ -172,6 +172,63 @@ fn sic_core_depends_on_nothing_else_in_the_workspace() {
     );
 }
 
+/// How many test functions the workspace has.
+///
+/// Counted from the source rather than from a run, so that the number means
+/// the same thing everywhere: four tests are `#[cfg(target_os = "linux")]` and
+/// a run on another platform reports four fewer. A line that is exactly
+/// `#[test]` is what rustfmt writes and what a string literal would not be.
+fn test_functions() -> usize {
+    let crates = workspace().join("crates");
+    let mut count = 0;
+    for entry in std::fs::read_dir(&crates)
+        .expect("crates/ should exist")
+        .flatten()
+    {
+        let mut files = Vec::new();
+        // Both halves: a crate's unit tests live in `src`, its integration
+        // tests in `tests`, and the number means all of them.
+        rust_files(&entry.path().join("src"), &mut files);
+        rust_files(&entry.path().join("tests"), &mut files);
+        for file in files {
+            let text = std::fs::read_to_string(&file).expect("source should be readable");
+            count += text.lines().filter(|l| l.trim() == "#[test]").count();
+        }
+    }
+    count
+}
+
+/// `docs/status.md` says how many tests the tree had when it was last read.
+///
+/// It is checked for the same reason `docs/diagnostics.md` is: an unchecked
+/// number in a document is worse than none, because it looks like a fact. This
+/// one had been wrong at least twice - 439 against 442, and 514 against 525 -
+/// and the only moment anybody noticed was when they happened to look.
+///
+/// The number is a freshness marker, so the check is really about the sentence
+/// beside it: a commit that adds a test and updates this line is a commit that
+/// opened the document.
+#[test]
+fn the_test_count_in_the_status_document_is_the_real_one() {
+    let found = test_functions();
+    let status = std::fs::read_to_string(workspace().join("docs/status.md"))
+        .expect("docs/status.md should exist");
+    let line = status
+        .lines()
+        .find(|l| l.starts_with("Last updated at "))
+        .expect("docs/status.md should say how many tests it was last read at");
+    let said: usize = line
+        .trim_start_matches("Last updated at ")
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("cannot read a number out of `{line}`"));
+    assert_eq!(
+        said, found,
+        "docs/status.md says {said} tests and there are {found};          update the line, and read what is under it while you are there"
+    );
+}
+
 #[test]
 fn every_diagnostic_code_is_in_the_index() {
     // An index that drifts is worse than none, so it is checked rather than

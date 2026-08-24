@@ -3,7 +3,13 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 541 tests.
+Last updated at 542 tests.
+
+That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
+point of it: a commit that adds a test has to come here to update the line, and
+what is under the line is the thing worth re-reading. It counts test functions
+in the source, so it is the same on every platform - four of them are
+`#[cfg(target_os = "linux")]` and a run elsewhere reports four fewer.
 
 ---
 
