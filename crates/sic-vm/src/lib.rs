@@ -19,7 +19,7 @@
 pub mod checkpoint;
 pub mod value;
 
-use sic_bytecode::inst::Op;
+use sic_bytecode::inst::{Inst, Op};
 use sic_bytecode::program::{Const, Program};
 use sic_core::{CapError, CapRequest, CapValue, Digest};
 use sic_journal::{EventKind, Journal, RunId, SpanId, TaskId, digest_values};
@@ -1061,78 +1061,11 @@ impl<'a> Vm<'a> {
                     }
                 }
                 Op::CallCap => {
-                    let Some(decl) = self.program.caps.get(b) else {
-                        die!(
-                            FailKind::Internal("capability index out of range"),
-                            None,
-                            None
-                        );
-                    };
-                    let (name, argc) = (decl.name.clone(), decl.params.len());
-                    let mut args = Vec::with_capacity(argc);
-                    for i in 0..argc {
-                        match self.to_cap_value(&self.get(index, base + c + i)) {
-                            Some(v) => args.push(v),
-                            None => die!(
-                                FailKind::Internal(
-                                    "a capability argument is not a value the broker can take"
-                                ),
-                                None,
-                                None
-                            ),
-                        }
+                    // Three jobs, and they are a method rather than seventy
+                    // lines of this `match`: see `begin_capability_call`.
+                    if let Err(info) = self.begin_capability_call(index, inst, pc, base) {
+                        self.finish_task(index, TaskState::Failed(info));
                     }
-                    let policy = self.program.policy_at(pc);
-                    if let Some(budget) = policy.map(|p| p.budget).filter(|b| *b > 0) {
-                        let spent = self.spent.entry(pc).or_insert(0);
-                        *spent += 1;
-                        let used = *spent;
-                        let frame_span = self.tasks[index].frames.last().map(|f| f.span);
-                        self.journal.emit_for(
-                            TaskId(index as u64),
-                            frame_span.unwrap_or(self.root_span),
-                            Some(self.root_span),
-                            EventKind::BudgetConsumed {
-                                kind: "calls".into(),
-                                amount: 1,
-                                remaining: budget.saturating_sub(used) as u64,
-                            },
-                        );
-                        if used > budget {
-                            die!(
-                                FailKind::OutOfBudget,
-                                None,
-                                Some(format!("`{name}` may run {budget} time(s) in a run"))
-                            );
-                        }
-                    }
-                    let frame_span = self.tasks[index].frames.last().map(|f| f.span);
-                    let span = self.journal.new_span();
-                    // Recorded here, where the instruction runs, rather than
-                    // where the request leaves the VM. Two tasks can be waiting
-                    // at once, and the journal should show that.
-                    self.journal.emit_for(
-                        TaskId(index as u64),
-                        span,
-                        frame_span,
-                        EventKind::CapabilityRequested {
-                            cap: name.clone(),
-                            args: digest_values(&args),
-                            attempt: 1,
-                        },
-                    );
-                    self.tasks[index].state = TaskState::WaitingCap(PendingCap {
-                        reg: base + a,
-                        index: b as u32,
-                        name,
-                        args,
-                        attempt: 1,
-                        attempts: policy.map(|p| p.attempts).unwrap_or(1).max(1),
-                        timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
-                        conversation: policy.map(|p| p.conversation).unwrap_or(0),
-                        span,
-                        parent: frame_span,
-                    });
                     return;
                 }
                 Op::Return => {
@@ -1391,6 +1324,136 @@ impl<'a> Vm<'a> {
     }
 
     // ---- failures ----
+
+    /// Turns a `CALL_CAP` into a request the broker can be asked, and parks the
+    /// task on it until the answer arrives.
+    ///
+    /// This is a method rather than an arm of the dispatch `match` because it
+    /// is three jobs in a row - reading the arguments, charging the budget,
+    /// recording and suspending - and the `match` is otherwise twenty short
+    /// arms that each do one thing to two registers. A fifth of the loop being
+    /// one arm is what made the ordering bug in `charge_budget` hard to see:
+    /// answering "is a refused call charged?" meant reading seventy lines in
+    /// the middle of a four-hundred-line function, past a macro that returns
+    /// from the enclosing one.
+    ///
+    /// `Err` is a task that failed. The caller finishes it; nothing here can,
+    /// because ending a task is the loop's business.
+    fn begin_capability_call(
+        &mut self,
+        index: usize,
+        inst: Inst,
+        pc: u32,
+        base: usize,
+    ) -> Result<(), FailInfo> {
+        let (a, b, c) = (inst.a() as usize, inst.b() as usize, inst.c() as usize);
+        let fail = |vm: &Self, kind| vm.fail_info(index, kind, None, None);
+
+        let Some(decl) = self.program.caps.get(b) else {
+            return Err(fail(
+                self,
+                FailKind::Internal("capability index out of range"),
+            ));
+        };
+        let (name, argc) = (decl.name.clone(), decl.params.len());
+
+        let mut args = Vec::with_capacity(argc);
+        for i in 0..argc {
+            match self.to_cap_value(&self.get(index, base + c + i)) {
+                Some(v) => args.push(v),
+                None => {
+                    return Err(fail(
+                        self,
+                        FailKind::Internal(
+                            "a capability argument is not a value the broker can take",
+                        ),
+                    ));
+                }
+            }
+        }
+
+        self.charge_budget(index, pc, &name)?;
+
+        let policy = self.program.policy_at(pc);
+        let frame_span = self.tasks[index].frames.last().map(|f| f.span);
+        let span = self.journal.new_span();
+        // Recorded here, where the instruction runs, rather than where the
+        // request leaves the VM. Two tasks can be waiting at once, and the
+        // journal should show that.
+        self.journal.emit_for(
+            TaskId(index as u64),
+            span,
+            frame_span,
+            EventKind::CapabilityRequested {
+                cap: name.clone(),
+                args: digest_values(&args),
+                attempt: 1,
+            },
+        );
+        self.tasks[index].state = TaskState::WaitingCap(PendingCap {
+            reg: base + a,
+            index: b as u32,
+            name,
+            args,
+            attempt: 1,
+            attempts: policy.map(|p| p.attempts).unwrap_or(1).max(1),
+            timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
+            conversation: policy.map(|p| p.conversation).unwrap_or(0),
+            span,
+            parent: frame_span,
+        });
+        Ok(())
+    }
+
+    /// Charges one call against a budgeted site, and refuses the call when
+    /// there is nothing left.
+    ///
+    /// The order matters and used to be the other way round: the site was
+    /// charged and a `BudgetConsumed` emitted before anything decided whether
+    /// the call could happen, so a site with `budget: 1` reached twice wrote
+    /// two of them. The second described a call that never left the VM - no
+    /// `CapabilityRequested` followed it and the broker was never asked -
+    /// against an event whose own doc comment says "a budgeted call site was
+    /// used once". The over-count travelled into checkpoints through `spent`
+    /// as well, so it survived a resume.
+    ///
+    /// A refused call is therefore neither charged nor recorded. The journal is
+    /// this runtime's account of itself, and an account should not bill for
+    /// something it declined to do.
+    fn charge_budget(&mut self, index: usize, pc: u32, name: &str) -> Result<(), FailInfo> {
+        let Some(budget) = self
+            .program
+            .policy_at(pc)
+            .map(|p| p.budget)
+            .filter(|b| *b > 0)
+        else {
+            return Ok(());
+        };
+        let used = self.spent.get(&pc).copied().unwrap_or(0) + 1;
+        if used > budget {
+            return Err(self.fail_info(
+                index,
+                FailKind::OutOfBudget,
+                None,
+                Some(format!("`{name}` may run {budget} time(s) in a run")),
+            ));
+        }
+        self.spent.insert(pc, used);
+
+        let frame_span = self.tasks[index].frames.last().map(|f| f.span);
+        self.journal.emit_for(
+            TaskId(index as u64),
+            frame_span.unwrap_or(self.root_span),
+            Some(self.root_span),
+            EventKind::BudgetConsumed {
+                kind: "calls".into(),
+                amount: 1,
+                // The check above is what makes this never saturate.
+                remaining: budget.saturating_sub(used) as u64,
+            },
+        );
+        Ok(())
+    }
 
     fn fail_info(
         &self,

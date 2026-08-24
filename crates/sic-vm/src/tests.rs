@@ -1557,3 +1557,44 @@ fn a_budget_survives_a_checkpoint() {
     let saved = Checkpoint::decode(&bytes).unwrap();
     assert_eq!(saved.spent, vec![(1, 1)]);
 }
+
+/// A call the budget refused is not charged and not recorded.
+///
+/// It used to be both: the site was charged and a `BudgetConsumed` emitted
+/// before anything decided whether the call could happen, so the run's own
+/// account showed a budgeted site used twice when the second use was refused
+/// and the broker was never asked.
+#[test]
+fn a_refused_call_is_not_billed_for() {
+    let mut p = exec_program();
+    let code_off = p.funcs[0].code_off as usize;
+    // A loop back onto the same CALL_CAP: the second visit is over budget.
+    p.code[code_off + 2] = Inst::asbx(Op::Jump, 0, -2);
+    p.funcs[0].code_len = 3;
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 1,
+        conversation: 0,
+    });
+
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::I64(0)),
+        Status::Failed(_)
+    ));
+
+    let events = names(&sink);
+    let charged = events.iter().filter(|n| **n == "budget_consumed").count();
+    let asked = events
+        .iter()
+        .filter(|n| **n == "capability_requested")
+        .count();
+    // One call happened, so one charge and one request. The refused visit adds
+    // neither.
+    assert_eq!(charged, 1, "{events:?}");
+    assert_eq!(asked, 1, "{events:?}");
+}

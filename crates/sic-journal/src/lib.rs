@@ -110,6 +110,10 @@ pub enum EventKind {
 
     /// A budgeted call site was used once. `remaining` is what is left, which
     /// is what makes a budget visible before it runs out rather than after.
+    ///
+    /// "Used" means the call happened. A call the budget refused emits nothing:
+    /// it is followed by no `CapabilityRequested`, nothing was asked, and an
+    /// account that billed for it would be describing work that did not occur.
     BudgetConsumed {
         kind: String,
         amount: u64,
