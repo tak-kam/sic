@@ -252,18 +252,48 @@ pub fn explain(prefix: &str) -> ExitCode {
 
     // The journal records digests, so the one thing it cannot show is what a
     // person was asked and what they said about it. That is here.
-    for asked in read_asked(&dir) {
+    //
+    // A file that cannot be read is worth saying so about and no reason to stop:
+    // `explain` is what a person reads when something has already gone wrong.
+    let answers = match store::read_answers(&dir) {
+        Ok(answers) => answers,
+        Err(msg) => {
+            eprintln!("warning: {msg}");
+            Vec::new()
+        }
+    };
+    // A line has a question exactly when somebody was asked; the broker's own
+    // answers have none, and are skipped rather than reported as decisions.
+    for recorded in &answers {
+        let Some(question) = &recorded.asked else {
+            continue;
+        };
         println!();
         println!("  asked a person:");
-        for line in asked.question.lines() {
+        for line in question.lines() {
             println!("    {line}");
         }
-        println!("    answered {}", asked.answer);
-        if let Some(because) = &asked.because {
+        println!("    answered {}", rendered(&recorded.value));
+        if let Some(because) = &recorded.because {
             println!("    because {because}");
         }
     }
     ExitCode::SUCCESS
+}
+
+/// A recorded answer, as a person reads it back.
+fn rendered(value: &CapValue) -> String {
+    match value {
+        CapValue::Unit => "null".to_string(),
+        CapValue::Bool(v) => v.to_string(),
+        CapValue::I64(v) => v.to_string(),
+        CapValue::F64(v) => format!("{v:?}"),
+        CapValue::Str(s) => format!("{s:?}"),
+        CapValue::List(items) => {
+            let parts: Vec<String> = items.iter().map(|i| format!("{i:?}")).collect();
+            format!("[{}]", parts.join(", "))
+        }
+    }
 }
 
 /// The run a directory holds, which is what it is named.
@@ -271,50 +301,6 @@ fn run_id_of(dir: &Path) -> String {
     dir.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-/// One question a person answered, read back out of `responses.jsonl`.
-struct Asked {
-    question: String,
-    answer: String,
-    because: Option<String>,
-}
-
-/// The answers a person gave, in the order they gave them.
-///
-/// A line has a question exactly when somebody was asked; the broker's own
-/// answers have none, and are skipped rather than reported as decisions.
-fn read_asked(dir: &Path) -> Vec<Asked> {
-    let path = dir.join(store::RESPONSES);
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Ok(json) = sic_json::parse(line) else {
-            continue;
-        };
-        let Some(sic_json::Json::Str(question)) = json.member("asked") else {
-            continue;
-        };
-        let answer = match json.member("value") {
-            Some(sic_json::Json::Str(s)) => format!("{s:?}"),
-            Some(sic_json::Json::Int(v)) => v.to_string(),
-            Some(sic_json::Json::Bool(v)) => v.to_string(),
-            Some(other) => other.kind().to_string(),
-            None => continue,
-        };
-        let because = match json.member("because") {
-            Some(sic_json::Json::Str(s)) => Some(s.clone()),
-            _ => None,
-        };
-        out.push(Asked {
-            question: question.clone(),
-            answer,
-            because,
-        });
-    }
-    out
 }
 
 /// The one line an event is worth in a summary, or nothing.
@@ -382,7 +368,7 @@ pub fn replay(prefix: &str) -> ExitCode {
     if let Err(code) = super::verified(&program, super::From::File(&program_path)) {
         return code;
     }
-    let answers = match read_responses(&dir) {
+    let answers = match store::read_answers(&dir) {
         Ok(answers) => answers,
         Err(msg) => {
             eprintln!("error: {msg}");
@@ -406,7 +392,7 @@ pub fn replay(prefix: &str) -> ExitCode {
     let stopped_early = loop {
         match status {
             Status::Suspended(_) => {
-                let Some(answer) = answers.get(used).cloned() else {
+                let Some(answer) = answers.get(used).map(|a| a.value.clone()) else {
                     // The recording stops where the run stopped, or the program
                     // took a different path. Either way, saying so is the
                     // finding.
@@ -525,44 +511,6 @@ fn open(prefix: &str) -> Result<(std::path::PathBuf, Vec<TimedEvent>), ExitCode>
         return Err(ExitCode::from(EXIT_FAILURE));
     }
     Ok((dir, events))
-}
-
-/// The answers the broker gave, in order.
-fn read_responses(dir: &Path) -> Result<Vec<CapValue>, String> {
-    let path = dir.join(store::RESPONSES);
-    // A run that called nothing has no answers to record, and replaying it is
-    // still worth doing.
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return Ok(Vec::new());
-    };
-    let mut answers = Vec::new();
-    for (number, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let json = sic_json::parse(line)
-            .map_err(|e| format!("line {} of {}: {e}", number + 1, path.display()))?;
-        answers.push(cap_value_from_json(&json).ok_or_else(|| {
-            format!(
-                "line {} of {} is not a recorded answer",
-                number + 1,
-                path.display()
-            )
-        })?);
-    }
-    Ok(answers)
-}
-
-fn cap_value_from_json(json: &sic_json::Json) -> Option<CapValue> {
-    use sic_json::Json;
-    Some(match json.member("value")? {
-        Json::Null => CapValue::Unit,
-        Json::Bool(v) => CapValue::Bool(*v),
-        Json::Int(v) => CapValue::I64(*v),
-        Json::Float(v) => CapValue::F64(*v),
-        Json::Str(s) => CapValue::Str(s.clone()),
-        _ => return None,
-    })
 }
 
 /// A sink that stays readable after the journal takes ownership of it.

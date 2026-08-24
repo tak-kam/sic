@@ -256,6 +256,88 @@ fn answer_to_json(answer: &Answer<'_>) -> String {
     out
 }
 
+/// One answer read back out of `responses.jsonl`.
+///
+/// The owned counterpart of `Answer`. Reading it lives beside writing it
+/// because a file has one format: `driver.json` is written and read twenty
+/// lines apart and has never disagreed with itself, while this file's shape was
+/// decided here and worked out again twice in `runs.rs`, where a recorded list
+/// was a shape neither reader had been told about.
+pub struct Recorded {
+    pub value: sic_core::CapValue,
+    /// The question a person was asked, when one was.
+    pub asked: Option<String>,
+    /// Why they answered that way, if they said.
+    pub because: Option<String>,
+}
+
+/// Every answer a run recorded, in the order it recorded them.
+///
+/// A run that called nothing has no answers to record, and replaying it is
+/// still worth doing, so a file that is not there is no answers rather than an
+/// error. A line that is there and is not an answer is an error: `replay`
+/// answers a program's capability calls out of this file, and a file it can
+/// only partly read is not a recording anything can be believed from.
+pub fn read_answers(dir: &Path) -> Result<Vec<Recorded>, String> {
+    let path = dir.join(RESPONSES);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Ok(Vec::new());
+    };
+    let mut answers = Vec::new();
+    for (number, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let json = sic_json::parse(line)
+            .map_err(|e| format!("line {} of {}: {e}", number + 1, path.display()))?;
+        answers.push(answer_from_json(&json).ok_or_else(|| {
+            format!(
+                "line {} of {} is not a recorded answer",
+                number + 1,
+                path.display()
+            )
+        })?);
+    }
+    Ok(answers)
+}
+
+/// One line, in the vocabulary `answer_to_json` writes.
+fn answer_from_json(json: &sic_json::Json) -> Option<Recorded> {
+    use sic_core::CapValue;
+    use sic_json::Json;
+
+    let value = match json.member("value")? {
+        Json::Null => CapValue::Unit,
+        Json::Bool(v) => CapValue::Bool(*v),
+        Json::Int(v) => CapValue::I64(*v),
+        Json::Float(v) => CapValue::F64(*v),
+        Json::Str(s) => CapValue::Str(s.clone()),
+        // An argument vector, written as an array by `answer_to_json` above.
+        // A `CapValue::List` holds strings and nothing more general, so an
+        // array of anything else did not come from this writer.
+        Json::Array(items) => {
+            let mut strings = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    Json::Str(s) => strings.push(s.clone()),
+                    _ => return None,
+                }
+            }
+            CapValue::List(strings)
+        }
+        Json::Object(_) => return None,
+    };
+    let text = |name: &str| match json.member(name) {
+        Some(Json::Str(s)) => Some(s.clone()),
+        _ => None,
+    };
+    Some(Recorded {
+        value,
+        asked: text("asked"),
+        because: text("because"),
+    })
+}
+
 /// Records what is going to answer this run's model calls.
 ///
 /// Not a journal event: the journal has a fixed vocabulary of events about what
@@ -306,4 +388,63 @@ fn json_string(value: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sic_core::CapValue;
+
+    /// One answer, through the writer's vocabulary and back.
+    fn round_trip(value: &CapValue) -> Recorded {
+        let answer = Answer {
+            value,
+            asked: Some("what should we deploy?"),
+            because: Some("it is the only one that builds"),
+        };
+        let line = answer_to_json(&answer);
+        let json = sic_json::parse(&line).expect("the writer writes JSON");
+        answer_from_json(&json).expect("the reader reads what the writer writes")
+    }
+
+    /// `answer_to_json` writes a list as an array on purpose. While the reading
+    /// lived in `runs.rs`, an array was a shape neither reader had been told
+    /// about, and `replay` called the whole file not a recording because of it.
+    #[test]
+    fn a_list_answer_reads_back_as_a_list() {
+        let value = CapValue::List(vec!["send-keys".into(), "a \"quoted\" one".into()]);
+        assert_eq!(round_trip(&value).value, value);
+    }
+
+    #[test]
+    fn every_answer_shape_survives_the_round_trip() {
+        for value in [
+            CapValue::Unit,
+            CapValue::Bool(true),
+            CapValue::I64(-7),
+            CapValue::F64(0.5),
+            CapValue::Str("a\nb\t\"c\"".into()),
+            CapValue::List(Vec::new()),
+        ] {
+            let recorded = round_trip(&value);
+            assert_eq!(recorded.value, value, "{value:?} did not survive");
+            assert_eq!(recorded.asked.as_deref(), Some("what should we deploy?"));
+            assert_eq!(
+                recorded.because.as_deref(),
+                Some("it is the only one that builds")
+            );
+        }
+    }
+
+    /// The broker's own answers have no question, because nobody was asked.
+    #[test]
+    fn an_answer_nobody_was_asked_for_carries_no_question() {
+        let value = CapValue::Str("hello".into());
+        let line = answer_to_json(&Answer::from_broker(&value));
+        let json = sic_json::parse(&line).expect("the writer writes JSON");
+        let recorded = answer_from_json(&json).expect("a broker answer is an answer");
+        assert_eq!(recorded.value, value);
+        assert!(recorded.asked.is_none());
+        assert!(recorded.because.is_none());
+    }
 }
