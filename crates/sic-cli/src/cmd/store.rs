@@ -205,6 +205,23 @@ pub fn depth_of(event: &Event, events: &[TimedEvent]) -> usize {
     depth
 }
 
+/// Whether a waiting run's checkpoint still belongs to the program beside it.
+///
+/// A checkpoint carries the digest of the bytecode it came from, and resuming
+/// against anything else would continue one program inside another. That is
+/// computable before anybody spends another day waiting for an answer nobody
+/// can use, and a run that cannot be picked up is a thing to say rather than a
+/// thing to discover.
+///
+/// `None` means there is nothing to compare - no checkpoint, or no recorded
+/// program - which is not the same as a mismatch and is not reported as one.
+pub fn checkpoint_matches(dir: &Path) -> Option<bool> {
+    let checkpoint = std::fs::read(dir.join(CHECKPOINT)).ok()?;
+    let program = std::fs::read(dir.join(PROGRAM)).ok()?;
+    let saved = sic_vm::Checkpoint::decode(&checkpoint).ok()?;
+    Some(saved.program_digest == sic_core::Digest::of(&program))
+}
+
 /// What a waiting run is waiting for, read from its checkpoint.
 pub fn pending_question(dir: &Path) -> Option<String> {
     let bytes = std::fs::read(dir.join(CHECKPOINT)).ok()?;

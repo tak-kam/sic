@@ -26,6 +26,28 @@ pub struct ResumeOptions<'a> {
     pub llm: Option<&'a str>,
 }
 
+/// A checkpoint that no longer belongs to the program it is being resumed
+/// against.
+///
+/// There is no `--force`, and `docs/design/durable-execution.md` says why: the
+/// checkpoint holds registers and frames whose meaning is the function layout
+/// of the bytecode it came from, and nothing here can tell a harmless edit from
+/// a different program. What was missing was not a door - it was a sentence
+/// saying which way is out, since a runtime that quietly accumulates
+/// unresumable state is not being safe, it is being unhelpful about being safe.
+fn orphaned(checkpoint_path: &str, source_path: &str) -> ExitCode {
+    eprintln!(
+        "error: `{checkpoint_path}` was taken from different bytecode than `{source_path}` \
+         compiles to now, so it cannot be resumed"
+    );
+    eprintln!("       the digest is over bytecode, so a comment or a rename is not what did this");
+    eprintln!("       if the run was recorded, it kept its own bytecode and is still yours:");
+    eprintln!("           sic runs --waiting");
+    eprintln!("           sic attach <RUN-ID> --value <VALUE>");
+    eprintln!("       otherwise this run cannot be continued, and starting again is `sic run`");
+    ExitCode::from(EXIT_FAILURE)
+}
+
 pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>) -> ExitCode {
     let bytes = match read_bytes(checkpoint_path) {
         Ok(b) => b,
@@ -57,6 +79,16 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     // this bytecode, and it has to have been checked like any other.
     if let Err(code) = super::verified(&program, super::From::Compiler(source_path)) {
         return code;
+    }
+
+    // Checked here as well as inside `restore`, which enforces it, so that the
+    // one failure a person is most likely to meet can say what to do instead of
+    // only what went wrong. The broker re-checks what the compiler checked for
+    // the same reason.
+    if let Ok(saved) = sic_vm::Checkpoint::decode(&bytes) {
+        if saved.program_digest != digest {
+            return orphaned(checkpoint_path, source_path);
+        }
     }
 
     let (mut vm, question) = match Vm::restore(&program, &bytes, digest, sink) {

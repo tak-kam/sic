@@ -49,6 +49,16 @@ pub fn list_waiting() -> ExitCode {
             summary.workflow,
             summary.outcome.detail().unwrap_or("")
         );
+        // Said only when it is not true, because a column that always reads
+        // "resumable" is noise. A run nobody can pick up is still listed: it is
+        // waiting, and what changed is that saying so is now honest about
+        // whether waiting will end.
+        if store::checkpoint_matches(&dir) == Some(false) {
+            println!(
+                "          this one cannot be picked up: its checkpoint belongs to \
+                 different bytecode"
+            );
+        }
     }
     if found == 0 {
         println!("nothing is waiting");

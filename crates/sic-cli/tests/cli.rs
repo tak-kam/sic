@@ -2978,3 +2978,72 @@ fn an_import_may_not_reach_outside_through_a_symbolic_link() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+/// A checkpoint belongs to the bytecode it was taken from, and editing the
+/// program orphans it. There is no `--force`; what there is now is a message
+/// that says which way is out, because a runtime that quietly accumulates
+/// unresumable state is not being safe, it is being unhelpful about being safe.
+#[test]
+fn a_checkpoint_whose_program_changed_says_what_to_do_next() {
+    let store = temp_dir("orphaned");
+    let src = store.join("waiting.sic");
+    let program = std::fs::read_to_string(example("approval.sic")).expect("readable");
+    std::fs::write(&src, &program).expect("writable");
+    // Recorded, so the run keeps its own bytecode and its checkpoint beside it.
+    // That is what the advice below rests on.
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["run", src.to_str().unwrap(), "--record"],
+    );
+    assert_eq!(code, 3, "{stderr}");
+
+    let dir = std::fs::read_dir(&store)
+        .expect("the store")
+        .find_map(|e| {
+            let path = e.ok()?.path();
+            path.join("checkpoint.sicc").exists().then_some(path)
+        })
+        .expect("one recorded run");
+    let checkpoint = dir.join("checkpoint.sicc");
+
+    // An edit that changes the bytecode. The digest is over bytecode, so this
+    // has to be a real change rather than a comment.
+    std::fs::write(&src, program.replace("return", "return ")).expect("writable");
+    std::fs::write(
+        &src,
+        std::fs::read_to_string(&src).unwrap().replace(
+            "fn main()",
+            "fn unused() -> Int { return 41; }\n\nfn main()",
+        ),
+    )
+    .expect("writable");
+
+    let (_, stderr, code) = sic(&[
+        "resume",
+        checkpoint.to_str().unwrap(),
+        src.to_str().unwrap(),
+        "--value",
+        "true",
+    ]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("cannot be resumed"), "{stderr}");
+    // What it says to do about it.
+    assert!(stderr.contains("sic attach"), "{stderr}");
+    assert!(stderr.contains("kept its own bytecode"), "{stderr}");
+    // And why an innocent edit is not what did it.
+    assert!(stderr.contains("comment or a rename"), "{stderr}");
+
+    // The recorded run really is still answerable, which is what that advice
+    // rests on: it kept the bytecode it was compiled from.
+    let id = dir.file_name().unwrap().to_str().unwrap().to_string();
+    let (stdout, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &["attach", &id, "--value", "true"],
+    );
+    assert_eq!(code, 0, "{stderr}");
+    assert!(!stdout.is_empty(), "{stdout}");
+
+    std::fs::remove_dir_all(&store).ok();
+}

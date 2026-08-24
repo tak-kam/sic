@@ -58,6 +58,50 @@ The program digest ties the checkpoint to the exact bytecode it came from.
 Resuming against anything else would continue one program inside another, so
 `sic resume` compiles the source again and refuses if the digest has changed.
 
+### What a refusal means, and what to do about it
+
+The refusal is the whole of the answer, and there is no `--force`. What was
+missing was any sentence about what a person does next, and a runtime that
+quietly accumulates unresumable state is not being safe - it is being unhelpful
+about being safe.
+
+**The digest is over bytecode, not source.** A comment, a rename, a
+reformatting, a change to a function the waiting frame will never re-enter
+again: none of those orphan a waiting run. What does is a change to the
+compiled program.
+
+**A recorded run cannot be orphaned this way at all.** `sic run --record` keeps
+the bytecode beside the checkpoint, and `sic attach` resumes against *that*
+rather than against whatever the source compiles to today. So the answer to "I
+edited the program and now everything is waiting on a checkpoint I cannot use"
+is that a recorded run is still yours - and the answer to it happening again is
+to record. That is now what the error says, rather than only what went wrong.
+
+**`sic runs --waiting` says which ones are dead.** A waiting run whose
+checkpoint no longer matches the bytecode beside it is reported as one that
+cannot be picked up, because that is computable before somebody spends another
+day waiting for an answer nobody can use. It is said only when it is true: a
+column that always reads "resumable" is noise.
+
+### Why there is no `--adopt`
+
+A resume against different bytecode that recorded the substitution in the
+journal would not be silent, so it is not obviously wrong. It is still refused.
+
+A checkpoint holds registers and frames whose meaning *is* the function layout
+of the bytecode it came from - which function a frame is in, which register
+holds what, what the pending call is going to return into. "Different bytecode"
+therefore ranges from an edit that changes nothing a waiting frame can see to a
+different program, and **nothing here can tell those apart**. A door that is
+safe for the first and catastrophic for the second, with no way to know which
+one is being opened, is not a door worth having.
+
+The field has tried the alternative. Temporal has two mechanisms for it, the
+older being removed, and its own documentation admits that patching leaves a
+codebase carrying version branches forever. That is not an argument that
+refusing is pleasant. It is an argument that refusing is a position, and that
+the projects which tried to do better are still paying for it.
+
 ---
 
 ## 3. A checkpoint is not trusted
