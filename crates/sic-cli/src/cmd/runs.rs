@@ -151,28 +151,18 @@ pub fn attach(
         }
     };
 
-    let Some(cap) = vm.pending_capability().map(str::to_string) else {
-        eprintln!("internal error: the checkpoint is not waiting for anything");
-        return ExitCode::from(EXIT_FAILURE);
-    };
-    let Some(tag) = super::drive::capability_return_type(&program, &cap) else {
-        eprintln!("error: `{cap}` is not a capability this program declares");
-        return ExitCode::from(EXIT_FAILURE);
-    };
-
-    let Some(text) = value else {
-        println!("waiting: {question}");
-        println!(
-            "answer:  sic attach {prefix} --value <{}>",
-            tag.short_name()
-        );
-        return ExitCode::from(super::EXIT_SUSPENDED);
-    };
-    let answer = match super::drive::parse_answer(text, tag) {
-        Ok(v) => v,
-        Err(msg) => {
-            eprintln!("error: {msg}, and `{cap}` returns {}", tag.short_name());
-            return ExitCode::from(EXIT_USAGE);
+    let answer = match super::drive::answer_for(&program, &vm, value) {
+        Ok(answer) => answer,
+        Err(super::drive::Needs::Reported(code)) => return code,
+        Err(super::drive::Needs::Answer(tag)) => {
+            // Reading the question is a step of its own, so this is an answer
+            // that has not arrived yet rather than a command used wrongly.
+            println!("waiting: {question}");
+            println!(
+                "answer:  sic attach {prefix} --value <{}>",
+                tag.short_name()
+            );
+            return ExitCode::from(super::EXIT_SUSPENDED);
         }
     };
     // Recorded so that replaying the run answers it the same way - and, since

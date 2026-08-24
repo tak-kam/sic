@@ -5,6 +5,8 @@
 //! answers back. When an answer is not available now, the run stops here and a
 //! checkpoint takes over.
 
+use std::process::ExitCode;
+
 use sic_broker::Broker;
 use sic_bytecode::{Program, TypeDesc};
 use sic_core::{CapGrant, CapOutcome, CapValue};
@@ -104,4 +106,52 @@ pub fn parse_answer(text: &str, tag: &TypeDesc) -> Result<CapValue, String> {
 pub fn capability_return_type<'a>(program: &'a Program, cap: &str) -> Option<&'a TypeDesc> {
     let decl = program.caps.iter().find(|c| c.name == cap)?;
     program.types.get(decl.ret_type as usize)
+}
+
+/// What a waiting run still needs before it can go on.
+///
+/// The two commands that pick a waiting run up are answered by different
+/// things - `resume` by whoever holds the checkpoint file, `attach` by whatever
+/// is driving a recorded run - so each of them says "nobody gave me an answer"
+/// its own way, on its own stream, with its own exit code. What they must not
+/// disagree about is what the run is waiting for and what shape the answer has
+/// to take, and that is what this leaves to one place.
+pub enum Needs<'a> {
+    /// No answer was supplied. The type is what to ask for; the question came
+    /// back from `Vm::restore`, so the caller already has it.
+    Answer(&'a TypeDesc),
+    /// Already reported, with the code to exit on. A checkpoint that is not
+    /// waiting, a capability the program does not declare, and text that is not
+    /// the type that capability returns are the same failure whichever command
+    /// reached them, so neither command is asked to word them again.
+    Reported(ExitCode),
+}
+
+/// The answer a waiting VM is to be resumed with.
+///
+/// `resume` and `attach` each restore a checkpoint, find what it stopped on,
+/// look up the type that capability returns, and read the answer in that type.
+/// Written out twice, the sequence drifted - which is what happens when three
+/// lookups and four error paths are something every caller has to get right on
+/// its own.
+pub fn answer_for<'a>(
+    program: &'a Program,
+    vm: &Vm,
+    value: Option<&str>,
+) -> Result<CapValue, Needs<'a>> {
+    let Some(cap) = vm.pending_capability() else {
+        eprintln!("internal error: the checkpoint is not waiting for anything");
+        return Err(Needs::Reported(ExitCode::from(super::EXIT_FAILURE)));
+    };
+    let Some(tag) = capability_return_type(program, cap) else {
+        eprintln!("error: `{cap}` is not a capability this program declares");
+        return Err(Needs::Reported(ExitCode::from(super::EXIT_FAILURE)));
+    };
+    let Some(text) = value else {
+        return Err(Needs::Answer(tag));
+    };
+    parse_answer(text, tag).map_err(|msg| {
+        eprintln!("error: {msg}, and `{cap}` returns {}", tag.short_name());
+        Needs::Reported(ExitCode::from(super::EXIT_USAGE))
+    })
 }
