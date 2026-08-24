@@ -49,7 +49,7 @@ reason.
 | E0211 | `sha256` without a digest |
 | E0212 | `import` without a path |
 | E0213 | `args` without a list of strings |
-| E0214 | source that nests deeper than the parser reads |
+| E0214 | an expression tree deeper than the parser will build |
 
 ## E03xx — names, types and effects
 

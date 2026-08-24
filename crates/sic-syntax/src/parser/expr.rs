@@ -68,11 +68,16 @@ impl Parser {
     /// is the single place the depth has to be counted.
     fn expr_bp(&mut self, min_bp: u8) -> Expr {
         let at = Span::empty(self.span().lo);
+        let outer = self.depth;
         if !self.enter() {
             return self.error_expr(at);
         }
         let expr = self.expr_bp_within(min_bp);
-        self.leave();
+        // Back to where this started, which releases the level above *and*
+        // every level the loop below took. Each operator it applied wrapped
+        // what was there in a new node, and those nodes are on one path from
+        // the root - so they are depth, and they are all this expression's.
+        self.depth = outer;
         expr
     }
 
@@ -84,15 +89,28 @@ impl Parser {
         loop {
             // Postfix binds tightest, so it is handled first.
             match self.peek() {
+                // Each of these wraps what has been built so far, so each is
+                // one more level of tree even though the parser has not gone
+                // one level deeper. `a.f.f.f...` is flat to read and is a
+                // thousand nodes on one path.
                 TokenKind::LParen if POSTFIX_BP > min_bp => {
+                    if !self.enter() {
+                        return lhs;
+                    }
                     lhs = self.parse_call(lhs);
                     continue;
                 }
                 TokenKind::Dot if POSTFIX_BP > min_bp => {
+                    if !self.enter() {
+                        return lhs;
+                    }
                     lhs = self.parse_field(lhs);
                     continue;
                 }
                 TokenKind::LBracket if POSTFIX_BP > min_bp => {
+                    if !self.enter() {
+                        return lhs;
+                    }
                     lhs = self.parse_index(lhs);
                     continue;
                 }
@@ -103,6 +121,11 @@ impl Parser {
                 return lhs;
             };
             if lbp < min_bp {
+                return lhs;
+            }
+            // The same for an infix chain: `1 + 1 + 1 + ...` is one loop and a
+            // tree as deep as the sum is long.
+            if !self.enter() {
                 return lhs;
             }
             self.bump(); // the operator

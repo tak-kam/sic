@@ -556,3 +556,65 @@ fn an_agent_may_bound_its_tools_and_its_time() {
         assert!(codes(bad).contains(&"E0208"), "{bad}");
     }
 }
+
+/// A chain is flat to read and deep as a tree.
+///
+/// `1 + 1 + 1 + ...` and `a.f.f.f...` are read by a loop, so the parser never
+/// goes deeper - but each operator wraps what came before, so the tree gets one
+/// level per term. Every pass that walks the AST afterwards recurses on that,
+/// and three thousand terms in a seven-kilobyte file used to take the process
+/// down in `print::dump`, in name resolution and in type checking.
+#[test]
+fn a_flat_chain_is_still_a_deep_tree() {
+    let long = MAX_DEPTH as usize + 1;
+    let chains = [
+        (
+            "a sum",
+            format!("fn f() {{ return {}; }}", vec!["1"; long].join(" + ")),
+        ),
+        (
+            "field access",
+            format!("fn f() {{ let a = 1; return a{}; }}", ".f".repeat(long)),
+        ),
+        (
+            "indexing",
+            format!("fn f() {{ let a = 1; return a{}; }}", "[0]".repeat(long)),
+        ),
+        (
+            "calls",
+            format!("fn f() {{ let a = 1; return a{}; }}", "()".repeat(long)),
+        ),
+    ];
+    for (what, src) in chains {
+        assert_eq!(codes(&src), vec!["E0214"], "{what}");
+    }
+}
+
+/// Nesting and chaining are additive, because they are the same path.
+///
+/// A hundred nested parentheses each holding a hundred-term sum is one path two
+/// hundred nodes long, which is why there is one budget and not two: bounding
+/// them separately would bound their product, and a stack does not care about
+/// products.
+#[test]
+fn nesting_and_chaining_share_one_budget() {
+    // A little under half of each, since the block and the `return` are on the
+    // same path and take a level too.
+    let half = MAX_DEPTH as usize / 2 - 4;
+    let together = format!(
+        "fn f() {{ return {}{}{}; }}",
+        "(".repeat(half),
+        vec!["1"; half].join(" + "),
+        ")".repeat(half)
+    );
+    assert!(parse(&together).1.is_empty(), "{together}");
+
+    // Neither half is over the budget on its own; together they are.
+    let over = format!(
+        "fn f() {{ return {}{}{}; }}",
+        "(".repeat(half),
+        vec!["1"; half + 16].join(" + "),
+        ")".repeat(half)
+    );
+    assert_eq!(codes(&over), vec!["E0214"]);
+}

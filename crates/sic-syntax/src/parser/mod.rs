@@ -15,28 +15,43 @@ mod expr;
 
 /// How deeply blocks, expressions and types may nest.
 ///
+/// How long a path from the root of a tree this parser will build.
+///
 /// A `.sic` file is untrusted input in exactly the way a model's answer is, and
-/// `sic-json` caps a document at 64 for the same reason. `sic plan` is the case
-/// that decides it: its whole justification is that it is safe to run on a
-/// program nobody has decided to trust yet, and safe has to include not dying
-/// on one. Without a limit, about two thousand `(` end the process with a
-/// segmentation fault rather than a diagnostic.
+/// `sic-json` caps a document for the same reason. `sic plan` is the case that
+/// decides it: its whole justification is that it is safe to run on a program
+/// nobody has decided to trust yet, and safe has to include not dying on one.
 ///
-/// 128 is chosen from both sides. Above it, nothing a person writes: v0.1 has
+/// This counts **tree** depth rather than parser recursion, and the difference
+/// is the whole of the second half of this. Nesting - a parenthesis, a call
+/// argument, an `if` inside an `if` - makes the parser recurse, and a counter on
+/// that recursion is what caught it. A chain does not: `1 + 1 + 1 + ...` and
+/// `a.f.f.f...` are read by a loop, so the parser stays shallow while the tree
+/// gets one level deeper per operator. Every pass that walks the AST afterwards
+/// recurses on that depth, and three thousand terms in a seven-kilobyte file
+/// took the process down in `print::dump`, in name resolution and in type
+/// checking.
+///
+/// One number rather than two, because the two are additive: a hundred nested
+/// parentheses each holding a hundred-term sum is one path two hundred nodes
+/// long. Bounding them separately would bound their product, which is not what
+/// a stack cares about.
+///
+/// 256 is chosen from both sides. Above it, nothing a person writes: v0.1 has
 /// no loops, so the deepest a body can nest is `if` inside `if`, and a function
-/// that reached even twenty of those would be unreadable long before the parser
-/// minded. Generated source is the other case worth naming, and a generator
-/// that emits a hundred-deep expression has produced something no reviewer can
-/// read either. A nested `if` spends two levels, its own and its block's, so
-/// the limit is 64 of those; a parenthesis, a call argument, a list element, a
-/// struct field, a type argument and a unary operator spend one each.
+/// with twenty of those would be unreadable long before the parser minded; a
+/// sum of 256 terms or a chain of 256 field accesses is generated source, and a
+/// generator that emits one has produced something no reviewer can read either.
+/// Below it, the stack: the tightest shape measured on the musl build the
+/// release ships overflows somewhere between 1855 (nested struct literals, in
+/// the parser) and 2500 (a flat sum, in the passes that walk what the parser
+/// built), so 256 leaves better than a factor of seven on the worst of them.
 ///
-/// Below it, the stack. The tightest shape measured on the musl build the
-/// release ships - nested struct literals - overflows at about 1800 levels, so
-/// 128 leaves better than a factor of ten, which is the room the passes that
-/// walk the same tree afterwards need: they recurse over the AST too, with
-/// fatter frames than the parser's.
-pub const MAX_DEPTH: u32 = 128;
+/// It refuses programs that were legal before, and that is the decision rather
+/// than a side effect: an expression longer than this is refused so that every
+/// consumer of the AST - including the ones not written yet - is protected by
+/// one check instead of by four passes each remembering to use a work stack.
+pub const MAX_DEPTH: u32 = 256;
 
 use sic_core::{Diagnostic, Label, NodeId, Span};
 
