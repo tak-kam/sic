@@ -29,7 +29,7 @@ system:
 |---|---|
 | `List<T>` | `sic-types/src/ty.rs:53` |
 | a list literal | `sic-syntax/src/ast.rs:288` |
-| `MAKE_LIST` | `sic-bytecode/src/inst.rs:49` |
+| `MAKE_LIST` | `sic-bytecode/src/inst.rs:101` |
 | `Value::List` in the arena | `sic-vm/src/value.rs:22` |
 | `len` | `sic-types/src/check.rs:1046` |
 

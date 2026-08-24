@@ -11,138 +11,102 @@
 //! Fixed width turns "is this a valid instruction boundary" into arithmetic,
 //! which is what keeps the verifier and the disassembler simple.
 
-/// The opcodes of v0.1. Values are part of the file format and must not be
-/// renumbered; new opcodes are appended.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Op {
-    LoadConst = 0,
-    Move = 1,
+/// Declares the instruction set once.
+///
+/// Four things follow from the same row: the variant, its number, the spelling
+/// the disassembler prints, and which operand shape it uses. They used to be
+/// three full lists and a fourth that named only the exceptions, and only two
+/// of the four were checked against each other. A spelling copied onto two
+/// opcodes passed, and a disassembly then quietly named the wrong instruction.
+///
+/// A macro is worth it here because the thing being written is a table and
+/// nothing else: there is no control flow to hide, and the operand shape stops
+/// being something a reader has to infer from an absence. It is not worth it
+/// for the four crates that `match` on `Op` to do work - emitting, verifying,
+/// executing, disassembling are four different jobs, and the compiler already
+/// makes each one account for a new opcode.
+macro_rules! opcodes {
+    ($( $(#[$doc:meta])* $variant:ident = $value:literal, $name:literal, $form:ident; )*) => {
+        /// The opcodes of v0.1. Values are part of the file format and must not
+        /// be renumbered; new opcodes are appended.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum Op {
+            $( $(#[$doc])* $variant = $value, )*
+        }
 
-    AddI64 = 2,
-    SubI64 = 3,
-    MulI64 = 4,
-    DivI64 = 5,
-    RemI64 = 6,
+        impl Op {
+            /// The last opcode that exists. Anything above it is invalid.
+            ///
+            /// The count answers it because the numbers run from zero with no
+            /// gaps, which is what `every_opcode_round_trips_through_u8`
+            /// checks: it decodes every value up to this one and requires each
+            /// to come back as the number it went in as.
+            pub const MAX: u8 = ([$($value),*].len() - 1) as u8;
 
-    Eq = 7,
-    Ne = 8,
-    Lt = 9,
-    Le = 10,
-    Gt = 11,
-    Ge = 12,
-    Not = 13,
+            pub fn from_u8(v: u8) -> Option<Op> {
+                Some(match v {
+                    $( $value => Op::$variant, )*
+                    _ => return None,
+                })
+            }
 
-    Jump = 14,
-    JumpIf = 15,
-    JumpIfNot = 16,
+            pub fn name(self) -> &'static str {
+                match self {
+                    $( Op::$variant => $name, )*
+                }
+            }
 
-    Call = 17,
-    /// The only instruction that reaches outside the VM.
-    CallCap = 18,
-    /// Starts a task. Same shape as CALL.
-    Spawn = 19,
-    /// Waits for a task and takes its result.
-    Await = 20,
-    MakeObject = 21,
-    GetField = 22,
-    MakeList = 23,
-    GetIndex = 24,
-    Len = 25,
-    /// Parses and validates a document against a type. The only way a value
-    /// enters a run from text.
-    FromJson = 26,
-    Return = 27,
-    Fail = 28,
-    Halt = 29,
+            /// Which operand shape the instruction uses.
+            pub fn form(self) -> Form {
+                match self {
+                    $( Op::$variant => Form::$form, )*
+                }
+            }
+        }
+    };
 }
 
-impl Op {
-    /// The last opcode that exists. Anything above it is invalid.
-    pub const MAX: u8 = Op::Halt as u8;
+opcodes! {
+    LoadConst = 0, "LOAD_CONST", ABx;
+    Move = 1, "MOVE", ABC;
 
-    pub fn from_u8(v: u8) -> Option<Op> {
-        use Op::*;
-        Some(match v {
-            0 => LoadConst,
-            1 => Move,
-            2 => AddI64,
-            3 => SubI64,
-            4 => MulI64,
-            5 => DivI64,
-            6 => RemI64,
-            7 => Eq,
-            8 => Ne,
-            9 => Lt,
-            10 => Le,
-            11 => Gt,
-            12 => Ge,
-            13 => Not,
-            14 => Jump,
-            15 => JumpIf,
-            16 => JumpIfNot,
-            17 => Call,
-            18 => CallCap,
-            19 => Spawn,
-            20 => Await,
-            21 => MakeObject,
-            22 => GetField,
-            23 => MakeList,
-            24 => GetIndex,
-            25 => Len,
-            26 => FromJson,
-            27 => Return,
-            28 => Fail,
-            29 => Halt,
-            _ => return None,
-        })
-    }
+    AddI64 = 2, "ADD_I64", ABC;
+    SubI64 = 3, "SUB_I64", ABC;
+    MulI64 = 4, "MUL_I64", ABC;
+    DivI64 = 5, "DIV_I64", ABC;
+    RemI64 = 6, "REM_I64", ABC;
 
-    pub fn name(self) -> &'static str {
-        use Op::*;
-        match self {
-            LoadConst => "LOAD_CONST",
-            Move => "MOVE",
-            AddI64 => "ADD_I64",
-            SubI64 => "SUB_I64",
-            MulI64 => "MUL_I64",
-            DivI64 => "DIV_I64",
-            RemI64 => "REM_I64",
-            Eq => "EQ",
-            Ne => "NE",
-            Lt => "LT",
-            Le => "LE",
-            Gt => "GT",
-            Ge => "GE",
-            Not => "NOT",
-            Jump => "JUMP",
-            JumpIf => "JUMP_IF",
-            JumpIfNot => "JUMP_IF_NOT",
-            Call => "CALL",
-            CallCap => "CALL_CAP",
-            Spawn => "SPAWN",
-            Await => "AWAIT",
-            MakeObject => "MAKE_OBJECT",
-            GetField => "GET_FIELD",
-            MakeList => "MAKE_LIST",
-            GetIndex => "GET_INDEX",
-            Len => "LEN",
-            FromJson => "FROM_JSON",
-            Return => "RETURN",
-            Fail => "FAIL",
-            Halt => "HALT",
-        }
-    }
+    Eq = 7, "EQ", ABC;
+    Ne = 8, "NE", ABC;
+    Lt = 9, "LT", ABC;
+    Le = 10, "LE", ABC;
+    Gt = 11, "GT", ABC;
+    Ge = 12, "GE", ABC;
+    Not = 13, "NOT", ABC;
 
-    /// Which operand shape the instruction uses.
-    pub fn form(self) -> Form {
-        use Op::*;
-        match self {
-            LoadConst => Form::ABx,
-            Jump | JumpIf | JumpIfNot => Form::AsBx,
-            _ => Form::ABC,
-        }
-    }
+    Jump = 14, "JUMP", AsBx;
+    JumpIf = 15, "JUMP_IF", AsBx;
+    JumpIfNot = 16, "JUMP_IF_NOT", AsBx;
+
+    Call = 17, "CALL", ABC;
+    /// The only instruction that reaches outside the VM.
+    CallCap = 18, "CALL_CAP", ABC;
+    /// Starts a task. Same shape as CALL.
+    Spawn = 19, "SPAWN", ABC;
+    /// Waits for a task and takes its result.
+    Await = 20, "AWAIT", ABC;
+    MakeObject = 21, "MAKE_OBJECT", ABC;
+    GetField = 22, "GET_FIELD", ABC;
+    MakeList = 23, "MAKE_LIST", ABC;
+    GetIndex = 24, "GET_INDEX", ABC;
+    Len = 25, "LEN", ABC;
+    /// Parses and validates a document against a type. The only way a value
+    /// enters a run from text.
+    FromJson = 26, "FROM_JSON", ABC;
+    Return = 27, "RETURN", ABC;
+    Fail = 28, "FAIL", ABC;
+    Halt = 29, "HALT", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -228,5 +192,50 @@ mod tests {
             assert!(!op.name().is_empty());
         }
         assert_eq!(Op::from_u8(Op::MAX + 1), None);
+    }
+
+    /// A spelling belongs to one opcode. Two sharing one would make a
+    /// disassembly name the wrong instruction, and it would still read as a
+    /// valid disassembly.
+    #[test]
+    fn no_two_opcodes_are_spelled_the_same() {
+        let mut seen: Vec<&'static str> = Vec::new();
+        for raw in 0..=Op::MAX {
+            let name = Op::from_u8(raw)
+                .expect("opcode below MAX must exist")
+                .name();
+            assert!(
+                !seen.contains(&name),
+                "{name} is the spelling of more than one opcode"
+            );
+            seen.push(name);
+        }
+    }
+
+    /// The form is what the disassembler reads the operands with, so an
+    /// opcode whose row says the wrong one prints the wrong numbers. Every
+    /// form appears, which is what makes the table's third column worth
+    /// having rather than an assumption that everything is ABC.
+    #[test]
+    fn every_operand_shape_is_used() {
+        let mut abc = 0;
+        let mut abx = 0;
+        let mut asbx = 0;
+        for raw in 0..=Op::MAX {
+            match Op::from_u8(raw)
+                .expect("opcode below MAX must exist")
+                .form()
+            {
+                Form::ABC => abc += 1,
+                Form::ABx => abx += 1,
+                Form::AsBx => asbx += 1,
+            }
+        }
+        assert_eq!(
+            (abx, asbx),
+            (1, 3),
+            "LOAD_CONST is ABx, the three jumps AsBx"
+        );
+        assert_eq!(abc, Op::MAX as usize + 1 - 4);
     }
 }
