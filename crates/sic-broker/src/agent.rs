@@ -35,6 +35,57 @@ pub struct DriverInfo {
     pub agent: String,
     /// What the multiplexer says it is.
     pub multiplexer: String,
+    /// The instruction files the agent will have read, as digests.
+    pub instructions: Vec<Instruction>,
+}
+
+/// One instruction file, and whether it was there.
+///
+/// Digested, not stored, which is the rule everywhere else here: these are
+/// source in a repository and recoverable from it, and what the record needs is
+/// enough to say whether they were the same ones. The user-level ones are the
+/// exception to that recoverability, which is an argument for digesting them
+/// rather than against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Instruction {
+    pub path: String,
+    /// `None` when the file was not there. That is as much a fact about a run
+    /// as its contents: a list with nothing in it cannot tell "looked and found
+    /// nothing" from "did not look".
+    pub digest: Option<sic_core::Digest>,
+}
+
+/// Where the instruction files a driven agent reads are looked for.
+///
+/// The working directory because that is where the pane starts, and `HOME`
+/// because that is where the agent's own configuration lives - `driving.md` §3
+/// says both, and calls the second a property of driving a tool that belongs to
+/// somebody. It is that, and it is also an input to the answer.
+///
+/// **This list is what sic looks at, not what the agent reads.** An agent may
+/// read nested files further down a tree, files this does not know the name of,
+/// and configuration in formats nobody here has heard of. Recording a short
+/// list honestly is worth more than implying a complete one: what it supports
+/// is "these were the same" and "these were not", which is the question a
+/// person reading a run six weeks later actually has.
+const INSTRUCTIONS: &[&str] = &["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"];
+
+/// The instruction files as they are now, digested.
+pub fn instructions_now(cwd: &std::path::Path, home: Option<&std::path::Path>) -> Vec<Instruction> {
+    let mut out = Vec::new();
+    for name in INSTRUCTIONS {
+        for base in [Some(cwd), home].into_iter().flatten() {
+            let path = base.join(name);
+            // The same name under two roots is two files, and both are read.
+            out.push(Instruction {
+                digest: std::fs::read(&path)
+                    .ok()
+                    .map(|bytes| sic_core::Digest::of(&bytes)),
+                path: path.display().to_string(),
+            });
+        }
+    }
+    out
 }
 
 /// Which conversation a call belongs to.

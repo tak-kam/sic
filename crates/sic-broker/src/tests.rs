@@ -595,6 +595,7 @@ impl FakeAgent {
                 command: format!("/nowhere/{name}"),
                 agent: format!("{name} 0.0.0"),
                 multiplexer: "none".into(),
+                instructions: Vec::new(),
             },
             said: said.iter().map(|s| (*s).to_string()).collect(),
             asked,
@@ -1352,4 +1353,40 @@ fn a_grant_follows_a_symbolic_link_deliberately() {
 
     std::fs::remove_file(&link).ok();
     std::fs::remove_file(&target).ok();
+}
+
+/// The record has to be able to say whether the agent was told the same thing.
+///
+/// Two runs of the same program that got different answers should be
+/// distinguishable from the record, and an instruction file in the working
+/// directory is one of the three things that decided the answer - alongside the
+/// prompt, which the journal digests, and the output type, which the program
+/// declares. It was the one with no trace at all.
+#[test]
+fn what_the_agent_was_told_is_digested() {
+    let dir = std::path::PathBuf::from(temp_path("told"));
+    std::fs::create_dir_all(&dir).expect("writable");
+    std::fs::write(dir.join("AGENTS.md"), "answer in French").expect("writable");
+
+    let before = crate::agent::instructions_now(&dir, None);
+    let agents = before
+        .iter()
+        .find(|i| i.path.ends_with("AGENTS.md"))
+        .expect("it was looked for");
+    assert!(agents.digest.is_some(), "it is there, so it has a digest");
+
+    // A file that is not there is recorded as not there, which an empty list
+    // could not say.
+    let claude = before
+        .iter()
+        .find(|i| i.path.ends_with("CLAUDE.md"))
+        .expect("it was looked for");
+    assert!(claude.digest.is_none());
+
+    // Change what the agent is told, and the record changes with it.
+    std::fs::write(dir.join("AGENTS.md"), "answer in German").expect("writable");
+    let after = crate::agent::instructions_now(&dir, None);
+    assert_ne!(before, after);
+
+    std::fs::remove_dir_all(&dir).ok();
 }

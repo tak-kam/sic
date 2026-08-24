@@ -264,11 +264,40 @@ that are already there:
 
 ```json
 {"driver":"tmux:claude","command":"/home/x/.local/bin/claude",
- "agent":"claude 1.2.3","multiplexer":"tmux 3.4"}
+ "agent":"claude 1.2.3","multiplexer":"tmux 3.4",
+ "instructions":[{"path":"./CLAUDE.md","sha256":"..."},
+                 {"path":"./AGENTS.md","absent":true}]}
 ```
 
 `sic explain` prints it. Without it, a recorded run's answers came from
 "claude", which is not a fact anyone can check later.
+
+### And what it was told
+
+The same sentence applies word for word to the instruction files. The pane
+starts in the directory `sic` was started in (§3) and the agent reads `HOME`,
+so a file in the repository saying how this project works is one of the three
+things that decided the answer - beside the prompt, which the journal digests,
+and the output type, which the program declares. It was the one with no trace at
+all, and the run that made this obvious answered in Japanese because of a file
+under `HOME` that no part of the record mentioned.
+
+So they are digested, not stored. They are source in a repository and
+recoverable from it; what the record needs is enough to say whether they were
+the same ones. A file that was **not** there is recorded as not there, because
+a list with nothing in it cannot tell "looked and found nothing" from "did not
+look".
+
+**The list is what sic looks at, not what the agent reads**, and saying so is
+part of recording it honestly. An agent may read nested files further down a
+tree, files whose names are not on this list, and configuration in formats
+nobody here has heard of. A short list that is true supports the question a
+person six weeks later actually has - were these the same? - and a longer one
+that implied completeness would not.
+
+The user-level files are on it for the reason that argues hardest for them:
+they are outside the repository, so a digest is the only evidence of them that
+will ever exist.
 
 It is not a journal event. The journal has a fixed vocabulary of events about
 what the *program* did, and records digests rather than values; "which build of

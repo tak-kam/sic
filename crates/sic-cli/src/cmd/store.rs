@@ -386,12 +386,27 @@ fn answer_from_json(json: &sic_json::Json) -> Option<Recorded> {
 /// reading a run's answers back needs to know, because reading a terminal user
 /// interface is a bet on a version.
 pub fn record_driver(dir: &Path, info: &sic_broker::DriverInfo) -> Result<(), String> {
+    // Every path that was looked at, with a digest or without one. A file that
+    // was not there is as much a fact about the run as one that was.
+    let instructions: Vec<String> = info
+        .instructions
+        .iter()
+        .map(|i| match &i.digest {
+            Some(digest) => format!(
+                "{{\"path\":{},\"sha256\":{}}}",
+                json_string(&i.path),
+                json_string(&digest.to_string())
+            ),
+            None => format!("{{\"path\":{},\"absent\":true}}", json_string(&i.path)),
+        })
+        .collect();
     let json = format!(
-        "{{\"driver\":{},\"command\":{},\"agent\":{},\"multiplexer\":{}}}\n",
+        "{{\"driver\":{},\"command\":{},\"agent\":{},\"multiplexer\":{},\"instructions\":[{}]}}\n",
         json_string(&info.driver),
         json_string(&info.command),
         json_string(&info.agent),
         json_string(&info.multiplexer),
+        instructions.join(","),
     );
     let path = dir.join(DRIVER);
     std::fs::write(&path, json).map_err(|e| format!("cannot write `{}`: {e}", path.display()))
@@ -405,12 +420,46 @@ pub fn read_driver(dir: &Path) -> Option<sic_broker::DriverInfo> {
         Some(sic_json::Json::Str(s)) => s.clone(),
         _ => String::new(),
     };
+    let instructions = match json.member("instructions") {
+        Some(sic_json::Json::Array(items)) => items
+            .iter()
+            .map(|item| sic_broker::agent::Instruction {
+                path: match item.member("path") {
+                    Some(sic_json::Json::Str(p)) => p.clone(),
+                    _ => String::new(),
+                },
+                digest: match item.member("sha256") {
+                    Some(sic_json::Json::Str(text)) => digest_from(text),
+                    _ => None,
+                },
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     Some(sic_broker::DriverInfo {
         driver: field("driver"),
         command: field("command"),
         agent: field("agent"),
         multiplexer: field("multiplexer"),
+        instructions,
     })
+}
+
+/// A digest as it was written: `sha256:` and 64 hex characters.
+///
+/// Anything else reads as absent rather than as a digest. A record that cannot
+/// be read is not a record, and inventing one would be worse than saying
+/// nothing - the whole point of keeping these is that they can be compared.
+fn digest_from(text: &str) -> Option<sic_core::Digest> {
+    let hex = text.strip_prefix("sha256:")?;
+    if hex.len() != 64 {
+        return None;
+    }
+    let mut bytes = [0u8; 32];
+    for (i, slot) in bytes.iter_mut().enumerate() {
+        *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
+    }
+    Some(sic_core::Digest::from_bytes(bytes))
 }
 
 fn json_string(value: &str) -> String {

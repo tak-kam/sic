@@ -248,6 +248,15 @@ pub fn explain(prefix: &str) -> ExitCode {
     if let Some(driver) = store::read_driver(&dir) {
         println!("  answered by {} at {}", driver.driver, driver.command);
         println!("              {}, {}", driver.agent, driver.multiplexer);
+        // What the agent was told, as digests. A file that was not there is
+        // said too: an empty list cannot tell "looked and found nothing" from
+        // "did not look".
+        for instruction in &driver.instructions {
+            match &instruction.digest {
+                Some(digest) => println!("              told by {} {digest}", instruction.path),
+                None => println!("              no {}", instruction.path),
+            }
+        }
     }
 
     println!();

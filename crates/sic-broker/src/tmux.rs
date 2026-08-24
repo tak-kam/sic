@@ -142,6 +142,15 @@ impl TmuxDriver {
             command: path.display().to_string(),
             agent: first_line(&version_of(&path, "--version")?),
             multiplexer: first_line(&version_of(&tmux, "-V")?),
+            // Read now rather than when the pane opens: this is what the agent
+            // will have been told, and a file that changes during a run changes
+            // it for the next answer rather than for the record of this one.
+            instructions: crate::agent::instructions_now(
+                &std::env::current_dir().unwrap_or_default(),
+                std::env::var_os("HOME")
+                    .map(std::path::PathBuf::from)
+                    .as_deref(),
+            ),
         };
         // Read before anything is opened: what a run had open last time is how
         // a conversation that is gone can be told from one that never existed.
