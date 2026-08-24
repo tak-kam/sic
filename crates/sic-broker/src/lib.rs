@@ -565,6 +565,19 @@ fn allowed_path(grant: &CapGrant, requested: &str) -> Result<PathBuf, CapError> 
             grant.name, grant.constraint
         )));
     }
+    // A grant names a path, and this is where that stops. What the path
+    // resolves to is the machine's business: a symbolic link is followed, the
+    // way the shell and every other program on that machine follow one.
+    //
+    // Refusing links was tried and is not available. `/bin` is a link to
+    // `/usr/bin` on any system that merged them, so a rule refusing a link
+    // anywhere along a path refuses `/bin/sh` - and a rule with an exception
+    // for the links a distribution happens to ship is not a rule.
+    //
+    // What a plan therefore promises is "this program may open this path", not
+    // "this path is not a link" and not "these bytes". The answer to the last
+    // one is a pin, which `process.exec` has and `fs.read` does not - see
+    // `docs/design/capabilities.md`.
     Ok(PathBuf::from(requested))
 }
 

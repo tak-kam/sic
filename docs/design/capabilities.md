@@ -207,6 +207,31 @@ different feature - it would have to say what the contents must be, which is not
 what a grant is for - and accepting the syntax while ignoring it would be worse
 than refusing it.
 
+### A grant names a path, and the filesystem resolves it
+
+The sentence this section opens with - a path says where to look, not what is
+there - is also the answer to a question that used to have none written down: a
+grant of `fs.read "./data.txt"` whose `data.txt` is a symbolic link to
+`/etc/shadow` reads `/etc/shadow`, and `sic plan` prints `./data.txt`.
+
+**That is followed, deliberately.** The alternative was tried: refuse a path any
+component of which is a link. It is not available. `/bin` is a link to
+`/usr/bin` on any system that merged them, so the rule refuses `/bin/sh` - and a
+rule with an exception for the links a distribution happens to ship is not a
+rule. The `..` check that sits beside this one is not the same thing wearing a
+different hat: `..` is written in the program, where a reader of the plan can
+see it, and a link is in the filesystem of the machine the program will run on,
+where they cannot.
+
+So what a plan promises about a path grant is exactly this: **this program may
+open this path.** Not that the path is not a link, and not what the bytes are.
+The answer to the last one is a pin, and `fs.read` does not have one for the
+reason above - which is worth knowing when reading a plan, because it means a
+path grant is a claim about a name and not about a file.
+
+`import` is stricter, and the difference is deliberate:
+`docs/design/modules.md` has the argument.
+
 Not in v0.1, and named so their absence is a decision rather than an oversight:
 path prefixes and globs, credential injection, and any capability that opens a
 socket.

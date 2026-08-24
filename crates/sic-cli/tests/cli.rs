@@ -2934,3 +2934,47 @@ fn a_journal_cut_mid_write_says_so_rather_than_going_quiet() {
 
     std::fs::remove_dir_all(&store).ok();
 }
+
+/// An import may not reach outside the program's directory, and a symbolic link
+/// is the way to do that without writing anything a reader could see.
+///
+/// Stricter than a capability grant, which follows links, and the difference is
+/// deliberate: a grant names a path on somebody's machine, where `/bin` is a
+/// link on half of them; an import names a file in the program, where a link is
+/// a choice somebody made about this program.
+#[test]
+fn an_import_may_not_reach_outside_through_a_symbolic_link() {
+    let main = write_temp_program(
+        "import-link",
+        &[
+            (
+                "main.sic",
+                "import \"lib/helper.sic\";\n\nfn main() -> Int {\n    return helper();\n}\n",
+            ),
+            ("lib/real.sic", "fn helper() -> Int {\n    return 1;\n}\n"),
+        ],
+    );
+    let dir = main.parent().unwrap().to_path_buf();
+    let outside = dir.join("outside.sic");
+    std::fs::write(&outside, "fn helper() -> Int {\n    return 2;\n}\n").unwrap();
+
+    let link = dir.join("lib").join("helper.sic");
+    if std::os::unix::fs::symlink(&outside, &link).is_err() {
+        std::fs::remove_dir_all(&dir).ok();
+        return;
+    }
+
+    let (_, stderr, code) = sic(&["compile", main.to_str().unwrap(), "-o", "/dev/null"]);
+    assert_eq!(code, 1, "{stderr}");
+    assert!(stderr.contains("symbolic link"), "{stderr}");
+    assert!(stderr.contains("outside the program"), "{stderr}");
+
+    // The same program importing the real file compiles, so what is refused is
+    // the link and not the shape of the program.
+    std::fs::remove_file(&link).unwrap();
+    std::fs::copy(dir.join("lib").join("real.sic"), &link).unwrap();
+    let (_, stderr, code) = sic(&["compile", main.to_str().unwrap(), "-o", "/dev/null"]);
+    assert_eq!(code, 0, "{stderr}");
+
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -79,12 +79,29 @@ import "./lib/deploy.sic";
 ```
 
 - A path relative to the importing file. Absolute paths are refused, and so is
-  any path with a `..` component - the same rule the broker applies, for the
-  same reason.
+  any path with a `..` component, and so is a path any component of which is a
+  symbolic link.
 - **No network resolution, no registry, no version.** Section 11 of the
   specification, unchanged. A copy of something goes in `vendor/`.
 - Importing the same file twice, directly or through a chain, brings it in once.
 - A cycle is an error, and the message shows the chain.
+
+### Why a link is refused here and followed in a grant
+
+These rules exist so that what a program is built from stays inside the
+directory it was started from. `..` is one way out of that directory and a
+symbolic link is the other, and the second is worse for a reader: `..` is
+written in the program, where it can be seen, and a link is in the filesystem,
+where it cannot.
+
+A capability grant follows a link instead, and that is not an inconsistency.
+A grant names a path on somebody's machine, where `/bin` is a link to `/usr/bin`
+on half of them - refusing links there would refuse `/bin/sh`, and a rule with
+an exception for the links a distribution ships is not a rule. An import names a
+file in the program, where a link is a choice somebody made about this program
+and there is nothing a distribution needs it for.
+
+`docs/design/capabilities.md` has the other half of this.
 
 ### Names are flat
 

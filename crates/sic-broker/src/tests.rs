@@ -1310,3 +1310,46 @@ fn an_answer_that_used_its_allowance_gets_no_more_tools() {
     // And not for the other reason: which one it was is the point.
     assert!(!spent.contains("shell"), "{spent}");
 }
+
+/// A grant names a path, and a symbolic link at that path is followed.
+///
+/// This is the decision rather than an oversight, and it is written down in
+/// `docs/design/capabilities.md` so that a plan's reader knows what they are
+/// approving. Refusing links was tried and is not available: `/bin` is a link
+/// to `/usr/bin` on any system that merged them, so a rule refusing one
+/// anywhere along a path refuses `/bin/sh`, and a rule with an exception for
+/// the links a distribution ships is not a rule.
+///
+/// What a plan promises is "this program may open this path". The answer to
+/// "these bytes" is a pin, which `process.exec` has and `fs.read` does not.
+#[test]
+fn a_grant_follows_a_symbolic_link_deliberately() {
+    let target = temp_path("linked-target.txt");
+    let link = temp_path("the-link.txt");
+    std::fs::write(&target, "what it points at").expect("writable");
+    std::fs::remove_file(&link).ok();
+    if std::os::unix::fs::symlink(&target, &link).is_err() {
+        // A filesystem without links has nothing to say here.
+        return;
+    }
+
+    let mut broker = Broker::new(vec![grant("fs.read", CapKind::Read, &link)]);
+    assert_eq!(
+        broker.call(&request(0, "fs.read", &[&link])),
+        Ok(CapOutcome::Value(CapValue::Str("what it points at".into())))
+    );
+
+    // And the grant is still exactly one path: the link does not widen it to
+    // whatever else is beside its target.
+    let error = broker
+        .call(&request(0, "fs.read", &[&target]))
+        .expect_err("the grant names the link, not the file behind it");
+    assert!(
+        error.message.contains("may only be used with"),
+        "{}",
+        error.message
+    );
+
+    std::fs::remove_file(&link).ok();
+    std::fs::remove_file(&target).ok();
+}

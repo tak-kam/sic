@@ -131,6 +131,25 @@ impl Loader<'_> {
         // `examples/./lib/x.sic` and `examples/lib/x.sic` are the same file,
         // and only one of them is worth putting in a message.
         let path = normalize(&dir.join(rel));
+        // `..` was refused above, and `..` is not the only way a path climbs.
+        // A symbolic link walks out of the directory without writing anything
+        // in the program a reader could see, and what these checks exist for -
+        // said in the comment on `check_path` - is that what a program is built
+        // from stays inside the directory it was started from.
+        //
+        // This is stricter than a capability grant, which follows links, and
+        // the difference is deliberate: a grant names a path on somebody's
+        // machine, where `/bin` is a link on half of them, while an import
+        // names a file in the program, where a link is a choice somebody made
+        // about this program. See `docs/design/modules.md`.
+        if let Err(why) = names_the_file_it_opens(&path) {
+            self.diags.push(Diagnostic::error(
+                "E0400",
+                "an import path that cannot be used",
+                Label::new(span, why),
+            ));
+            return;
+        }
         let key = self.file_key(&path);
         let shown = display(&path);
 
@@ -217,4 +236,28 @@ fn normalize(path: &Path) -> PathBuf {
 /// anything sic itself produced.
 fn display(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+/// Refuses a path any component of which is a symbolic link.
+///
+/// Every prefix, not just the last component, because a link anywhere along the
+/// way moves the whole rest of the path. `symlink_metadata` does not follow
+/// links, which is the whole reason it is the one used, and a component that is
+/// not there is not a link - a missing import is reported where it is read,
+/// with the error that says so.
+fn names_the_file_it_opens(path: &Path) -> Result<(), String> {
+    let mut prefix = PathBuf::new();
+    for component in path.components() {
+        prefix.push(component);
+        match std::fs::symlink_metadata(&prefix) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "`{}` is a symbolic link, which would reach outside the program's directory",
+                    prefix.display()
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
