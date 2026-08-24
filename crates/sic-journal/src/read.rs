@@ -141,6 +141,12 @@ fn kind_from_json(json: &Json) -> Option<EventKind> {
             digest: digest(json, "checkpoint")?,
             bytes: int(json, "bytes")? as u64,
         },
+        "tool_used" => EventKind::ToolUsed {
+            tool: string(json, "tool")?.to_string(),
+            input: digest(json, "input")?,
+            allowed: boolean(json, "allowed")?,
+            reason: string(json, "reason").unwrap_or("").to_string(),
+        },
         "budget_consumed" => EventKind::BudgetConsumed {
             kind: string(json, "budget")?.to_string(),
             amount: int(json, "amount")? as u64,
@@ -153,6 +159,13 @@ fn kind_from_json(json: &Json) -> Option<EventKind> {
 fn string<'a>(json: &'a Json, name: &str) -> Option<&'a str> {
     match json.member(name)? {
         Json::Str(s) => Some(s),
+        _ => None,
+    }
+}
+
+fn boolean(json: &Json, name: &str) -> Option<bool> {
+    match json.member(name)? {
+        Json::Bool(v) => Some(*v),
         _ => None,
     }
 }

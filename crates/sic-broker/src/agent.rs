@@ -87,7 +87,7 @@ pub trait AgentDriver: std::fmt::Debug {
     ///
     /// A driver that offers the agent nothing answers with nothing, which is
     /// why this has a default: it is not every driver's business.
-    fn take_tool_uses(&mut self) -> Vec<sic_core::ToolUse> {
+    fn take_tool_uses(&mut self) -> Vec<sic_core::AgentAction> {
         Vec::new()
     }
 

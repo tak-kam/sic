@@ -15,7 +15,7 @@ use std::io::{Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 
-use sic_core::{CapGrant, CapRequest, Digest, ToolUse, answer_from_bytes, answer_to_bytes};
+use sic_core::{AgentAction, CapGrant, CapRequest, Digest, answer_from_bytes, answer_to_bytes};
 
 use crate::authority::reach_of;
 
@@ -23,9 +23,11 @@ use crate::authority::reach_of;
 /// and this is what stops one from being believed.
 const MAX_FRAME: u32 = 1 << 20;
 
-/// What is being asked of the run: what do you offer, or perform this.
+/// What is being asked of the run: what do you offer, perform this, or may the
+/// agent use this tool.
 const ASK_LIST: u8 = 0;
 const ASK_CALL: u8 = 1;
+const ASK_TOOL: u8 = 2;
 
 /// One parameter of a routed capability, as the agent has to supply it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +93,7 @@ pub struct Route {
     listener: UnixListener,
     path: PathBuf,
     manifest: Vec<CapGrant>,
-    used: Vec<ToolUse>,
+    used: Vec<AgentAction>,
 }
 
 impl Route {
@@ -148,6 +150,7 @@ impl Route {
                 let _ = write_frame(&mut stream, &offered_to_bytes(&offered(&self.manifest)));
             }
             Some((&ASK_CALL, rest)) => self.serve_call(&mut stream, rest),
+            Some((&ASK_TOOL, rest)) => self.serve_tool(&mut stream, rest),
             // Not a question this speaks. Saying nothing is right: the far side
             // is not a peer whose vocabulary this negotiates.
             _ => {}
@@ -158,7 +161,7 @@ impl Route {
         let answer = match CapRequest::from_bytes(body) {
             Ok(request) => {
                 let answer = crate::perform(&self.manifest, &request);
-                self.used.push(ToolUse {
+                self.used.push(AgentAction::Capability {
                     cap: request.name.clone(),
                     args: digest_of_args(&request),
                     outcome: match &answer {
@@ -178,8 +181,51 @@ impl Route {
         let _ = write_frame(stream, &answer_to_bytes(&answer));
     }
 
-    /// What the agent asked for, since the last time this was asked.
-    pub fn take_tool_uses(&mut self) -> Vec<ToolUse> {
+    /// Whether the agent may use a tool of its own.
+    ///
+    /// The rules the agent was started with cover the tools whose constraint a
+    /// permission system can hold. This covers the one thing they cannot: a
+    /// shell. `dontAsk` always permits a fixed set of read-only commands - `cat`
+    /// among them - and the set is not configurable, so a rule scoping `Read`
+    /// to a directory is not a bound on reading. A hook is: it runs before the
+    /// rules and can refuse what they would have allowed.
+    ///
+    /// So a shell is refused, and the reason is that no grant can name one.
+    /// `process.exec` grants a binary, at an absolute path, sometimes pinned by
+    /// digest - and the agent reaches that through this same socket, where it
+    /// is checked. A command string is not that and cannot be made into it.
+    fn serve_tool(&mut self, stream: &mut UnixStream, body: &[u8]) {
+        let mut r = sic_core::Reader::new(body);
+        let (Ok(tool), Ok(input)) = (r.str(), r.str()) else {
+            // Unreadable: the caller does not get a decision, and its own
+            // failing closed is what happens next.
+            return;
+        };
+        let refused = matches!(tool.as_str(), "Bash" | "PowerShell");
+        self.used.push(AgentAction::Tool {
+            tool: tool.clone(),
+            input: Digest::of(input.as_bytes()),
+            allowed: !refused,
+            reason: match refused {
+                true => "no grant names a shell".to_string(),
+                false => String::new(),
+            },
+        });
+
+        let mut w = sic_core::Writer::new();
+        w.bool(refused);
+        w.str(match refused {
+            true => {
+                "no grant names a shell: a command string is not a binary, and `process.exec` \
+                     is offered to you as a tool instead"
+            }
+            false => "",
+        });
+        let _ = write_frame(stream, &w.finish());
+    }
+
+    /// What the agent did, since the last time this was asked.
+    pub fn take_tool_uses(&mut self) -> Vec<AgentAction> {
         std::mem::take(&mut self.used)
     }
 }
@@ -197,6 +243,27 @@ pub fn ask(socket: &Path, request: &CapRequest) -> std::io::Result<Vec<u8>> {
     let mut body = vec![ASK_CALL];
     body.extend_from_slice(&request.to_bytes());
     exchange(socket, &body)
+}
+
+/// Asks the run whether the agent may use one of its own tools.
+///
+/// `Ok(None)` is "nothing to say": the rules the agent was started with decide,
+/// which is where a path scope belongs. `Ok(Some(reason))` is a refusal.
+pub fn may_use(socket: &Path, tool: &str, input: &str) -> std::io::Result<Option<String>> {
+    let mut w = sic_core::Writer::new();
+    w.u8(ASK_TOOL);
+    w.str(tool);
+    w.str(input);
+    let bytes = exchange(socket, &w.finish())?;
+    let mut r = sic_core::Reader::new(&bytes);
+    let bad =
+        |e: sic_core::BinError| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string());
+    let refused = r.bool().map_err(bad)?;
+    let reason = r.str().map_err(bad)?;
+    Ok(match refused {
+        true => Some(reason),
+        false => None,
+    })
 }
 
 /// Asks the run what it is offering.

@@ -354,44 +354,61 @@ impl<'a> Vm<'a> {
     /// that costs is visible only to somebody tailing the file; what it buys is
     /// that the events are nested under the call they happened inside, which is
     /// where a reader looks for them.
-    pub fn record_tool_uses(&mut self, uses: &[sic_core::ToolUse]) {
+    pub fn record_tool_uses(&mut self, actions: &[sic_core::AgentAction]) {
         let Some(index) = self.answering else {
             return;
         };
         let TaskState::WaitingCap(pending) = self.tasks[index].state.clone() else {
             return;
         };
-        for use_ in uses {
+        let task = TaskId(index as u64);
+        for action in actions {
             let span = self.journal.new_span();
-            self.journal.emit_for(
-                TaskId(index as u64),
-                span,
-                Some(pending.span),
-                EventKind::CapabilityRequested {
-                    cap: use_.cap.clone(),
-                    args: use_.args,
-                    attempt: 1,
-                },
-            );
-            match &use_.outcome {
-                Ok(result) => self.journal.emit_for(
-                    TaskId(index as u64),
+            match action {
+                // A capability the agent reached through the broker is a
+                // capability call, so it enters as one.
+                sic_core::AgentAction::Capability { cap, args, outcome } => {
+                    self.journal.emit_for(
+                        task,
+                        span,
+                        Some(pending.span),
+                        EventKind::CapabilityRequested {
+                            cap: cap.clone(),
+                            args: *args,
+                            attempt: 1,
+                        },
+                    );
+                    let kind = match outcome {
+                        Ok(result) => EventKind::CapabilityCompleted {
+                            cap: cap.clone(),
+                            result: *result,
+                            attempt: 1,
+                        },
+                        Err(error) => EventKind::CapabilityFailed {
+                            cap: cap.clone(),
+                            error: error.clone(),
+                            attempt: 1,
+                        },
+                    };
+                    self.journal.emit_for(task, span, Some(pending.span), kind);
+                }
+                // A tool of the agent's own is not a capability, and the
+                // journal says so rather than borrowing a word that means
+                // something else here.
+                sic_core::AgentAction::Tool {
+                    tool,
+                    input,
+                    allowed,
+                    reason,
+                } => self.journal.emit_for(
+                    task,
                     span,
                     Some(pending.span),
-                    EventKind::CapabilityCompleted {
-                        cap: use_.cap.clone(),
-                        result: *result,
-                        attempt: 1,
-                    },
-                ),
-                Err(error) => self.journal.emit_for(
-                    TaskId(index as u64),
-                    span,
-                    Some(pending.span),
-                    EventKind::CapabilityFailed {
-                        cap: use_.cap.clone(),
-                        error: error.clone(),
-                        attempt: 1,
+                    EventKind::ToolUsed {
+                        tool: tool.clone(),
+                        input: *input,
+                        allowed: *allowed,
+                        reason: reason.clone(),
                     },
                 ),
             }

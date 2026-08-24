@@ -25,7 +25,7 @@ use super::EXIT_FAILURE;
 /// Where the run is listening. Passed by the driver that started the agent;
 /// there is no default, because a shim that guessed would be a shim that
 /// connected to somebody else's run.
-const SOCKET_VAR: &str = "SIC_ROUTE";
+pub const SOCKET_VAR: &str = "SIC_ROUTE";
 
 /// The revision this answers with when the client did not say which it wants.
 ///

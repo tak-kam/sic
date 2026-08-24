@@ -62,6 +62,13 @@ tree.
 | a function | `FunctionEntered` | `FunctionExited` |
 | a capability call | `CapabilityRequested` | `CapabilityCompleted` / `CapabilityFailed` |
 
+`ToolUsed` is the one event that opens no span: a tool the agent used while
+answering a model call is a thing that happened, not a thing other things
+happened inside. It is deliberately not a capability event - the manifest does
+not name `Bash` or `Edit`, and recording one as a capability call would be the
+journal borrowing a word that means something else here. See
+`docs/design/authority.md` §7.
+
 - `traceId` is the run id, which is already 128 bits.
 - `spanId` is the journal's span id plus one, because OTLP reserves all-zero.
 - A span that never closed - the run was killed, or a task was abandoned mid

@@ -1120,8 +1120,13 @@ fn a_routed_call_is_the_same_call() {
     // And it is on the record, as digests.
     let used = route.take_tool_uses();
     assert_eq!(used.len(), 1);
-    assert_eq!(used[0].cap, "process.exec");
-    assert!(used[0].outcome.is_ok());
+    match &used[0] {
+        sic_core::AgentAction::Capability { cap, outcome, .. } => {
+            assert_eq!(cap, "process.exec");
+            assert!(outcome.is_ok());
+        }
+        other => panic!("a routed call is a capability call: {other:?}"),
+    }
     assert!(route.take_tool_uses().is_empty(), "draining happens once");
 
     std::fs::remove_file(&path).ok();
@@ -1191,4 +1196,55 @@ fn a_marker_joined_imperfectly_is_still_a_marker() {
     assert!(!text.contains(&format!("SIC-BEGIN-{id}")), "{text}");
     assert!(!text.contains(&format!("SIC-END-{id}")), "{text}");
     assert!(answer_from(&text, id, true).is_none());
+}
+
+/// A shell is refused whatever the rules say.
+///
+/// `dontAsk` always permits a fixed set of read-only commands - `cat` among
+/// them - and the set is not configurable, so a rule scoping `Read` to a
+/// directory is not a bound on reading. The hook runs before the rules and can
+/// refuse what they would have allowed, which is how reading gets bounded at
+/// all.
+#[test]
+fn no_grant_names_a_shell() {
+    let socket = std::path::PathBuf::from(temp_path("tool.sock"));
+    let manifest = vec![grant("fs.read", CapKind::Read, "./docs")];
+    let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
+
+    for (tool, refused) in [("Bash", true), ("PowerShell", true), ("Read", false)] {
+        let asking = std::thread::spawn({
+            let socket = socket.clone();
+            let tool = tool.to_string();
+            move || crate::route::may_use(&socket, &tool, "{\"command\":\"cat /etc/shadow\"}")
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !asking.is_finished() && std::time::Instant::now() < deadline {
+            route.serve_pending();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let decision = asking
+            .join()
+            .expect("the asker finished")
+            .expect("answered");
+        assert_eq!(decision.is_some(), refused, "{tool}");
+        if let Some(reason) = decision {
+            assert!(reason.contains("no grant names a shell"), "{reason}");
+        }
+    }
+
+    // Every one of them is on the record, refused or not: what the agent
+    // reached for is the part the journal was missing.
+    let used = route.take_tool_uses();
+    assert_eq!(used.len(), 3);
+    // A tool of the agent's own is not recorded as a capability: the manifest
+    // does not name `Bash`, and the journal does not borrow a word that means
+    // something else here.
+    for (i, allowed_expected) in [(0, false), (2, true)] {
+        match &used[i] {
+            sic_core::AgentAction::Tool { allowed, .. } => {
+                assert_eq!(*allowed, allowed_expected)
+            }
+            other => panic!("the agent's own tool is not a capability: {other:?}"),
+        }
+    }
 }

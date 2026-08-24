@@ -66,6 +66,19 @@ pub fn event_to_json(event: &Event) -> String {
         }
         EventKind::TaskFailed { error } => field_str(&mut out, "error", error, false),
         EventKind::TaskAbandoned => {}
+        EventKind::ToolUsed {
+            tool,
+            input,
+            allowed,
+            reason,
+        } => {
+            field_str(&mut out, "tool", tool, false);
+            field_str(&mut out, "input", &input.to_string(), false);
+            out.push_str(&format!(",\"allowed\":{allowed}"));
+            if !reason.is_empty() {
+                field_str(&mut out, "reason", reason, false);
+            }
+        }
         EventKind::BudgetConsumed {
             kind,
             amount,

@@ -12,7 +12,7 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256, ToolUse};
+use sic_core::{AgentAction, CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
 pub mod agent;
 pub mod authority;
@@ -107,7 +107,7 @@ impl Broker {
     /// They are drained rather than kept because the caller puts them in the
     /// journal, and an event recorded twice describes something that happened
     /// once.
-    pub fn take_tool_uses(&mut self) -> Vec<ToolUse> {
+    pub fn take_tool_uses(&mut self) -> Vec<AgentAction> {
         match self.driver.as_mut() {
             Some(driver) => driver.take_tool_uses(),
             None => Vec::new(),

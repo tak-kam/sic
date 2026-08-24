@@ -108,6 +108,20 @@ pub enum EventKind {
     /// The run ended while this task was still going.
     TaskAbandoned,
 
+    /// A tool of the agent's own, used while answering a model call.
+    ///
+    /// Not a capability: the manifest does not name `Bash` or `Edit`, and
+    /// recording one as a capability call would be the journal calling
+    /// something a capability because there was nowhere else to put it. What
+    /// the call was about is a digest, for the reason everything else here is.
+    ToolUsed {
+        tool: String,
+        input: Digest,
+        allowed: bool,
+        /// Why not, when sic refused it. Empty otherwise.
+        reason: String,
+    },
+
     /// A budgeted call site was used once. `remaining` is what is left, which
     /// is what makes a budget visible before it runs out rather than after.
     ///
@@ -152,6 +166,7 @@ impl EventKind {
             EventKind::TaskCompleted { .. } => "task_completed",
             EventKind::TaskFailed { .. } => "task_failed",
             EventKind::TaskAbandoned => "task_abandoned",
+            EventKind::ToolUsed { .. } => "tool_used",
             EventKind::BudgetConsumed { .. } => "budget_consumed",
             EventKind::RunSuspended { .. } => "run_suspended",
             EventKind::RunResumed { .. } => "run_resumed",

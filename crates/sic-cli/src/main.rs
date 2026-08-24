@@ -51,6 +51,8 @@ Usage:
   sic mcp                         serve the capabilities a run granted, to the
                                   agent answering for it; started by a run, not
                                   by a person
+  sic hook                        decide whether the agent may use one of its
+                                  own tools; likewise
   sic help                        show this help
   sic version                     show the version
 
@@ -133,6 +135,11 @@ fn main() -> ExitCode {
         "mcp" => match rest.is_empty() {
             true => cmd::mcp::run(),
             false => usage_error("`mcp` takes no arguments"),
+        },
+        // Also started by a run: the agent asks this before every tool call.
+        "hook" => match rest.is_empty() {
+            true => cmd::hook::run(),
+            false => usage_error("`hook` takes no arguments"),
         },
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
         "hir" => with_one_file(rest, "hir", cmd::hir::run),

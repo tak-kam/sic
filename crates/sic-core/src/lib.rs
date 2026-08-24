@@ -12,7 +12,7 @@ pub mod span;
 
 pub use bin::{BinError, Reader, Writer};
 pub use cap::{
-    CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue, ToolUse, answer_from_bytes,
+    AgentAction, CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue, answer_from_bytes,
     answer_to_bytes,
 };
 pub use diag::{Diagnostic, Label, Severity};

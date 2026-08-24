@@ -166,6 +166,7 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
             EventKind::RunSuspended { .. }
             | EventKind::RunResumed { .. }
             | EventKind::CheckpointWritten { .. }
+            | EventKind::ToolUsed { .. }
             | EventKind::BudgetConsumed { .. } => {}
         }
     }

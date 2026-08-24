@@ -3,6 +3,7 @@ pub mod disasm;
 pub mod drive;
 pub mod export;
 pub mod hir;
+pub mod hook;
 pub mod journal;
 pub mod mcp;
 pub mod parse;

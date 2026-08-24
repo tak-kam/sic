@@ -170,18 +170,35 @@ impl std::fmt::Display for CapError {
     }
 }
 
-/// What an agent asked the broker to do while answering.
+/// Something an agent did while answering a model call.
 ///
-/// Digests rather than values, because this reaches the journal and the journal
-/// records digests. It lives here rather than in the broker for the reason
-/// everything else in this file does: the VM has to be able to read one without
-/// being able to see the crate that performs effects.
+/// Two things, kept apart on purpose. A capability the agent reached through
+/// the broker is a capability call and enters the journal as one. A tool of the
+/// agent's own is not: the manifest does not name `Bash` or `Edit`, and
+/// recording one as a capability would be the journal calling something a
+/// capability because there was nowhere else to put it.
+///
+/// Digests rather than values, because this reaches the journal. It lives here
+/// rather than in the broker for the reason everything else in this file does:
+/// the VM has to be able to read one without being able to see the crate that
+/// performs effects.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolUse {
-    pub cap: String,
-    pub args: crate::Digest,
-    /// The answer, or the message of the error that stopped it.
-    pub outcome: std::result::Result<crate::Digest, String>,
+pub enum AgentAction {
+    Capability {
+        cap: String,
+        args: crate::Digest,
+        /// The answer, or the message of the error that stopped it.
+        outcome: std::result::Result<crate::Digest, String>,
+    },
+    Tool {
+        tool: String,
+        /// What the call was about, as a digest. The whole input: for an edit
+        /// that is a path and a diff, and only one of those is safe to keep.
+        input: crate::Digest,
+        allowed: bool,
+        /// Why not, when sic refused it.
+        reason: String,
+    },
 }
 
 // ---- the wire ----

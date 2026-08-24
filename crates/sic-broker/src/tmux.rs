@@ -40,6 +40,9 @@ const KEEP_ENV: &[&str] = &[
     "HOME", "PATH", "TERM", "LANG", "LC_ALL", "LC_CTYPE", "USER", "SHELL", "TMPDIR",
 ];
 
+/// How the hook and the MCP server are told where the run is listening.
+const SOCKET_VAR: &str = "SIC_ROUTE";
+
 /// The socket the driver's tmux server listens on. Its own, so that the
 /// environment and the configuration of the panes sic drives are sic's.
 const SOCKET: &str = "sic";
@@ -182,6 +185,31 @@ impl TmuxDriver {
         Ok(())
     }
 
+    /// The settings the agent is started with: the hook that asks the run
+    /// before every tool call.
+    ///
+    /// A hook cannot be given as a flag, so this is where it goes. It is passed
+    /// inline rather than written to a file: a file would be one more thing to
+    /// clean up, and one more thing another process could edit between writing
+    /// it and reading it.
+    fn hook_arguments(&self) -> Vec<String> {
+        let Some(route) = &self.route else {
+            return Vec::new();
+        };
+        let Ok(me) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        // `SIC_ROUTE` reaches the hook through the environment the agent was
+        // started with, which is why it is set here rather than in the command.
+        let settings = format!(
+            "{{\"hooks\":{{\"PreToolUse\":[{{\"matcher\":\"*\",\"hooks\":[{{\"type\":\"command\",\"command\":{}}}]}}]}},\
+             \"env\":{{\"{SOCKET_VAR}\":{}}}}}",
+            json_string(&format!("{} hook", me.display())),
+            json_string(&route.path().display().to_string()),
+        );
+        vec!["--settings".into(), settings]
+    }
+
     /// The MCP server definition the agent is started with.
     ///
     /// `--strict-mcp-config` goes with it: without it the agent would also load
@@ -207,6 +235,7 @@ impl TmuxDriver {
         let mut parts = vec![sh_quote(&self.agent)];
         parts.extend(self.authority.arguments().iter().map(|a| sh_quote_str(a)));
         parts.extend(self.mcp_arguments().iter().map(|a| sh_quote_str(a)));
+        parts.extend(self.hook_arguments().iter().map(|a| sh_quote_str(a)));
         parts.join(" ")
     }
 
@@ -422,7 +451,7 @@ impl AgentDriver for TmuxDriver {
         }
     }
 
-    fn take_tool_uses(&mut self) -> Vec<sic_core::ToolUse> {
+    fn take_tool_uses(&mut self) -> Vec<sic_core::AgentAction> {
         match self.route.as_mut() {
             Some(route) => route.take_tool_uses(),
             None => Vec::new(),

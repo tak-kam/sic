@@ -321,6 +321,17 @@ fn explain_event(timed: &TimedEvent) -> Option<String> {
         EventKind::RunResumed { cap } => format!("resumed with {cap}"),
         EventKind::TaskFailed { error } => format!("task failed: {error}"),
         EventKind::TaskAbandoned => "task abandoned".to_string(),
+        // The agent's own tools, which are not capabilities. A refused one is
+        // the more interesting line of the two, so it says why.
+        EventKind::ToolUsed {
+            tool,
+            allowed,
+            reason,
+            ..
+        } => match allowed {
+            true => format!("the agent used {tool}"),
+            false => format!("the agent was refused {tool}: {reason}"),
+        },
         EventKind::BudgetConsumed { remaining, .. } => {
             format!("  budget: {remaining} left")
         }

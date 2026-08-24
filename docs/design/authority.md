@@ -85,19 +85,24 @@ the sandbox is not there, the plan says the gate is what it has.
 Two of these were found by reading the agent's documentation rather than by
 reasoning about gates in general, and both change what a plan is allowed to say.
 
-**A set of read-only shell commands is always allowed and is not
+**A set of read-only shell commands is always allowed by the rules and is not
 configurable.** `dontAsk` - the mode that makes an allowlist mean what it says,
 because it denies an unnamed tool without prompting, and the only mode a pane
 with nobody watching it can run in - still permits `ls`, `cat`, `echo`, `pwd`,
 `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd` and
 the read-only forms of `git`.
 
-`cat` reads any file on the machine. So a `Read(./docs)` rule bounds the *Read
-tool*; it does not bound *reading*. The plan may say the first and must not say
-the second, and the difference is not pedantry: a program whose manifest grants
-`fs.read "./docs"` is running an agent that can read `~/.ssh/id_ed25519`.
-Bounding that needs the filesystem half of a sandbox, which §11 lists as not
-here.
+`cat` reads any file on the machine, so a `Read(./docs)` rule bounds the *Read
+tool* and does not by itself bound *reading*. What closes it is the hook (§7):
+it runs before any rule is consulted and can refuse what the rules would have
+allowed. Measured rather than assumed - a hook that exits 2 blocks
+`cat /etc/hostname` under `dontAsk`, and its message reaches the agent as the
+reason. So the shell is refused outright, because no grant names one:
+`process.exec` grants a binary at an absolute path, sometimes pinned by digest,
+and the agent reaches that through the broker where it is checked.
+
+That leaves the rules doing what they are good at - holding a path scope - and
+the hook doing the thing they cannot.
 
 **Allow rules merge across settings scopes.** A rule in the machine's
 `~/.claude/settings.json` or in the project's `.claude/settings.json` is added
@@ -265,11 +270,14 @@ Three consequences, and they are the reason this is not a footnote:
 **The broker becomes an authorization server, synchronously, per tool use.**
 Today it answers the VM and returns. Here it answers a process it started, on a
 hot path, where a slow answer stalls the agent and a crashed one either fails
-open or hangs. **It fails closed**: `deny` is what happens when the broker
-cannot be reached, and `permissionDecisionReason` is the only channel for
-telling "the broker said no" apart from "the broker is not there". A person
-reading a denial has to be able to tell those apart or they will debug the wrong
-thing.
+open or hangs. **It fails closed**, and exit 2 is how: a hook that returns a
+`deny` decision does not override an allow rule, while exiting 2 blocks before
+any rule is consulted. So both a refusal and an unreachable run block, and what
+tells them apart is the message - which reaches the agent, and a person reading
+a denial has to be able to tell them apart or they will debug the wrong thing.
+
+    sic refused it: no grant names a shell...
+    sic could not be reached, so nothing authorized this (...)
 
 **The payload is a journal entry, and the journal has a fixed vocabulary.**
 `tool_name` plus `tool_input` is what an audit needs, and `docs/design/v0.1.md`
@@ -370,7 +378,7 @@ Capabilities:
     the agent's Edit       ./src                  (its own permissions)
     the agent may run      /usr/bin/cargo         (through the broker, pinned)
     the agent may not      reach the network      (sandboxed, no egress)
-    but it may read anything a shell can read     (not bounded)
+    the agent may not      run a shell            (refused by the hook)
     at most 20 model calls, 200 tool uses, 30m per answer
 ```
 
@@ -379,10 +387,9 @@ reader has to be able to tell a gate from a boundary. A line with nothing in
 parentheses would be a claim with no mechanism behind it.
 
 The first two lines say "the agent's Read" rather than "the agent may read" for
-the reason in §2: those rules bound a tool, and `cat` is not that tool. The
-fifth line is there until the filesystem half of a sandbox is, and it is the
-line that will be least comfortable to print - which is the argument for
-printing it.
+the reason in §2: those rules bound a tool. What stops the agent reaching a file
+those rules do not name is the line below them, because the shell is where that
+would otherwise happen.
 
 And the warning in `driving.md` §8 is removed only when the plan can print this
 for the manifest in front of it. Until then the warning is the true statement,
