@@ -16,7 +16,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
 
-use sic_core::Sha256;
+use sic_core::{Digest, Sha256};
 
 use super::{EXIT_FAILURE, EXIT_USAGE};
 
@@ -437,15 +437,24 @@ fn current_exe() -> Result<PathBuf, Failure> {
     Ok(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
+/// A digest a person typed, or one read out of a `SHA256SUMS` line.
+///
+/// The `sha256:` prefix is optional here and required nowhere else. This is the
+/// one place a digest is typed by hand rather than read back from something sic
+/// wrote, and both spellings appear in the wild - the tag page prints one, the
+/// journal prints the other. Accepting either costs nothing a command line can
+/// misread.
+///
+/// What comes back is the lowercase hex, because that is what the rest of this
+/// file compares against `hash_file`.
 fn parse_digest(given: &str) -> Result<String, Failure> {
     let hex = given.strip_prefix("sha256:").unwrap_or(given);
-    let hex = hex.to_ascii_lowercase();
-    if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(wrong(format!(
+    match Digest::from_hex(hex) {
+        Some(digest) => Ok(digest.hex()),
+        None => Err(wrong(format!(
             "`{given}` is not a sha256: 64 hex characters, optionally written `sha256:...`"
-        )));
+        ))),
     }
-    Ok(hex)
 }
 
 fn hash_file(path: &Path) -> Result<String, Failure> {

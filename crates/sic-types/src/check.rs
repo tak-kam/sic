@@ -1745,9 +1745,12 @@ impl Checker {
     }
 }
 
-/// Whether a string is 64 hexadecimal characters.
+/// Whether a pin is a digest.
+///
+/// `Digest::from_hex` rather than `Digest::parse`: the grant already says
+/// `sha256`, so the string beside it is the number and nothing else.
 fn is_sha256(text: &str) -> bool {
-    text.len() == 64 && text.chars().all(|c| c.is_ascii_hexdigit())
+    sic_core::Digest::from_hex(text).is_some()
 }
 
 /// Records an error type for a node and returns it.

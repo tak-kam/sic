@@ -429,8 +429,12 @@ pub fn read_driver(dir: &Path) -> Option<sic_broker::DriverInfo> {
                     Some(sic_json::Json::Str(p)) => p.clone(),
                     _ => String::new(),
                 },
+                // Anything that is not a digest reads as absent rather than
+                // as one. A record that cannot be read is not a record, and
+                // inventing one would be worse than saying nothing - the whole
+                // point of keeping these is that they can be compared.
                 digest: match item.member("sha256") {
-                    Some(sic_json::Json::Str(text)) => digest_from(text),
+                    Some(sic_json::Json::Str(text)) => sic_core::Digest::parse(text),
                     _ => None,
                 },
             })
@@ -444,23 +448,6 @@ pub fn read_driver(dir: &Path) -> Option<sic_broker::DriverInfo> {
         multiplexer: field("multiplexer"),
         instructions,
     })
-}
-
-/// A digest as it was written: `sha256:` and 64 hex characters.
-///
-/// Anything else reads as absent rather than as a digest. A record that cannot
-/// be read is not a record, and inventing one would be worse than saying
-/// nothing - the whole point of keeping these is that they can be compared.
-fn digest_from(text: &str) -> Option<sic_core::Digest> {
-    let hex = text.strip_prefix("sha256:")?;
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    for (i, slot) in bytes.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
-    }
-    Some(sic_core::Digest::from_bytes(bytes))
 }
 
 #[cfg(test)]

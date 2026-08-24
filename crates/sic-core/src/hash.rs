@@ -44,6 +44,39 @@ impl Digest {
     pub fn short(&self) -> String {
         self.hex()[..8].to_string()
     }
+
+    /// Reads back what `hex` wrote: exactly 64 hex characters, and nothing
+    /// else. Either case, because a digest is a number and a person retyping
+    /// one should not be told it is the wrong number.
+    ///
+    /// This is the half a digest needs to be readable as well as writable, and
+    /// it belongs here for the reason `hex` does. Without it every reader
+    /// decided for itself what a sha256 is, and one of those readers decides
+    /// whether a capability grant's binary pin is accepted.
+    pub fn from_hex(text: &str) -> Option<Digest> {
+        if text.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for (i, slot) in bytes.iter_mut().enumerate() {
+            // `get` rather than a slice: the length above is in bytes, and a
+            // multi-byte character would make the boundary fall inside one.
+            *slot = u8::from_str_radix(text.get(i * 2..i * 2 + 2)?, 16).ok()?;
+        }
+        Some(Digest(bytes))
+    }
+
+    /// Reads back what `Display` wrote: `sha256:` and 64 hex characters.
+    ///
+    /// The prefix is required, not tolerated. Everything sic writes carries it,
+    /// and a reader that also accepted a bare hex string would accept a field
+    /// that had lost its prefix to a bug as if nothing had happened. Where a
+    /// person types the digest instead - `sic upgrade --sha256` - the command
+    /// makes the prefix optional itself, and that is a decision about a command
+    /// line rather than about the format.
+    pub fn parse(text: &str) -> Option<Digest> {
+        Digest::from_hex(text.strip_prefix("sha256:")?)
+    }
 }
 
 impl std::fmt::Display for Digest {
@@ -253,5 +286,50 @@ mod tests {
         let d = Digest::of(b"abc");
         assert!(d.to_string().starts_with("sha256:ba7816bf"));
         assert_eq!(d.short(), "ba7816bf");
+    }
+
+    /// The two writers each have a reader, and each reader takes back exactly
+    /// what its writer produced.
+    #[test]
+    fn each_written_form_reads_back() {
+        let d = Digest::of(b"abc");
+        assert_eq!(Digest::from_hex(&d.hex()), Some(d));
+        assert_eq!(Digest::parse(&d.to_string()), Some(d));
+    }
+
+    /// A digest is a number, so the case it was typed in is not part of it.
+    #[test]
+    fn hex_is_read_in_either_case() {
+        let d = Digest::of(b"abc");
+        assert_eq!(Digest::from_hex(&d.hex().to_ascii_uppercase()), Some(d));
+        assert_eq!(
+            Digest::parse(&format!("sha256:{}", d.hex().to_ascii_uppercase())),
+            Some(d)
+        );
+    }
+
+    /// The prefix is required by `parse` and refused by `from_hex`, which is
+    /// what keeps a field that lost its prefix from reading as a digest.
+    #[test]
+    fn the_prefix_belongs_to_one_of_the_two() {
+        let hex = Digest::of(b"abc").hex();
+        assert_eq!(Digest::parse(&hex), None);
+        assert_eq!(Digest::from_hex(&format!("sha256:{hex}")), None);
+    }
+
+    #[test]
+    fn anything_that_is_not_sixty_four_hex_characters_is_refused() {
+        let hex = Digest::of(b"abc").hex();
+        assert_eq!(Digest::from_hex(""), None);
+        assert_eq!(Digest::from_hex(&hex[..63]), None);
+        assert_eq!(Digest::from_hex(&format!("{hex}0")), None);
+        // Sixty-four characters, one of which is not a hex digit.
+        assert_eq!(Digest::from_hex(&format!("{}z", &hex[..63])), None);
+        // Sixty-four *bytes* that are fewer than 64 characters. The length
+        // check passes and the boundary between two digits falls inside a
+        // character, which is why the digits are taken with `get`.
+        let multibyte = format!("{}\u{3042}", &hex[..61]);
+        assert_eq!(multibyte.len(), 64);
+        assert_eq!(Digest::from_hex(&multibyte), None);
     }
 }

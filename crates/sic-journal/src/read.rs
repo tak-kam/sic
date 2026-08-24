@@ -179,15 +179,7 @@ fn int(json: &Json, name: &str) -> Option<i64> {
 
 /// A digest as written: `sha256:` followed by 64 hex characters.
 fn digest(json: &Json, name: &str) -> Option<Digest> {
-    let text = string(json, name)?.strip_prefix("sha256:")?;
-    if text.len() != 64 {
-        return None;
-    }
-    let mut bytes = [0u8; 32];
-    for (i, slot) in bytes.iter_mut().enumerate() {
-        *slot = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(Digest::from_bytes(bytes))
+    Digest::parse(string(json, name)?)
 }
 
 #[cfg(test)]
