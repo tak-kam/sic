@@ -58,6 +58,8 @@ fn well_formed() -> Program {
             timeout_ms: 500,
             budget: 0,
             conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
         }],
         debug: DebugInfo {
             sources: vec!["main.sic".into()],

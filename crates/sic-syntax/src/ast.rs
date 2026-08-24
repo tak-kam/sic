@@ -87,6 +87,14 @@ pub struct AgentDecl {
     /// use is to say "the usual" is vocabulary that earns nothing, and the
     /// absence of the field already reads as what it means.
     pub memory: bool,
+    /// How many tools the agent may use, at this call site, in a whole run.
+    pub tools: Option<u32>,
+    /// How long it has to produce one answer, in milliseconds.
+    ///
+    /// The same unit as `timeout`, which is the only unit any duration in this
+    /// language has. It reads badly at this magnitude and that is the lesser
+    /// evil: two units in one file is a bug nobody sees.
+    pub deadline_ms: Option<u32>,
     pub span: Span,
 }
 

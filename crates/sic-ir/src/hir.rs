@@ -183,6 +183,11 @@ pub struct CallPolicy {
     /// `None` is a fresh conversation every time, which is what an agent
     /// without `memory: task` means.
     pub conversation: Option<u32>,
+    /// How many of the agent's own tools this site allows in a whole run, and
+    /// how long one answer may take. Both travel to the broker, which is the
+    /// only side that can see either.
+    pub tools: Option<u32>,
+    pub deadline_ms: Option<u32>,
     /// Phase 8: what makes a retry safe to repeat.
     pub idempotency_key: Option<LocalId>,
 }
@@ -193,6 +198,8 @@ impl CallPolicy {
             && self.timeout_ms.is_none()
             && self.budget.is_none()
             && self.conversation.is_none()
+            && self.tools.is_none()
+            && self.deadline_ms.is_none()
             && self.idempotency_key.is_none()
     }
 }

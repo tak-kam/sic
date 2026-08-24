@@ -63,6 +63,11 @@ impl Thread {
 pub struct Ask<'a> {
     pub prompt: &'a str,
     pub thread: Thread,
+    /// How many of the agent's own tools it may still use, or 0 for no limit,
+    /// and how long this answer may take, or 0 for no deadline. Both come from
+    /// the declaration; the broker is the only side that can see either.
+    pub tools: u32,
+    pub deadline_ms: u32,
     /// Whether the answer has to be JSON, because the caller said what shape it
     /// must take. It decides how a wrapped line is put back together - see
     /// `fold` - so it is part of asking rather than part of the prompt.

@@ -13,6 +13,10 @@
 // The pane is kept for as long as the run can still come back to it, so a run
 // that stops to wait keeps its conversation, and `sic attach <RUN-ID> --llm
 // tmux:claude` picks it up where it was left.
+//
+// `budget`, `tools` and `deadline` are three numbers because there are three
+// places they can be enforced. `deadline` is milliseconds, like `timeout`: one
+// unit for every duration in the language.
 type Patch {
     file: String,
     reason: String,
@@ -25,7 +29,9 @@ allow {
 agent refactorer {
     input: String,
     output: Patch,
-    budget: 4,
+    budget: 4,          // model calls, enforced by the VM
+    tools: 30,          // the agent's own tools, enforced by the broker
+    deadline: 600000,   // ten minutes per answer, enforced by the broker
     memory: task,
 }
 

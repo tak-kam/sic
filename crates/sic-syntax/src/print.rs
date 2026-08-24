@@ -110,6 +110,12 @@ impl Printer {
         if let Some(budget) = a.budget {
             parts.push(format!("(budget {budget})"));
         }
+        if let Some(tools) = a.tools {
+            parts.push(format!("(tools {tools})"));
+        }
+        if let Some(ms) = a.deadline_ms {
+            parts.push(format!("(deadline {ms})"));
+        }
         if a.memory {
             parts.push("(memory task)".to_string());
         }

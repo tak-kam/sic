@@ -102,6 +102,8 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
                         timeout_ms: policy.timeout_ms.unwrap_or(0),
                         budget: policy.budget.unwrap_or(0),
                         conversation: policy.conversation.unwrap_or(0),
+                        tools: policy.tools.unwrap_or(0),
+                        deadline_ms: policy.deadline_ms.unwrap_or(0),
                     });
                 }
                 program.funcs.push(FuncDef {

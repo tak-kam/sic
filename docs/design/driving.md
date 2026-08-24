@@ -184,16 +184,19 @@ reason.
 
 ### Deadlines
 
-Two, both constants, because the language has nowhere to write one: `retry` and
-`timeout` attach to a capability call, and an agent call is a function call.
-
 | | |
 |---|---|
-| the agent becomes ready | 60 s |
-| the whole answer | 30 min |
+| the agent becomes ready | 60 s, a constant |
+| the whole answer | `deadline` on the agent declaration, or 30 min |
 
 Passing the deadline fails the call, which is what `retry` counts. A hung agent
 must not become a hung run with no explanation.
+
+The second one was a constant too, for the reason the first still is: `retry`
+and `timeout` attach to a capability call, and an agent call is a function call,
+so the language had nowhere to write one. `docs/design/authority.md` §8 gave it
+somewhere - the declaration where `budget` already lives - and 30 minutes is now
+what a program gets for not asking rather than what every program gets.
 
 ---
 
@@ -472,9 +475,11 @@ It is also the reason the broker tells the driver whether a shape was asked for
 - **Agent-to-agent protocols.** In this model the orchestrator holds the values,
   so passing one agent's output to another is a variable, and where it came from
   is already in its type.
-- **A deadline in the source** (§4). It needs somewhere to write one, and the
-  agent declaration is where it goes: `docs/design/authority.md` §8 puts it
-  there, beside the two other numbers that bound an agent with tools.
+- **A duration literal.** `deadline: 1800000` is milliseconds because `timeout`
+  is, and one unit for every duration in the language is worth more than a
+  readable number - two units in one file is a bug nobody sees. `30m` is what
+  would fix the reading, and it belongs to the lexer and to `timeout` as much as
+  to this.
 
 ---
 

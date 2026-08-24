@@ -155,6 +155,13 @@ pub(crate) struct PendingCap {
     /// travels in the pending call because a retry re-issues the request, and
     /// a retry that started a new conversation would not be one.
     pub conversation: u32,
+    /// The site's tool allowance and answer deadline, from the policy table.
+    /// They travel in the pending call because a retry re-issues the request.
+    pub tools: u32,
+    pub deadline_ms: u32,
+    /// Which call site this is, so that what the agent used can be counted
+    /// against the allowance of the site that allowed it.
+    pub pc: u32,
     pub span: SpanId,
     pub parent: Option<SpanId>,
 }
@@ -226,6 +233,10 @@ pub struct Vm<'a> {
     /// the policy table. Keyed by pc, because that is what a budget is attached
     /// to; the VM does not know that some of those sites are agents.
     spent: std::collections::HashMap<u32, u32>,
+    /// How many of the agent's own tools each call site has used. Counted here
+    /// rather than in the broker for the same reason the budget is: it has to
+    /// survive a checkpoint, or resuming would hand the run a fresh allowance.
+    used_tools: std::collections::HashMap<u32, u32>,
 }
 
 impl std::fmt::Debug for Vm<'_> {
@@ -265,6 +276,7 @@ impl<'a> Vm<'a> {
             root_span: SpanId(0),
             fuel,
             spent: std::collections::HashMap::new(),
+            used_tools: std::collections::HashMap::new(),
         }
     }
 
@@ -362,6 +374,14 @@ impl<'a> Vm<'a> {
             return;
         };
         let task = TaskId(index as u64);
+        // Charged against the site that allowed them, and kept here rather than
+        // in the broker so that resuming does not hand the run a fresh
+        // allowance. Every action counts, refused ones included: a refusal is
+        // an attempt, and a loop of refused attempts is the runaway a tool
+        // allowance is for.
+        if pending.tools > 0 {
+            *self.used_tools.entry(pending.pc).or_insert(0) += actions.len() as u32;
+        }
         for action in actions {
             let span = self.journal.new_span();
             match action {
@@ -547,6 +567,12 @@ impl<'a> Vm<'a> {
             root_span: self.root_span.0,
             fuel: self.fuel,
             cursor: self.cursor as u32,
+            used_tools: {
+                let mut used: Vec<(u32, u32)> =
+                    self.used_tools.iter().map(|(k, v)| (*k, *v)).collect();
+                used.sort_unstable();
+                used
+            },
             spent: {
                 let mut spent: Vec<(u32, u32)> = self.spent.iter().map(|(k, v)| (*k, *v)).collect();
                 // Sorted so that two checkpoints of the same run are the same
@@ -635,6 +661,7 @@ impl<'a> Vm<'a> {
             root_span: SpanId(saved.root_span),
             fuel: saved.fuel,
             spent: saved.spent.iter().copied().collect(),
+            used_tools: saved.used_tools.iter().copied().collect(),
         };
         vm.journal
             .emit(vm.root_span, None, EventKind::RunResumed { cap });
@@ -687,6 +714,8 @@ impl<'a> Vm<'a> {
                     attempt: pending.attempt,
                     timeout_ms: pending.timeout_ms,
                     conversation: pending.conversation,
+                    tools_left: tools_left(&self.used_tools, pending),
+                    answer_ms: pending.deadline_ms,
                 };
                 self.answering = Some(index);
                 return Status::Suspended(request);
@@ -1471,6 +1500,9 @@ impl<'a> Vm<'a> {
             attempts: policy.map(|p| p.attempts).unwrap_or(1).max(1),
             timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
             conversation: policy.map(|p| p.conversation).unwrap_or(0),
+            tools: policy.map(|p| p.tools).unwrap_or(0),
+            deadline_ms: policy.map(|p| p.deadline_ms).unwrap_or(0),
+            pc,
             span,
             parent: frame_span,
         });
@@ -1596,6 +1628,9 @@ fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
                     conversation: pending.conversation,
+                    tools: pending.tools,
+                    deadline_ms: pending.deadline_ms,
+                    pc: pending.pc,
                     span: pending.span.0,
                     parent: pending.parent.map(|s| s.0),
                 })
@@ -1655,6 +1690,9 @@ fn restore_task(saved: &checkpoint::TaskSnapshot) -> Task {
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
                     conversation: pending.conversation,
+                    tools: pending.tools,
+                    deadline_ms: pending.deadline_ms,
+                    pc: pending.pc,
                     span: SpanId(pending.span),
                     parent: pending.parent.map(SpanId),
                 })
@@ -1680,3 +1718,16 @@ fn restore_task(saved: &checkpoint::TaskSnapshot) -> Task {
 
 #[cfg(test)]
 mod tests;
+
+/// What is left of a call site's tool allowance.
+///
+/// Zero means no limit, here as everywhere else in the policy table, so a site
+/// that has used its whole allowance is sent 1 rather than 0 - and the broker
+/// refusing the next one is what the bound does.
+fn tools_left(used: &std::collections::HashMap<u32, u32>, pending: &PendingCap) -> u32 {
+    if pending.tools == 0 {
+        return 0;
+    }
+    let spent = used.get(&pending.pc).copied().unwrap_or(0);
+    pending.tools.saturating_sub(spent).max(1)
+}

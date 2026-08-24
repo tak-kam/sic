@@ -245,6 +245,11 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        // Neither applies to a call the agent makes: the allowance is what let
+        // this tool exist at all, and the deadline bounds the answer this call
+        // is part of rather than the call.
+        tools_left: 0,
+        answer_ms: 0,
     };
     match ask(socket, &request).map(|bytes| sic_broker::route::answer(&bytes)) {
         Ok(Ok(CapOutcome::Value(value))) => result(

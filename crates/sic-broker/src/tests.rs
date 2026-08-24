@@ -36,6 +36,8 @@ fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools_left: 0,
+        answer_ms: 0,
     }
 }
 
@@ -122,6 +124,8 @@ fn refuses_arguments_of_the_wrong_shape() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools_left: 0,
+        answer_ms: 0,
     };
     assert!(
         broker
@@ -139,6 +143,8 @@ fn refuses_arguments_of_the_wrong_shape() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools_left: 0,
+        answer_ms: 0,
     };
     assert!(
         broker
@@ -1095,6 +1101,8 @@ fn a_routed_call_is_the_same_call() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools_left: 0,
+        answer_ms: 0,
     };
 
     // The caller is on the other side of the socket, so it has to be answered
@@ -1154,6 +1162,8 @@ fn a_routed_call_is_checked_against_the_pin() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools_left: 0,
+        answer_ms: 0,
     };
     let error = crate::perform(&manifest, &request).expect_err("the pin does not match");
     assert!(error.message.contains("but the grant pins"), "{error}");
@@ -1247,4 +1257,35 @@ fn no_grant_names_a_shell() {
             other => panic!("the agent's own tool is not a capability: {other:?}"),
         }
     }
+}
+
+/// A tool allowance is a bound, not a note: the call that used it up is refused
+/// the next one, and told which of the two reasons it was.
+#[test]
+fn an_answer_that_used_its_allowance_gets_no_more_tools() {
+    let socket = std::path::PathBuf::from(temp_path("allowance.sock"));
+    let manifest = vec![grant("fs.read", CapKind::Read, "./docs")];
+    let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
+    route.allow(2);
+
+    let mut reasons = Vec::new();
+    for _ in 0..3 {
+        let asking = std::thread::spawn({
+            let socket = socket.clone();
+            move || crate::route::may_use(&socket, "Read", "{}")
+        });
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !asking.is_finished() && std::time::Instant::now() < deadline {
+            route.serve_pending();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        reasons.push(asking.join().expect("finished").expect("answered"));
+    }
+
+    assert_eq!(reasons[0], None);
+    assert_eq!(reasons[1], None);
+    let spent = reasons[2].as_deref().expect("the third is refused");
+    assert!(spent.contains("every tool it was allowed"), "{spent}");
+    // And not for the other reason: which one it was is the point.
+    assert!(!spent.contains("shell"), "{spent}");
 }

@@ -20,7 +20,9 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 3 for conversations: a policy entry now says which conversation
 /// a call belongs to, and a reader that stopped after the budget would take the
 /// next entry's `pc` for it.
-pub const VERSION_MINOR: u16 = 4;
+/// Bumped from 4 for the two bounds an agent with tools needs, in the same
+/// entry and for the same reason.
+pub const VERSION_MINOR: u16 = 5;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -130,6 +132,8 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(policy.timeout_ms);
         w.u32(policy.budget);
         w.u32(policy.conversation);
+        w.u32(policy.tools);
+        w.u32(policy.deadline_ms);
     }
     sections.push((section::POLICIES, w.finish()));
 
@@ -368,7 +372,7 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 
 fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
     let mut r = Reader::new(body);
-    let n = r.count(20)?;
+    let n = r.count(28)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(PolicyEntry {
@@ -377,6 +381,8 @@ fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
             timeout_ms: r.u32()?,
             budget: r.u32()?,
             conversation: r.u32()?,
+            tools: r.u32()?,
+            deadline_ms: r.u32()?,
         });
     }
     r.expect_end("policies")?;
@@ -443,6 +449,8 @@ mod tests {
                 timeout_ms: 500,
                 budget: 8,
                 conversation: 0,
+                tools: 0,
+                deadline_ms: 0,
             }],
             debug: DebugInfo {
                 sources: vec!["main.sic".into()],
@@ -545,6 +553,8 @@ mod tests {
                     timeout_ms: 0,
                     budget: 0,
                     conversation: 0,
+                    tools: 0,
+                    deadline_ms: 0,
                 },
                 PolicyEntry {
                     pc: 1,
@@ -552,6 +562,8 @@ mod tests {
                     timeout_ms: 30_000,
                     budget: 4,
                     conversation: 9,
+                    tools: 200,
+                    deadline_ms: 1_800_000,
                 },
             ],
             debug: DebugInfo {

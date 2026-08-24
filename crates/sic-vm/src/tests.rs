@@ -828,6 +828,9 @@ fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
         attempts: 1,
         timeout_ms: 0,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+        pc: 0,
         span: 0,
         parent: None,
     });
@@ -860,6 +863,7 @@ fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
         lists: Vec::new(),
         objects: Vec::new(),
         spent: Vec::new(),
+        used_tools: Vec::new(),
     };
     // The honest one decodes.
     assert!(Checkpoint::decode(&base.encode()).is_ok());
@@ -922,6 +926,9 @@ fn a_checkpoint_frame_must_point_into_this_program() {
                 attempts: 1,
                 timeout_ms: 0,
                 conversation: 0,
+                tools: 0,
+                deadline_ms: 0,
+                pc: 0,
                 span: 0,
                 parent: None,
             }),
@@ -943,6 +950,7 @@ fn a_checkpoint_frame_must_point_into_this_program() {
         lists: Vec::new(),
         objects: Vec::new(),
         spent: Vec::new(),
+        used_tools: Vec::new(),
     };
     let err = Vm::restore(
         &p,
@@ -1187,6 +1195,8 @@ fn a_failed_call_is_retried_up_to_the_policy() {
         timeout_ms: 0,
         budget: 0,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
 
     let sink = SharedSink::default();
@@ -1231,6 +1241,8 @@ fn the_timeout_travels_with_the_request() {
         timeout_ms: 250,
         budget: 0,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
     let Status::Suspended(request) = vm.run(0, &[]) else {
@@ -1495,6 +1507,8 @@ fn a_call_site_runs_out_of_budget() {
         timeout_ms: 0,
         budget: 1,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
 
     let sink = SharedSink::default();
@@ -1523,6 +1537,8 @@ fn exceeding_a_budget_fails_the_run() {
         timeout_ms: 0,
         budget: 1,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
 
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
@@ -1549,6 +1565,8 @@ fn a_budget_survives_a_checkpoint() {
         timeout_ms: 0,
         budget: 3,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
 
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
@@ -1577,6 +1595,8 @@ fn a_refused_call_is_not_billed_for() {
         timeout_ms: 0,
         budget: 1,
         conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
     });
 
     let sink = SharedSink::default();

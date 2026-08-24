@@ -531,6 +531,8 @@ fn llm_driven(
             task: request.task,
             conversation: request.conversation,
         },
+        tools: request.tools_left,
+        deadline_ms: request.answer_ms,
         json,
     })?;
     Ok(CapOutcome::Value(CapValue::Str(answer)))

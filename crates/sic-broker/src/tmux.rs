@@ -54,7 +54,11 @@ const ROWS: &str = "50";
 
 /// How long the agent has to print anything at all before it is called broken.
 const READY_DEADLINE: Duration = Duration::from_secs(60);
-/// How long a whole answer may take.
+/// How long a whole answer may take when the program did not say.
+///
+/// A number nobody chose for their program, which is why `deadline` exists on
+/// an agent declaration - see `docs/design/authority.md` §8. This is what is
+/// left: the answer for a program that did not ask.
 const ANSWER_DEADLINE: Duration = Duration::from_secs(30 * 60);
 /// How often the pane is read. A person is not watching this number; an agent
 /// takes seconds at best.
@@ -405,6 +409,14 @@ impl TmuxDriver {
     /// The whole of one call, once the pane exists.
     fn converse(&mut self, target: &str, ask: Ask<'_>, fresh: bool) -> Result<String, CapError> {
         let id = new_marker_id();
+        // What this answer is allowed, before anything is asked.
+        if let Some(route) = self.route.as_mut() {
+            route.allow(ask.tools);
+        }
+        let allowed = match ask.deadline_ms {
+            0 => ANSWER_DEADLINE,
+            ms => Duration::from_millis(ms as u64),
+        };
         // A pane that has answered before is ready by definition; only one that
         // has just been started has to be waited for.
         if fresh {
@@ -418,16 +430,16 @@ impl TmuxDriver {
         self.tmux(&["paste-buffer", "-p", "-d", "-b", &buffer, "-t", target])?;
         self.tmux(&["send-keys", "-t", target, "Enter"])?;
 
-        let deadline = Instant::now() + ANSWER_DEADLINE;
+        let deadline = Instant::now() + allowed;
         loop {
             if let Some(answer) = answer_from(&self.screen(target)?, &id, ask.json) {
                 return Ok(answer);
             }
             if Instant::now() >= deadline {
                 return Err(CapError::new(format!(
-                    "`{}` did not finish an answer within {} minutes",
+                    "`{}` did not finish an answer within {}ms",
                     self.name,
-                    ANSWER_DEADLINE.as_secs() / 60
+                    allowed.as_millis()
                 )));
             }
             self.wait_serving();

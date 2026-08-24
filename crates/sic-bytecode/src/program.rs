@@ -48,6 +48,13 @@ pub struct PolicyEntry {
     /// time. The broker keeps one per conversation and task, which is what
     /// `memory: task` on an agent declaration asks for.
     pub conversation: u32,
+    /// How many of the agent's own tools this site allows in a whole run, or 0
+    /// for no limit. Enforced by the broker, which is the only side that sees
+    /// them.
+    pub tools: u32,
+    /// How long one answer may take, in milliseconds, or 0 for no deadline.
+    /// Enforced by the broker, which is the only side with a clock.
+    pub deadline_ms: u32,
 }
 
 impl Program {

@@ -438,6 +438,8 @@ impl Parser {
             output: None,
             budget: None,
             memory: false,
+            tools: None,
+            deadline_ms: None,
             span: Span::empty(start),
         };
         if self.expect(&TokenKind::LBrace, "to open an agent body") {
@@ -457,35 +459,61 @@ impl Parser {
         decl
     }
 
+    /// One of the agent settings that is a positive count.
+    ///
+    /// They share a diagnostic because they share a mistake: a number that is
+    /// missing, negative, or too large to be a count.
+    fn parse_agent_count(
+        &mut self,
+        name: &str,
+        set: impl Fn(&mut AgentDecl, u32),
+        decl: &mut AgentDecl,
+    ) {
+        match self.peek().clone() {
+            TokenKind::Int(value) => {
+                let span = self.bump().span;
+                match u32::try_from(value) {
+                    Ok(v) if v > 0 => set(decl, v),
+                    _ => self.error(
+                        "E0208",
+                        format!("`{name}` needs a positive number"),
+                        span,
+                        "must fit in a 32-bit count",
+                    ),
+                }
+            }
+            other => {
+                let span = self.span();
+                self.error(
+                    "E0208",
+                    format!("`{name}` needs a number"),
+                    span,
+                    format!("found {}", other.describe()),
+                );
+            }
+        }
+    }
+
     fn parse_agent_field(&mut self, decl: &mut AgentDecl) {
         let key = self.expect_ident("an agent setting");
         self.expect(&TokenKind::Colon, "after an agent setting");
         match key.name.as_str() {
             "input" => decl.input = Some(self.parse_type()),
             "output" => decl.output = Some(self.parse_type()),
-            "budget" => match self.peek().clone() {
-                TokenKind::Int(value) => {
-                    let span = self.bump().span;
-                    match u32::try_from(value) {
-                        Ok(v) if v > 0 => decl.budget = Some(v),
-                        _ => self.error(
-                            "E0208",
-                            "`budget` needs a positive number of calls",
-                            span,
-                            "must fit in a 32-bit count",
-                        ),
-                    }
-                }
-                other => {
-                    let span = self.span();
-                    self.error(
-                        "E0208",
-                        "`budget` needs a number",
-                        span,
-                        format!("found {}", other.describe()),
-                    );
-                }
-            },
+            "budget" => {
+                self.parse_agent_count(key.name.as_str(), |decl, v| decl.budget = Some(v), decl)
+            }
+            // The two bounds an agent with tools needs, and the two numbers
+            // that were compiled into the driver before this: see
+            // `docs/design/authority.md` §8.
+            "tools" => {
+                self.parse_agent_count(key.name.as_str(), |decl, v| decl.tools = Some(v), decl)
+            }
+            "deadline" => self.parse_agent_count(
+                key.name.as_str(),
+                |decl, v| decl.deadline_ms = Some(v),
+                decl,
+            ),
             // `task` is the only scope there is. A conversation that lasted a
             // whole run would be one a program that never spawns already has,
             // and one that lasted a call is what not writing this means.
@@ -509,7 +537,7 @@ impl Parser {
                     "E0209",
                     format!("`{other}` is not an agent setting"),
                     key.span,
-                    "expected `input`, `output`, `budget` or `memory`",
+                    "expected `input`, `output`, `budget`, `tools`, `deadline` or `memory`",
                 );
                 // Skip whatever it was, so one unknown setting does not
                 // derail the rest of the body.

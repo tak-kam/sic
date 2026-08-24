@@ -316,11 +316,18 @@ in one sentence, so there are three fields and each has one:
 agent refactorer {
     input: String,
     output: Patch,
-    budget: 20,        // model calls        - the VM, against a pc
-    tools: 200,        // tool uses          - the broker, through the hook
-    deadline: 30m,     // wall clock         - the broker, which has the clock
+    budget: 20,             // model calls  - the VM, against a pc
+    tools: 200,             // tool uses    - the broker, through the hook
+    deadline: 1800000,      // wall clock   - the broker, which has the clock
 }
 ```
+
+`deadline` is milliseconds, which reads badly at this magnitude and is still the
+right answer: `timeout N` is milliseconds, and one unit for every duration in the
+language is worth more than a readable number. Two units in one file is a bug
+nobody sees. A duration literal - `30m` - is what would fix the reading, and it
+belongs to the lexer and to `timeout` as much as to this, so it is not smuggled
+in here.
 
 `deadline` also replaces two numbers nobody declared. `driving.md` §4 hard-codes
 60 seconds for the agent to become ready and 30 minutes for a whole answer,
@@ -335,6 +342,7 @@ somewhere, and it is the declaration the budget is already written in.
 | `budget` | yes | already does; otherwise resuming hands the run a fresh allowance |
 | `tools` | yes | same argument, same reason |
 | `deadline` | **no** | it bounds one answer, not the run |
+| the site it belongs to | yes | a count charged to the wrong site is not a bound |
 
 The last row is the one with a real answer rather than a preference. A deadline
 that travelled would mean a run that waited two days for a person had spent its

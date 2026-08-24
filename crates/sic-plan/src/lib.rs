@@ -85,6 +85,12 @@ pub enum Action {
         /// plan that did not say so would describe calls that look independent
         /// and are not.
         remembers: bool,
+        /// How many of the agent's own tools this site allows in a whole run,
+        /// and how long one answer may take. A reader deciding whether to run
+        /// this needs both: the first is what stops a loop, the second is what
+        /// stops a wait.
+        tools: Option<u32>,
+        deadline_ms: Option<u32>,
     },
     /// A document checked against a type.
     Verify {
@@ -231,6 +237,8 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         attempts,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
                         remembers: policy.map(|p| p.conversation != 0).unwrap_or(false),
+                        tools: policy.map(|p| p.tools).filter(|t| *t > 0),
+                        deadline_ms: policy.map(|p| p.deadline_ms).filter(|d| *d > 0),
                     }
                 }
                 Op::FromJson => Action::Verify {
@@ -314,6 +322,8 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     timeout_ms,
                     alternatives,
                     remembers,
+                    tools,
+                    deadline_ms,
                     ..
                 } => {
                     out.push_str(&format!("{name:<16}{constraint:?}"));
@@ -331,6 +341,12 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     }
                     if *timeout_ms > 0 {
                         out.push_str(&format!("  within {timeout_ms}ms"));
+                    }
+                    if let Some(tools) = tools {
+                        out.push_str(&format!("  at most {tools} tool use(s)"));
+                    }
+                    if let Some(ms) = deadline_ms {
+                        out.push_str(&format!("  {ms}ms per answer"));
                     }
                 }
                 Action::Verify { type_name } => out.push_str(type_name),

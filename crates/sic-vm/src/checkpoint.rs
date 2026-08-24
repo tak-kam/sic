@@ -29,7 +29,9 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 2 for argument vectors, which a suspended call may carry.
 /// Bumped from 3 for conversations: a suspended call says which one it belongs
 /// to, and a reader that stopped after the timeout would take that for a span.
-pub const VERSION_MINOR: u16 = 4;
+/// Bumped from 4 for an agent's tool allowance and answer deadline, and for the
+/// call site they belong to.
+pub const VERSION_MINOR: u16 = 5;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -66,6 +68,10 @@ pub struct Checkpoint {
     /// How many times each capability call site has run, for the budgets in the
     /// policy table.
     pub spent: Vec<(u32, u32)>,
+    /// How many of the agent's own tools each call site has used. Travels for
+    /// the same reason `spent` does: a resumed run must not get a fresh
+    /// allowance.
+    pub used_tools: Vec<(u32, u32)>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,6 +116,12 @@ pub struct Pending {
     /// call would otherwise start a new one, which is the opposite of what
     /// remembering means.
     pub conversation: u32,
+    /// The site's tool allowance, its answer deadline, and which site it is -
+    /// so that what the agent used is charged to the site that allowed it after
+    /// a resume as well as before one.
+    pub tools: u32,
+    pub deadline_ms: u32,
+    pub pc: u32,
     pub span: u64,
     pub parent: Option<u64>,
 }
@@ -177,6 +189,11 @@ impl Checkpoint {
         }
         write_value_lists(&mut w, &self.lists);
         write_value_lists(&mut w, &self.objects);
+        w.u32(self.used_tools.len() as u32);
+        for (pc, count) in &self.used_tools {
+            w.u32(*pc);
+            w.u32(*count);
+        }
         w.u32(self.spent.len() as u32);
         for (pc, count) in &self.spent {
             w.u32(*pc);
@@ -257,6 +274,11 @@ impl Checkpoint {
         }
         let lists = read_value_lists(&mut r)?;
         let objects = read_value_lists(&mut r)?;
+        let used_count = r.count(8)?;
+        let mut used_tools = Vec::with_capacity(used_count);
+        for _ in 0..used_count {
+            used_tools.push((r.u32()?, r.u32()?));
+        }
         let spent_count = r.count(8)?;
         let mut spent = Vec::with_capacity(spent_count);
         for _ in 0..spent_count {
@@ -281,6 +303,7 @@ impl Checkpoint {
             lists,
             objects,
             spent,
+            used_tools,
         };
         checkpoint.check_consistency()?;
         Ok(checkpoint)
@@ -467,6 +490,9 @@ fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {
             w.u32(pending.attempts);
             w.u32(pending.timeout_ms);
             w.u32(pending.conversation);
+            w.u32(pending.tools);
+            w.u32(pending.deadline_ms);
+            w.u32(pending.pc);
             w.u64(pending.span);
             write_option_u64(w, pending.parent);
         }
@@ -510,6 +536,9 @@ fn read_state(r: &mut Reader<'_>) -> Result<TaskStateSnapshot> {
                 attempts: r.u32()?,
                 timeout_ms: r.u32()?,
                 conversation: r.u32()?,
+                tools: r.u32()?,
+                deadline_ms: r.u32()?,
+                pc: r.u32()?,
                 span: r.u64()?,
                 parent: read_option_u64(r)?,
             })

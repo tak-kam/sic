@@ -73,6 +73,11 @@ pub struct AgentInfo {
     /// the agent and the task, and the task is the only half the broker can
     /// see for itself.
     pub conversation: Option<u32>,
+    /// How many tools the agent may use at this call site in a whole run, and
+    /// how long it has to produce one answer. Both are the broker's to enforce:
+    /// only it sees the agent's tools, and only it has a clock.
+    pub tools: Option<u32>,
+    pub deadline_ms: Option<u32>,
     /// The manifest entry for `llm.invoke`.
     pub cap: CapId,
 }
@@ -569,6 +574,8 @@ impl Checker {
                 output,
                 budget: decl.budget,
                 conversation,
+                tools: decl.tools,
+                deadline_ms: decl.deadline_ms,
                 cap,
             });
         }

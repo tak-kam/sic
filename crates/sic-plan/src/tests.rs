@@ -67,6 +67,8 @@ fn a_capability_call_is_listed_with_what_bounds_it() {
             timeout_ms: 0,
             alternatives: None,
             remembers: false,
+            tools: None,
+            deadline_ms: None,
         }
     );
     // The debug section puts it back on a line of source.
@@ -88,6 +90,8 @@ fn only_a_budget_bounds_a_site_over_a_run() {
             timeout_ms: 250,
             budget: 0,
             conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
         })),
         digest(),
     );
@@ -105,6 +109,8 @@ fn only_a_budget_bounds_a_site_over_a_run() {
             timeout_ms: 0,
             budget: 2,
             conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
         })),
         digest(),
     );

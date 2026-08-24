@@ -94,6 +94,10 @@ pub struct Route {
     path: PathBuf,
     manifest: Vec<CapGrant>,
     used: Vec<AgentAction>,
+    /// How many tool uses are left for this answer, or `None` for no limit.
+    /// The allowance is a number the program declared; counting it here is what
+    /// makes it a bound rather than a note.
+    allowance: Option<u32>,
 }
 
 impl Route {
@@ -109,11 +113,20 @@ impl Route {
             path,
             manifest,
             used: Vec::new(),
+            allowance: None,
         })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Sets what this answer is allowed, before it starts.
+    pub fn allow(&mut self, tools: u32) {
+        self.allowance = match tools {
+            0 => None,
+            n => Some(n),
+        };
     }
 
     /// Answers whatever is waiting, and returns.
@@ -201,13 +214,25 @@ impl Route {
             // failing closed is what happens next.
             return;
         };
-        let refused = matches!(tool.as_str(), "Bash" | "PowerShell");
+        // Two reasons to refuse, and they are different things to be told.
+        let spent = self.allowance == Some(0);
+        let refused = spent || matches!(tool.as_str(), "Bash" | "PowerShell");
+        if let Some(left) = self.allowance.as_mut() {
+            *left = left.saturating_sub(1);
+        }
+        let why = match spent {
+            true => "this call has used every tool it was allowed",
+            false => {
+                "no grant names a shell: a command string is not a binary, and \
+                      `process.exec` is offered to you as a tool instead"
+            }
+        };
         self.used.push(AgentAction::Tool {
             tool: tool.clone(),
             input: Digest::of(input.as_bytes()),
             allowed: !refused,
             reason: match refused {
-                true => "no grant names a shell".to_string(),
+                true => why.to_string(),
                 false => String::new(),
             },
         });
@@ -215,10 +240,7 @@ impl Route {
         let mut w = sic_core::Writer::new();
         w.bool(refused);
         w.str(match refused {
-            true => {
-                "no grant names a shell: a command string is not a binary, and `process.exec` \
-                     is offered to you as a tool instead"
-            }
+            true => why,
             false => "",
         });
         let _ = write_frame(stream, &w.finish());

@@ -129,6 +129,17 @@ pub struct CapRequest {
     /// must not end up in the same one, and the same agent in two tasks must
     /// not either.
     pub conversation: u32,
+    /// How many of the agent's own tools may still be used at this call site,
+    /// or 0 for no limit. The count lives on the VM's side because it has to
+    /// survive a checkpoint; what is sent is what is left.
+    pub tools_left: u32,
+    /// How long the broker may take to produce this answer, in milliseconds, or
+    /// 0 for no deadline.
+    ///
+    /// Not `timeout_ms`: that one is refused by every capability that cannot
+    /// honour it, and this one bounds an answer rather than a call. Keeping them
+    /// apart is what stops a program from appearing to have set the other.
+    pub answer_ms: u32,
 }
 
 /// What came back from a capability call.
@@ -286,6 +297,8 @@ impl CapRequest {
         w.u32(self.attempt);
         w.u32(self.timeout_ms);
         w.u32(self.conversation);
+        w.u32(self.tools_left);
+        w.u32(self.answer_ms);
     }
 
     pub fn read(r: &mut Reader<'_>) -> Result<CapRequest> {
@@ -304,6 +317,8 @@ impl CapRequest {
             attempt: r.u32()?,
             timeout_ms: r.u32()?,
             conversation: r.u32()?,
+            tools_left: r.u32()?,
+            answer_ms: r.u32()?,
         })
     }
 
@@ -393,6 +408,8 @@ mod tests {
             attempt: 1,
             timeout_ms: 500,
             conversation: 7,
+            tools_left: 12,
+            answer_ms: 900,
         }
     }
 

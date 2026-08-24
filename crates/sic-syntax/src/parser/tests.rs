@@ -533,3 +533,26 @@ fn return_id(f: &crate::ast::FnDecl) -> sic_core::NodeId {
         other => panic!("not a return: {other:?}"),
     }
 }
+
+/// The three bounds an agent with tools needs, and each is a number: model
+/// calls, tool uses, and milliseconds. `deadline` shares its unit with
+/// `timeout`, because two units for duration in one language is a bug nobody
+/// sees.
+#[test]
+fn an_agent_may_bound_its_tools_and_its_time() {
+    let dump = ok(concat!(
+        "agent r { input: String, output: P, budget: 2, tools: 30, deadline: 600000 }\n",
+        "fn main() { }",
+    ));
+    assert!(dump.contains("(budget 2)"), "{dump}");
+    assert!(dump.contains("(tools 30)"), "{dump}");
+    assert!(dump.contains("(deadline 600000)"), "{dump}");
+
+    for bad in [
+        "agent r { tools: 0 }\nfn main() { }",
+        "agent r { tools: -1 }\nfn main() { }",
+        "agent r { deadline: task }\nfn main() { }",
+    ] {
+        assert!(codes(bad).contains(&"E0208"), "{bad}");
+    }
+}
