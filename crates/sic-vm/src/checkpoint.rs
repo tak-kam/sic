@@ -461,7 +461,7 @@ fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {
             w.str(&pending.cap);
             w.u32(pending.args.len() as u32);
             for arg in &pending.args {
-                write_cap_value(w, arg);
+                arg.write(w);
             }
             w.u32(pending.attempt);
             w.u32(pending.attempts);
@@ -499,7 +499,7 @@ fn read_state(r: &mut Reader<'_>) -> Result<TaskStateSnapshot> {
             let arg_count = r.count(1)?;
             let mut args = Vec::with_capacity(arg_count);
             for _ in 0..arg_count {
-                args.push(read_cap_value(r)?);
+                args.push(CapValue::read(r)?);
             }
             TaskStateSnapshot::WaitingCap(Pending {
                 reg,
@@ -597,58 +597,6 @@ fn read_value(r: &mut Reader<'_>) -> Result<Value> {
     })
 }
 
-fn write_cap_value(w: &mut Writer, value: &CapValue) {
-    match value {
-        CapValue::Unit => w.u8(0),
-        CapValue::Bool(v) => {
-            w.u8(1);
-            w.bool(*v);
-        }
-        CapValue::I64(v) => {
-            w.u8(2);
-            w.i64(*v);
-        }
-        CapValue::F64(v) => {
-            w.u8(3);
-            w.f64(*v);
-        }
-        CapValue::List(items) => {
-            w.u8(5);
-            w.u32(items.len() as u32);
-            for item in items {
-                w.str(item);
-            }
-        }
-        CapValue::Str(s) => {
-            w.u8(4);
-            w.str(s);
-        }
-    }
-}
-
-fn read_cap_value(r: &mut Reader<'_>) -> Result<CapValue> {
-    Ok(match r.u8()? {
-        0 => CapValue::Unit,
-        1 => CapValue::Bool(r.bool()?),
-        2 => CapValue::I64(r.i64()?),
-        3 => CapValue::F64(r.f64()?),
-        4 => CapValue::Str(r.str()?),
-        5 => {
-            let n = r.count(1)?;
-            let mut items = Vec::with_capacity(n);
-            for _ in 0..n {
-                items.push(r.str()?);
-            }
-            CapValue::List(items)
-        }
-        other => {
-            return Err(CheckpointError::new(format!(
-                "unknown capability value tag {other} in a checkpoint"
-            )));
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,10 +612,10 @@ mod tests {
             CapValue::List(vec![String::new(), "  ".into(), "\u{3053}".into()]),
         ] {
             let mut w = Writer::new();
-            write_cap_value(&mut w, &value);
+            value.write(&mut w);
             let bytes = w.finish();
             let mut r = Reader::new(&bytes);
-            assert_eq!(read_cap_value(&mut r).unwrap(), value);
+            assert_eq!(CapValue::read(&mut r).unwrap(), value);
         }
     }
 }
