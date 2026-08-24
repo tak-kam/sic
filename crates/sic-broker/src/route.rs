@@ -94,6 +94,9 @@ pub struct Route {
     path: PathBuf,
     manifest: Vec<CapGrant>,
     used: Vec<AgentAction>,
+    /// Every tool name this manifest accounts for. Anything else is refused:
+    /// see `Route::serve_tool`.
+    tools: Vec<String>,
     /// How many tool uses are left for this answer, or `None` for no limit.
     /// The allowance is a number the program declared; counting it here is what
     /// makes it a bound rather than a note.
@@ -112,6 +115,7 @@ impl Route {
             listener,
             path,
             manifest,
+            tools: Vec::new(),
             used: Vec::new(),
             allowance: None,
         })
@@ -119,6 +123,11 @@ impl Route {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// Names the tools the manifest accounts for. Everything else is refused.
+    pub fn names(&mut self, tools: Vec<String>) {
+        self.tools = tools;
     }
 
     /// Sets what this answer is allowed, before it starts.
@@ -203,10 +212,13 @@ impl Route {
     /// to a directory is not a bound on reading. A hook is: it runs before the
     /// rules and can refuse what they would have allowed.
     ///
-    /// So a shell is refused, and the reason is that no grant can name one.
-    /// `process.exec` grants a binary, at an absolute path, sometimes pinned by
-    /// digest - and the agent reaches that through this same socket, where it
-    /// is checked. A command string is not that and cannot be made into it.
+    /// So the surface is decided here, by name, and everything the manifest
+    /// does not account for is refused. A shell gets its own sentence because
+    /// it is what an agent reaches for first and there is somewhere else for it
+    /// to go: `process.exec` grants a binary, at an absolute path, sometimes
+    /// pinned by digest, and the agent reaches that through this same socket
+    /// where it is checked. A command string is not that and cannot be made
+    /// into it.
     fn serve_tool(&mut self, stream: &mut UnixStream, body: &[u8]) {
         let mut r = sic_core::Reader::new(body);
         let (Ok(tool), Ok(input)) = (r.str(), r.str()) else {
@@ -214,25 +226,37 @@ impl Route {
             // failing closed is what happens next.
             return;
         };
-        // Two reasons to refuse, and they are different things to be told.
+        // Three reasons to refuse, and they are three different things to be
+        // told. Denying by name decides the whole tool surface: the rules the
+        // agent was started with are an allowlist, but some tools run whatever
+        // the rules say - the read-only shell commands, and at least one that
+        // was never named and ran anyway. A hook runs before any rule and can
+        // refuse what they would have allowed, so the surface is decided here
+        // and the rules are left to scope a path.
         let spent = self.allowance == Some(0);
-        let refused = spent || matches!(tool.as_str(), "Bash" | "PowerShell");
+        let unnamed = !self.tools.iter().any(|named| named == &tool);
+        let refused = spent || unnamed;
         if let Some(left) = self.allowance.as_mut() {
             *left = left.saturating_sub(1);
         }
-        let why = match spent {
-            true => "this call has used every tool it was allowed",
-            false => {
-                "no grant names a shell: a command string is not a binary, and \
-                      `process.exec` is offered to you as a tool instead"
-            }
+        let why = if spent {
+            "this call has used every tool it was allowed".to_string()
+        } else if matches!(tool.as_str(), "Bash" | "PowerShell") {
+            // The one worth its own sentence: it is the tool an agent reaches
+            // for first, and there is somewhere else for it to go.
+            "no grant names a shell: a command string is not a binary, and `process.exec` is \
+             offered to you as a tool instead"
+                .to_string()
+        } else {
+            format!("the program's manifest does not account for `{tool}`")
         };
+
         self.used.push(AgentAction::Tool {
             tool: tool.clone(),
             input: Digest::of(input.as_bytes()),
             allowed: !refused,
             reason: match refused {
-                true => why.to_string(),
+                true => why.clone(),
                 false => String::new(),
             },
         });
@@ -240,7 +264,7 @@ impl Route {
         let mut w = sic_core::Writer::new();
         w.bool(refused);
         w.str(match refused {
-            true => why,
+            true => &why,
             false => "",
         });
         let _ = write_frame(stream, &w.finish());

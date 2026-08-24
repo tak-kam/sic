@@ -15,7 +15,7 @@ use crate::agent::{
     AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
 };
 use crate::authority::Authority;
-use crate::route::{Route, json_string, offered};
+use crate::route::{Route, json_string};
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.
@@ -174,17 +174,17 @@ impl TmuxDriver {
         authority: Authority,
         manifest: Vec<sic_core::CapGrant>,
     ) -> Result<(), CapError> {
-        // Only when there is something to route. A socket nobody can call is a
-        // door that did not need to exist.
-        if !offered(&manifest).is_empty() {
-            let path = std::env::temp_dir().join(format!("{}.sock", self.session));
-            let route = Route::open(path, manifest).map_err(|e| {
-                CapError::new(format!(
-                    "cannot open the socket the agent calls back on: {e}"
-                ))
-            })?;
-            self.route = Some(route);
-        }
+        // Always, now. It used to be opened only when there was something to
+        // route; the hook has to reach it whether or not there is, because a
+        // run whose manifest routes nothing still has a tool surface to refuse.
+        let path = std::env::temp_dir().join(format!("{}.sock", self.session));
+        let mut route = Route::open(path, manifest).map_err(|e| {
+            CapError::new(format!(
+                "cannot open the socket the agent calls back on: {e}"
+            ))
+        })?;
+        route.names(authority.tools());
+        self.route = Some(route);
         self.authority = authority;
         Ok(())
     }

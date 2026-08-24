@@ -68,12 +68,12 @@ impl fmt::Display for Rule {
     }
 }
 
-/// Tools that reach the network and are not bounded by anything else.
+/// Tools that reach the network.
 ///
-/// A deny rule applies across every settings scope and cannot be overridden by
-/// an allow rule anywhere, which is the only part of this configuration that is
-/// not merely additive - so it is what the network denial rests on. The Bash
-/// sandbox covers Bash subprocesses; these two tools do not go through it.
+/// Denied by rule as well as by the hook, because a deny rule applies across
+/// every settings scope and cannot be overridden by an allow rule anywhere -
+/// the one part of this configuration that is not merely additive. The hook is
+/// what actually holds (§6); this is what holds if the hook is not reached.
 pub const NETWORK_TOOLS: &[&str] = &["WebFetch", "WebSearch"];
 
 /// What the agent may do, worked out from the program's manifest.
@@ -87,6 +87,22 @@ pub struct Authority {
 }
 
 impl Authority {
+    /// The names of the tools this manifest accounts for.
+    ///
+    /// The hook refuses everything else, so this is the agent's whole tool
+    /// surface - which is why it is a list of names and not of rules: a name is
+    /// something the hook can check without re-implementing the path matching
+    /// that belongs to the agent. Deny by name here, scope by rule there.
+    pub fn tools(&self) -> Vec<String> {
+        self.allowed
+            .iter()
+            .map(|rule| match &rule.suffix {
+                Some(suffix) => format!("{}{suffix}", rule.tool),
+                None => rule.tool.to_string(),
+            })
+            .collect()
+    }
+
     /// The arguments that put this in front of the agent.
     ///
     /// `dontAsk` is the mode that makes an allowlist mean what it says: a tool

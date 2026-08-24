@@ -1220,8 +1220,19 @@ fn no_grant_names_a_shell() {
     let socket = std::path::PathBuf::from(temp_path("tool.sock"));
     let manifest = vec![grant("fs.read", CapKind::Read, "./docs")];
     let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
+    // What the manifest accounts for. Everything else is refused, which is the
+    // whole tool surface rather than a list of bad tools.
+    route.names(vec!["Read".to_string()]);
 
-    for (tool, refused) in [("Bash", true), ("PowerShell", true), ("Read", false)] {
+    for (tool, refused) in [
+        ("Bash", true),
+        ("PowerShell", true),
+        // Never named, and it ran anyway when the rules were the only thing
+        // deciding. Now it does not.
+        ("ToolSearch", true),
+        ("WebFetch", true),
+        ("Read", false),
+    ] {
         let asking = std::thread::spawn({
             let socket = socket.clone();
             let tool = tool.to_string();
@@ -1237,19 +1248,28 @@ fn no_grant_names_a_shell() {
             .expect("the asker finished")
             .expect("answered");
         assert_eq!(decision.is_some(), refused, "{tool}");
-        if let Some(reason) = decision {
-            assert!(reason.contains("no grant names a shell"), "{reason}");
+        // A shell gets its own sentence, because there is somewhere else for it
+        // to go. Everything else is told what is actually true of it.
+        match (tool, decision) {
+            ("Bash" | "PowerShell", Some(reason)) => {
+                assert!(reason.contains("no grant names a shell"), "{reason}")
+            }
+            (_, Some(reason)) => assert!(
+                reason.contains("does not account for") && reason.contains(tool),
+                "{reason}"
+            ),
+            (_, None) => {}
         }
     }
 
     // Every one of them is on the record, refused or not: what the agent
     // reached for is the part the journal was missing.
     let used = route.take_tool_uses();
-    assert_eq!(used.len(), 3);
+    assert_eq!(used.len(), 5);
     // A tool of the agent's own is not recorded as a capability: the manifest
     // does not name `Bash`, and the journal does not borrow a word that means
     // something else here.
-    for (i, allowed_expected) in [(0, false), (2, true)] {
+    for (i, allowed_expected) in [(0, false), (4, true)] {
         match &used[i] {
             sic_core::AgentAction::Tool { allowed, .. } => {
                 assert_eq!(*allowed, allowed_expected)
@@ -1266,6 +1286,7 @@ fn an_answer_that_used_its_allowance_gets_no_more_tools() {
     let socket = std::path::PathBuf::from(temp_path("allowance.sock"));
     let manifest = vec![grant("fs.read", CapKind::Read, "./docs")];
     let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
+    route.names(vec!["Read".to_string()]);
     route.allow(2);
 
     let mut reasons = Vec::new();

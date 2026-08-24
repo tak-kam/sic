@@ -85,8 +85,8 @@ the sandbox is not there, the plan says the gate is what it has.
 Two of these were found by reading the agent's documentation rather than by
 reasoning about gates in general, and both change what a plan is allowed to say.
 
-**A set of read-only shell commands is always allowed by the rules and is not
-configurable.** `dontAsk` - the mode that makes an allowlist mean what it says,
+**Some tools run whatever the rules say.** A fixed set of read-only shell
+commands is always allowed and is not configurable. `dontAsk` - the mode that makes an allowlist mean what it says,
 because it denies an unnamed tool without prompting, and the only mode a pane
 with nobody watching it can run in - still permits `ls`, `cat`, `echo`, `pwd`,
 `head`, `tail`, `grep`, `find`, `wc`, `which`, `diff`, `stat`, `du`, `cd` and
@@ -101,8 +101,12 @@ reason. So the shell is refused outright, because no grant names one:
 `process.exec` grants a binary at an absolute path, sometimes pinned by digest,
 and the agent reaches that through the broker where it is checked.
 
-That leaves the rules doing what they are good at - holding a path scope - and
-the hook doing the thing they cannot.
+It is not only the shell. A run showed the agent using `ToolSearch`, which the
+allowlist had never named and which ran anyway - so "the rules are an allowlist"
+is not true of the tool surface. The hook therefore decides the surface by name
+and the rules are left doing what they are good at, which is holding a path
+scope. A list of bad tools would have missed `ToolSearch` and would miss the
+next one.
 
 **Allow rules merge across settings scopes.** A rule in the machine's
 `~/.claude/settings.json` or in the project's `.claude/settings.json` is added
@@ -219,12 +223,39 @@ granted no network, so the agent gets none.** Egress is denied by default
 because nothing in this project is permitted that was not named, and there is
 nothing to name.
 
-Enforcement is the sandbox, not the gate (§2): the agent runs with no route to
-the network except a unix socket to a proxy outside it, and with nothing on the
-proxy's allowlist, that proxy answers nothing. The shape is off the shelf -
-Claude Code's sandbox, its container form with `--network none`, and
-`sandbox-runtime` all do exactly this - which matters for a project that has to
-write its half by hand.
+### What it actually rests on, which is not what this section first said
+
+This section was written expecting an OS sandbox to be the enforcement, with the
+gate unable to help. Building the rest changed the answer, and the correction is
+worth more than the prediction was.
+
+The hook (§7) refuses **every tool the manifest does not account for**, by name,
+before any rule is consulted. So the agent's whole tool surface is the manifest's
+- and nothing on that surface reaches the network:
+
+| | |
+|---|---|
+| `WebFetch`, `WebSearch` | not named by any grant, so refused; also denied by rule, since a deny rule holds across every settings scope |
+| `Bash` | refused, so there is no subprocess to reach anything |
+| `Read`, `Write`, `Edit` | do not network |
+| `mcp__sic__*` | performed by the broker, under the manifest |
+
+And the sandbox that was going to enforce this covers **Bash subprocesses**:
+`Read`, `Write`, `WebFetch` and `WebSearch` do not go through it. So for this
+agent it isolates exactly the surface the hook already refuses, and would add
+nothing to egress. Its own documentation is the source for both halves of that.
+
+Deny by name is a stronger rule than the deny list it replaced, and it was
+reached by measurement rather than by reasoning: a run showed the agent using
+`ToolSearch`, a tool the allowlist had never named and which ran anyway. A rule
+listing bad tools would have missed it, and would miss the next one.
+
+### What a sandbox is still for
+
+Not egress. Filesystem isolation - a bound on what a tool sic *does* allow can
+be talked into touching - and containment if the hook is bypassed rather than
+consulted. §11 keeps both as not here, and the plan says the gate is what it
+has, which after this is more than it was.
 
 ### What this costs, plainly
 
@@ -238,16 +269,17 @@ When somebody needs it, the question to answer first is whether sic gets a
 network capability at all - and then the agent gets it the same way it gets
 everything else, by the program being granted it.
 
-### The limits, stated
+### The limit, stated
 
-Both are documented upstream and neither is a reason not to do this:
+The hook is consulted by the agent. It is a gate the agent walks through, not a
+wall around it: it holds because the agent asks, and an agent that did not ask -
+a different build, a bypass, a bug - is not stopped by it. That is the same
+sentence the permission system's own documentation uses about itself, and it
+stays true of this. What it buys over that documentation's version is that the
+gate is now the manifest rather than a list somebody maintains, and that
+everything it sees reaches the journal.
 
-- The proxy allowlists on the hostname the client supplied and does not
-  terminate TLS, so domain fronting defeats it.
-- A sandboxed process shares the host kernel.
-
-It raises the bar. It is not a boundary a determined escape respects. Saying so
-is the difference between this and a permission gate that says nothing at all.
+A boundary is the sandbox, and the sandbox is not here.
 
 ---
 
@@ -385,8 +417,9 @@ Capabilities:
     the agent's Read       ./docs                 (its own permissions)
     the agent's Edit       ./src                  (its own permissions)
     the agent may run      /usr/bin/cargo         (through the broker, pinned)
-    the agent may not      reach the network      (sandboxed, no egress)
+    the agent may not      reach the network      (no tool it has can)
     the agent may not      run a shell            (refused by the hook)
+    the agent may not      anything else          (refused by the hook)
     at most 20 model calls, 200 tool uses, 30m per answer
 ```
 
@@ -454,6 +487,6 @@ which each one makes the next honest.
 | 3 | The `PreToolUse` hook, binding, failing closed | a denied tool use says whether the broker refused it or was unreachable |
 | 4 | The tool-use event | an audit can see the twelve files the agent edited, as digests and paths |
 | 5 | `tools:` and `deadline:` on an agent declaration | `driving.md` §4's two hard-coded numbers are gone |
-| 6 | The sandbox, and egress denied | a subprocess of the agent cannot reach the network either |
+| 6 | Egress denied | no tool the agent has reaches the network, and the hook refuses every tool the manifest does not account for |
 | 7 | The plan | §10, with every line naming where it is enforced |
 | 8 | `driving.md` §8's warning removed | only after 7 |
