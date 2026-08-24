@@ -356,21 +356,7 @@ impl<'a> Verifier<'a> {
                         ok = false;
                         continue;
                     };
-                    let argc = callee.param_count();
-                    let last = inst.c() as usize + argc;
-                    if last > func.reg_count as usize {
-                        self.error(
-                            Some(&name),
-                            Some(pc),
-                            format!(
-                                "arguments r{}..r{} do not fit in reg_count {}",
-                                inst.c(),
-                                last,
-                                func.reg_count
-                            ),
-                        );
-                        ok = false;
-                    }
+                    ok &= self.window_fits(func, pc, inst.c(), callee.param_count(), "arguments");
                 }
                 Op::CallCap => {
                     ok &= check_reg(self, inst.a(), "destination");
@@ -385,20 +371,7 @@ impl<'a> Verifier<'a> {
                         ok = false;
                         continue;
                     };
-                    let last = inst.c() as usize + cap.params.len();
-                    if last > func.reg_count as usize {
-                        self.error(
-                            Some(&name),
-                            Some(pc),
-                            format!(
-                                "arguments r{}..r{} do not fit in reg_count {}",
-                                inst.c(),
-                                last,
-                                func.reg_count
-                            ),
-                        );
-                        ok = false;
-                    }
+                    ok &= self.window_fits(func, pc, inst.c(), cap.params.len(), "arguments");
                 }
                 Op::Spawn => {
                     ok &= check_reg(self, inst.a(), "destination");
@@ -411,20 +384,7 @@ impl<'a> Verifier<'a> {
                         ok = false;
                         continue;
                     };
-                    let last = inst.c() as usize + callee.param_count();
-                    if last > func.reg_count as usize {
-                        self.error(
-                            Some(&name),
-                            Some(pc),
-                            format!(
-                                "arguments r{}..r{} do not fit in reg_count {}",
-                                inst.c(),
-                                last,
-                                func.reg_count
-                            ),
-                        );
-                        ok = false;
-                    }
+                    ok &= self.window_fits(func, pc, inst.c(), callee.param_count(), "arguments");
                 }
                 Op::Await | Op::Len => {
                     ok &= check_reg(self, inst.a(), "destination");
@@ -442,20 +402,7 @@ impl<'a> Verifier<'a> {
                         ok = false;
                         continue;
                     };
-                    let last = inst.c() as usize + fields.len();
-                    if last > func.reg_count as usize {
-                        self.error(
-                            Some(&name),
-                            Some(pc),
-                            format!(
-                                "fields r{}..r{} do not fit in reg_count {}",
-                                inst.c(),
-                                last,
-                                func.reg_count
-                            ),
-                        );
-                        ok = false;
-                    }
+                    ok &= self.window_fits(func, pc, inst.c(), fields.len(), "fields");
                 }
                 Op::GetField => {
                     ok &= check_reg(self, inst.a(), "destination");
@@ -475,20 +422,9 @@ impl<'a> Verifier<'a> {
                 }
                 Op::MakeList => {
                     ok &= check_reg(self, inst.a(), "destination");
-                    let last = inst.b() as usize + inst.c() as usize;
-                    if last > func.reg_count as usize {
-                        self.error(
-                            Some(&name),
-                            Some(pc),
-                            format!(
-                                "elements r{}..r{} do not fit in reg_count {}",
-                                inst.b(),
-                                last,
-                                func.reg_count
-                            ),
-                        );
-                        ok = false;
-                    }
+                    // The elements start at `b`, because `c` is how many of
+                    // them there are.
+                    ok &= self.window_fits(func, pc, inst.b(), inst.c() as usize, "elements");
                     if inst.c() == 0 {
                         // An empty list is a constant, because it has no
                         // element to take a type from.
@@ -521,6 +457,44 @@ impl<'a> Verifier<'a> {
             }
         }
         ok
+    }
+
+    /// Whether the `count` registers starting at `first` fit inside `func`'s
+    /// frame, which is `first + count <= reg_count`.
+    ///
+    /// The bound is exclusive at the top: `first + count` is one past the last
+    /// register the instruction touches, so a window ending exactly at
+    /// `reg_count` is inside the frame and an empty one is inside it wherever
+    /// it starts. The range is written here once because five opcodes pass a
+    /// window - `CALL`, `CALL_CAP`, `SPAWN`, `MAKE_OBJECT`, `MAKE_LIST` - and
+    /// five hand-written copies of one rule are how they come to disagree.
+    ///
+    /// Which operand `first` comes from stays with the caller, because it is
+    /// not the same operand for all five: `c` for the arguments of `CALL`,
+    /// `CALL_CAP` and `SPAWN` and for the fields of `MAKE_OBJECT`, but `b` for
+    /// the elements of `MAKE_LIST`, whose `c` is how many there are.
+    fn window_fits(
+        &mut self,
+        func: &FuncDef,
+        pc: u32,
+        first: u8,
+        count: usize,
+        what: &str,
+    ) -> bool {
+        let last = first as usize + count;
+        if last <= func.reg_count as usize {
+            return true;
+        }
+        let name = func.name.clone();
+        self.error(
+            Some(&name),
+            Some(pc),
+            format!(
+                "{what} r{first}..r{last} do not fit in reg_count {}",
+                func.reg_count
+            ),
+        );
+        false
     }
 
     fn check_jump(&mut self, func: &FuncDef, pc: u32, inst: Inst) -> bool {

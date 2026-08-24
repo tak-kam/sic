@@ -421,3 +421,61 @@ fn a_call_to_a_function_that_does_not_exist_is_refused() {
     });
     assert_rejects(&report, "function index f7 is out of range");
 }
+
+// ---- the register window of an instruction that passes several ----
+//
+// Five opcodes pass a contiguous run of registers, and four of them - `CALL`,
+// `CALL_CAP`, `SPAWN`, `MAKE_OBJECT` - read its first register out of `c`,
+// while `MAKE_LIST` reads it out of `b` because its `c` is how many elements
+// there are. The three tests below state that difference as files, so that a
+// reading of the check which takes the fifth for a typo fails here rather than
+// in a run: a `MAKE_LIST` window measured from `c` would let the first file
+// through, and would refuse the second, which is a program that works.
+
+#[test]
+fn capability_arguments_outside_the_frame_are_refused() {
+    // v0.1 section 9 item 7 at a call site. `CALL_CAP` takes one argument here
+    // and reads it from r3 of a three-register frame, so the argument the
+    // broker is handed is a register the frame does not have.
+    let report = verify_corrupted(|p| p.code[1] = Inst::abc(Op::CallCap, 0, 0, 3));
+    assert_rejects(&report, "arguments r3..r4 do not fit in reg_count 3");
+}
+
+#[test]
+fn make_list_elements_outside_the_frame_are_refused() {
+    // The same item for `MAKE_LIST`, arranged so that only the right reading
+    // catches it: one element based at r3 in a three-register frame. Measured
+    // from `b` the window is r3..r4 and leaves the frame; measured from `c` it
+    // would be r1..r2 and fit.
+    let report = verify_corrupted(|p| {
+        p.code = vec![
+            Inst::abx(Op::LoadConst, 0, 1),
+            Inst::abc(Op::MakeList, 1, 3, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ];
+        // The policy named instruction 1 while it was the capability call.
+        p.policies.clear();
+    });
+    assert_rejects(&report, "elements r3..r4 do not fit in reg_count 3");
+}
+
+#[test]
+fn a_make_list_whose_elements_start_at_b_still_verifies() {
+    // The other direction, and the one a wrong reading breaks silently: two
+    // elements based at r0 of a three-register frame. The window is r0..r2 and
+    // fits; measured from `c` it would be r2..r4 and this program - which the
+    // compiler emits - would be refused as malformed.
+    let mut p = well_formed();
+    p.code = vec![
+        Inst::abx(Op::LoadConst, 0, 1),
+        Inst::abx(Op::LoadConst, 1, 1),
+        Inst::abc(Op::MakeList, 2, 0, 2),
+        Inst::abc(Op::Return, 0, 0, 0),
+    ];
+    p.funcs[0].code_len = 4;
+    p.policies.clear();
+
+    let program = decode(&encode(&p)).expect("decodes");
+    let report = verify(&program);
+    assert!(report.ok(), "{:#?}", report.errors);
+}
