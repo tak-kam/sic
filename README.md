@@ -63,7 +63,8 @@ $ tar xzf sic-v0.1.2-x86_64-unknown-linux-musl.tar.gz
 $ ./sic-v0.1.2-x86_64-unknown-linux-musl/sic version
 ```
 
-Or with cargo, which needs Rust 1.85 or newer:
+Or with cargo, which needs Rust 1.85 or newer - CI compiles against exactly
+that version, so it is the real minimum rather than the one somebody guessed:
 
 ```console
 $ cargo install --git https://github.com/tak-kam/sic sic-cli

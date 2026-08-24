@@ -144,7 +144,11 @@ pushes, so the branch is where a history is still allowed to be untidy.
 
 `.github/workflows/ci.yml` runs formatting, clippy with warnings denied, the
 tests, a check that `[dependencies]` names only workspace paths, and a check
-that `Cargo.lock` agrees with the manifests. `main` refuses force pushes and
+that `Cargo.lock` agrees with the manifests. A second job compiles the whole
+workspace, tests included, against the `rust-version` the manifest declares -
+1.85 - so that the minimum is a fact rather than a guess. That is also what
+remembers, so nobody has to, that let-chains stabilised in 1.88 and cannot be
+used here. `main` refuses force pushes and
 deletion, so a mistake in a commit message is fixed by another commit rather
 than by rewriting history.
 

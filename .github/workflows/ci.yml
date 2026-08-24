@@ -63,3 +63,31 @@ jobs:
       # tree does not build from a clean checkout.
       - name: Lockfile is current
         run: cargo metadata --format-version 1 --locked > /dev/null
+
+  # `rust-version` in the workspace manifest is a promise made to whoever
+  # builds sic from source, and Cargo uses it when resolving. A minimum
+  # nothing compiles against is a guess, and it drifts one way only: every
+  # release of Rust makes it easier to write something the manifest does not
+  # allow. Let-chains stabilised in 1.88 and cannot be used here; this is what
+  # remembers that instead of a person.
+  msrv:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        # No `rustup update`: the point is to use exactly this one. The version
+        # is read from the manifest so that raising it is one edit.
+        run: |
+          msrv=$(grep -m1 '^rust-version' Cargo.toml | cut -d'"' -f2)
+          echo "the manifest says $msrv"
+          rustup toolchain install --no-self-update --profile minimal "$msrv"
+          rustup default "$msrv"
+          rustc --version
+
+      # `check` rather than `build`: what this job is for is whether the code
+      # compiles under the declared minimum, and codegen does not bear on that.
+      # `--all-targets` because a test that needs a newer compiler breaks
+      # `cargo test` for the same person.
+      - name: Compiles under the declared minimum
+        run: cargo check --workspace --all-targets --locked
