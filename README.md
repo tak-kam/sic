@@ -242,6 +242,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
 | [plan.md](docs/design/plan.md) | `sic plan` |
 | [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
+| [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |

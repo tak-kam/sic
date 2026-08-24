@@ -51,7 +51,8 @@ Tools are what is left, and they are where the rest of the section starts to
 cost something: an agent with tools runs its own loop inside one call, so the
 driver counts 1 where the machine did 200, and the grant that let the program
 ask says nothing about what the agent did while answering. `sic plan` prints
-that as a warning rather than leaving it out.
+that as a warning rather than leaving it out, and `docs/design/authority.md` is
+the design that makes the warning untrue.
 
 **§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
 `HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because

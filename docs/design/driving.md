@@ -292,10 +292,11 @@ Capabilities:
 ```
 
 This is not a placeholder for work that finishes the sentence; it is the true
-statement available today. Making the grant reach the agent - translating it
-into the agent's own permission configuration, routing what cannot be translated
-back through the broker, and putting the agent's tool uses in the journal - is
-its own design, tracked separately. Until that exists, a plan that printed one
+statement available today. Making the grant reach the agent is its own design,
+`docs/design/authority.md`, and it is where the warning goes away: the agent's
+authority becomes the program's manifest, translated into the agent's own
+permission configuration where that can enforce a constraint and routed back
+through the broker where it cannot. Until that is built, a plan that printed one
 confident line would be the manifest lying about the most important thing in it.
 
 The warning is printed whether or not a driver is chosen, because it was already
@@ -463,7 +464,8 @@ It is also the reason the broker tells the driver whether a shape was asked for
   so passing one agent's output to another is a variable, and where it came from
   is already in its type.
 - **A deadline in the source** (§4). It needs somewhere to write one, and the
-  agent declaration is where it would go.
+  agent declaration is where it goes: `docs/design/authority.md` §8 puts it
+  there, beside the two other numbers that bound an agent with tools.
 
 ---
 
