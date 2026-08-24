@@ -20,7 +20,7 @@ use sic_bytecode::inst::Op;
 use std::collections::HashMap;
 
 use sic_bytecode::program::Program;
-use sic_core::{CapKind, Digest};
+use sic_core::{CapGrant, CapKind, Digest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -387,16 +387,12 @@ pub fn render(plan: &Plan, source: &str) -> String {
         }
         out.push('\n');
         // The one grant whose answer comes from something that acts on its own.
-        // `human.approve` and `human.choose` are the same kind, but a person
-        // answering a question does not edit files while they think, and an
-        // agent does - so a plan that printed one confident line here would be
-        // the manifest lying about the most important thing in it. See
-        // `docs/design/driving.md` §8.
+        // It used to print a warning saying so, because there was nothing true
+        // to print instead. There is now: the agent's authority is this same
+        // manifest, so it is reported as a view of it rather than guessed at.
+        // See `docs/design/authority.md` §10.
         if grant.name == "llm.invoke" {
-            out.push_str(
-                "    warning: this grant says what the program may ask for, not\n\
-                 \x20            what the agent may do while answering\n",
-            );
+            out.push_str(&agent_authority(&plan.capabilities));
         }
         if plan.multi_file && !grant.called_from.is_empty() {
             out.push_str(&format!(
@@ -428,6 +424,90 @@ pub fn render(plan: &Plan, source: &str) -> String {
         )),
     }
     out
+}
+
+/// What the agent answering a model call may do, read from the same manifest.
+///
+/// Every line names **where** it is enforced, in parentheses, because a gate
+/// and a boundary are different things and a reader deciding whether to run
+/// this has to be able to tell them apart. A line with nothing in parentheses
+/// would be a claim with no mechanism behind it.
+fn agent_authority(manifest: &[Grant]) -> String {
+    let grants: Vec<CapGrant> = manifest
+        .iter()
+        .map(|g| CapGrant {
+            name: g.name.clone(),
+            kind: g.kind,
+            constraint: g.constraint.clone(),
+            pin: g.pin.clone(),
+            args: g.args.clone(),
+        })
+        .collect();
+
+    // A manifest nothing can enforce stops the run before it starts, so a plan
+    // of one says that rather than describing an agent that will never exist.
+    if sic_core::authority_of(&grants).is_err() {
+        return "    warning: this manifest cannot be enforced against an agent,\n\
+                \x20            so a run that names a driver refuses to start\n"
+            .to_string();
+    }
+
+    let mut out = String::new();
+
+    for grant in &grants {
+        match sic_core::reach_of(grant) {
+            sic_core::Reach::Translated(rules) => {
+                for rule in rules {
+                    out.push_str(&line(
+                        &format!("the agent's {}", rule.tool),
+                        &format!("{:?}", grant.constraint),
+                        "its own permissions",
+                    ));
+                }
+            }
+            sic_core::Reach::Routed(_) => {
+                let how = match grant.pin.is_empty() {
+                    true => "through the broker".to_string(),
+                    false => format!(
+                        "through the broker, sha256:{}",
+                        &grant.pin[..8.min(grant.pin.len())]
+                    ),
+                };
+                out.push_str(&line(
+                    "the agent may use",
+                    &format!("{:?}", grant.constraint),
+                    &how,
+                ));
+            }
+            sic_core::Reach::Summons | sic_core::Reach::Unenforceable(_) => {}
+        }
+    }
+
+    // The three that are true of every agent, and are the reason the tool
+    // surface is decided by the hook rather than by the rules.
+    out.push_str(&line(
+        "the agent may not",
+        "reach the network",
+        "no tool it has can",
+    ));
+    out.push_str(&line(
+        "the agent may not",
+        "run a shell",
+        "refused by the hook",
+    ));
+    out.push_str(&line(
+        "the agent may not",
+        "use any other tool",
+        "refused by the hook",
+    ));
+    out
+}
+
+fn line(what: &str, subject: &str, how: &str) -> String {
+    format!(
+        "    {what:<18} {subject:<24} ({how})
+"
+    )
 }
 
 #[cfg(test)]

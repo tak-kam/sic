@@ -15,13 +15,14 @@ use std::time::{Duration, Instant};
 use sic_core::{AgentAction, CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
 pub mod agent;
-pub mod authority;
 pub mod route;
 pub mod tmux;
 
 pub use agent::{AgentDriver, Ask, DriverInfo, Thread};
-pub use authority::{Authority, Reach, Refused, Rule, authority_of};
 pub use route::{Offered, Param, Route};
+// Re-exported because every caller that has a broker also wants these, and the
+// classification is pure enough to live at the boundary rather than here.
+pub use sic_core::{Authority, Reach, Refused, Rule, authority_of};
 pub use tmux::TmuxDriver;
 
 /// The largest file `fs.read` will return. A capability that can exhaust the

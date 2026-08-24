@@ -932,7 +932,7 @@ fn json_is_asked_for_on_one_line() {
 
 // ---- what the agent may do: docs/design/authority.md ----
 
-use crate::authority::{Authority, Reach, Rule, authority_of, reach_of};
+use sic_core::{Authority, Reach, Rule, authority_of, reach_of};
 
 fn rules(grant: &CapGrant) -> Vec<String> {
     match reach_of(grant) {

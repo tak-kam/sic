@@ -284,7 +284,7 @@ live session it is not a replay, so `--llm` is not accepted there at all.
 
 ---
 
-## 8. The manifest under-reports, and the plan says so
+## 8. The manifest reaches the agent
 
 ```sic
 allow {
@@ -292,27 +292,30 @@ allow {
 }
 ```
 
-The program may do one thing. The agent behind that one grant may edit any file,
-run any command and reach the network - and `sic plan` exists to say what may
-happen. So it says what it does not know:
+This section used to say that the manifest under-reported, and `sic plan`
+printed a warning to that effect: the program may do one thing, and the agent
+behind that one grant may edit any file, run any command and reach the network.
+
+That is no longer true, and the warning is gone. `docs/design/authority.md` is
+the design that removed it - the agent's authority is the program's manifest,
+translated into the agent's own permissions where those can hold a constraint,
+routed back through the broker where they cannot, and everything else refused by
+a hook that fails closed. So the plan reports it as a view of the manifest that
+is already there:
 
 ```text
 Capabilities:
   llm.invoke      [invoke]  "claude"  (not pinned)
-    warning: this grant says what the program may ask for, not
-             what the agent may do while answering
+    the agent's Read   "./docs"                 (its own permissions)
+    the agent may use  "/usr/bin/cargo"         (through the broker)
+    the agent may not  reach the network        (no tool it has can)
+    the agent may not  run a shell              (refused by the hook)
+    the agent may not  use any other tool       (refused by the hook)
 ```
 
-This is not a placeholder for work that finishes the sentence; it is the true
-statement available today. Making the grant reach the agent is its own design,
-`docs/design/authority.md`, and it is where the warning goes away: the agent's
-authority becomes the program's manifest, translated into the agent's own
-permission configuration where that can enforce a constraint and routed back
-through the broker where it cannot. Until that is built, a plan that printed one
-confident line would be the manifest lying about the most important thing in it.
-
-The warning is printed whether or not a driver is chosen, because it was already
-true: an answer pasted in by a person also came from outside the manifest.
+Every line names where it is enforced, because a gate and a boundary are
+different things - and `authority.md` §6 states plainly which of the two this
+is.
 
 ---
 

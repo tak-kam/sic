@@ -14,8 +14,8 @@ use sic_core::CapError;
 use crate::agent::{
     AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
 };
-use crate::authority::Authority;
 use crate::route::{Route, json_string};
+use sic_core::Authority;
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.

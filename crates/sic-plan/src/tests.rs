@@ -247,3 +247,40 @@ fn the_rendering_names_the_bytecode_it_is_of() {
     assert!(text.contains("READ"), "{text}");
     assert!(text.contains("fs.read"), "{text}");
 }
+
+/// A routed grant is reported as routed, and a translated one as the agent's
+/// own rule. The difference is the whole of §3 and §4 of the authority design,
+/// and a plan that blurred it would be describing a boundary it does not have.
+#[test]
+fn the_plan_tells_a_translated_grant_from_a_routed_one() {
+    let manifest = [
+        ("llm.invoke", CapKind::Invoke, "claude"),
+        ("fs.read", CapKind::Read, "./docs"),
+        ("process.exec", CapKind::Exec, "/usr/bin/cargo"),
+    ];
+    let grants: Vec<Grant> = manifest
+        .iter()
+        .map(|(name, kind, constraint)| Grant {
+            name: (*name).to_string(),
+            kind: *kind,
+            constraint: (*constraint).to_string(),
+            pin: String::new(),
+            args: Vec::new(),
+            called_from: Vec::new(),
+        })
+        .collect();
+
+    let text = super::agent_authority(&grants);
+    assert!(text.contains("the agent's Read   \"./docs\""), "{text}");
+    assert!(text.contains("(its own permissions)"), "{text}");
+    assert!(
+        text.contains("the agent may use  \"/usr/bin/cargo\""),
+        "{text}"
+    );
+    assert!(text.contains("(through the broker)"), "{text}");
+    // Every line says where, and the three that are true of every agent are
+    // always there.
+    for rendered in text.lines() {
+        assert!(rendered.ends_with(')'), "{rendered}");
+    }
+}

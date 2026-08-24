@@ -413,15 +413,18 @@ like:
 
 ```text
 Capabilities:
-  llm.invoke      [invoke]  "claude"  skill sha256:9f2c1a4b
-    the agent's Read       ./docs                 (its own permissions)
-    the agent's Edit       ./src                  (its own permissions)
-    the agent may run      /usr/bin/cargo         (through the broker, pinned)
-    the agent may not      reach the network      (no tool it has can)
-    the agent may not      run a shell            (refused by the hook)
-    the agent may not      anything else          (refused by the hook)
-    at most 20 model calls, 200 tool uses, 30m per answer
+  llm.invoke      [invoke]  "claude"  (not pinned)
+    the agent's Read   "./docs"                 (its own permissions)
+    the agent's Write  "./out.txt"              (its own permissions)
+    the agent's Edit   "./out.txt"              (its own permissions)
+    the agent may use  "/usr/bin/cargo"         (through the broker)
+    the agent may not  reach the network        (no tool it has can)
+    the agent may not  run a shell              (refused by the hook)
+    the agent may not  use any other tool       (refused by the hook)
 ```
+
+The three bounds of §8 are not repeated here: they belong to a call site rather
+than to a grant, and the plan prints them on the line of the call they bound.
 
 Every line names **where** it is enforced, because §2 is the whole point: a
 reader has to be able to tell a gate from a boundary. A line with nothing in
@@ -489,4 +492,4 @@ which each one makes the next honest.
 | 5 | `tools:` and `deadline:` on an agent declaration | `driving.md` §4's two hard-coded numbers are gone |
 | 6 | Egress denied | no tool the agent has reaches the network, and the hook refuses every tool the manifest does not account for |
 | 7 | The plan | §10, with every line naming where it is enforced |
-| 8 | `driving.md` §8's warning removed | only after 7 |
+| 8 | `driving.md` §8's warning removed | done with 7, because 7 is what made it untrue |

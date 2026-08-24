@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use sic_core::{AgentAction, CapGrant, CapRequest, Digest, answer_from_bytes, answer_to_bytes};
 
-use crate::authority::reach_of;
+use sic_core::reach_of;
 
 /// The largest message either side will read. A length prefix is a promise,
 /// and this is what stops one from being believed.
@@ -61,7 +61,7 @@ pub fn offered(manifest: &[CapGrant]) -> Vec<Offered> {
     manifest
         .iter()
         .enumerate()
-        .filter(|(_, grant)| matches!(reach_of(grant), crate::authority::Reach::Routed(_)))
+        .filter(|(_, grant)| matches!(reach_of(grant), sic_core::Reach::Routed(_)))
         .map(|(index, grant)| Offered {
             index: index as u32,
             cap: grant.name.clone(),

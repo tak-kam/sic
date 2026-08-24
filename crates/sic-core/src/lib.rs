@@ -3,13 +3,15 @@
 //! Only things whose meaning is the same at every layer belong here. Knowledge of
 //! syntax, types, IR, or the VM must not leak into this crate.
 
+mod authority;
 pub mod bin;
-pub mod cap;
+mod cap;
 pub mod diag;
 pub mod hash;
 pub mod id;
 pub mod span;
 
+pub use authority::{Authority, Reach, Refused, Rule, authority_of, reach_of};
 pub use bin::{BinError, Reader, Writer};
 pub use cap::{
     AgentAction, CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue, answer_from_bytes,

@@ -5,11 +5,20 @@
 //! agent - or refuses the run, because a manifest that cannot be enforced is
 //! worse than none once `sic plan` has printed it.
 //!
+//! It lives here rather than in the broker so that `sic plan` and the broker
+//! answer the same question with the same code. A plan that worked this out
+//! separately would be a second implementation of the thing the plan exists to
+//! report, and the two would disagree eventually - which is the one failure
+//! this whole design cannot afford. `sic plan` also must not link the crate
+//! that performs effects.
+//!
+//! Nothing here touches the outside world: it reads grants and returns rules.
+//!
 //! See `docs/design/authority.md`.
 
 use std::fmt;
 
-use sic_core::CapGrant;
+use crate::CapGrant;
 
 /// How one grant reaches the agent.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -2609,20 +2609,32 @@ fn a_deferred_model_call_says_what_shape_the_answer_takes() {
     std::fs::remove_file(checkpoint).ok();
 }
 
-/// The plan has to say what a grant of `llm.invoke` does not cover, because
-/// saying nothing would be the manifest quiet about the largest thing in it.
+/// The plan has to say what the agent may do, and every line has to name where
+/// it is enforced - a gate and a boundary are different things, and a line with
+/// nothing in parentheses would be a claim with no mechanism behind it.
+///
+/// This is the test for whether any of the authority work worked: if the plan
+/// cannot say it, the manifest did not reach the agent.
 #[test]
-fn a_plan_says_what_a_model_grant_does_not_cover() {
+fn a_plan_says_what_the_agent_answering_may_do() {
     let (stdout, stderr, code) = sic(&["plan", &example("driven.sic")]);
     assert_eq!(code, 0, "{stderr}");
+    for line in [
+        "the agent may not  reach the network        (no tool it has can)",
+        "the agent may not  run a shell              (refused by the hook)",
+        "the agent may not  use any other tool       (refused by the hook)",
+    ] {
+        assert!(stdout.contains(line), "{stdout}");
+    }
+    // The warning this replaced said what the plan did not know. It knows now.
     assert!(
-        stdout.contains("what the agent may do while answering"),
+        !stdout.contains("what the agent may do while answering"),
         "{stdout}"
     );
-    // And not on a grant answered by a person, who does not edit files while
-    // they think.
+
+    // And nothing at all on a grant answered by a person: there is no agent.
     let (stdout, _, _) = sic(&["plan", &example("decision.sic")]);
-    assert!(!stdout.contains("while answering"), "{stdout}");
+    assert!(!stdout.contains("the agent"), "{stdout}");
 }
 
 /// A call that continues a conversation is not the same act as one that starts
