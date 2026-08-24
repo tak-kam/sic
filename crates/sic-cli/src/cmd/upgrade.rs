@@ -289,13 +289,7 @@ fn fetch_latest() -> Result<Fetched, Failure> {
 
     // The archive is checked before it is unpacked: handing an unverified one
     // to `tar` would be trusting it with more than a digest comparison needs.
-    let want = digest_line(&sums, &archive)?;
-    let found = hash_file(&archive_path)?;
-    if found != want {
-        return Err(failed(format!(
-            "`{archive}` is sha256:{found}, but SHA256SUMS says sha256:{want}"
-        )));
-    }
+    checked(&archive, &sums, &archive_path)?;
 
     let into = display(&dir.path);
     let status = Command::new(&tar)
@@ -383,20 +377,54 @@ fn capture(tool: &Path, args: &[&str]) -> Result<String, Failure> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
+/// Refuses a file that is not the one `SHA256SUMS` names.
+///
+/// This is what the whole of the fetch path rests on -
+/// `docs/design/upgrade.md` §4 says the binaries a release publishes are
+/// pinned by digest rather than by the signature on the tag, and this is that
+/// pin being applied.
+///
+/// It is a function of its arguments rather than a step inside `fetch_latest`
+/// so that a test can reach it. Welded in after two downloads, the one
+/// comparison the feature depends on was the one thing no test could run.
+fn checked(name: &str, sums: &str, path: &Path) -> Result<(), Failure> {
+    let want = digest_line(sums, name)?;
+    let found = hash_file(path)?;
+    if found != want {
+        return Err(failed(format!(
+            "`{name}` is sha256:{found}, but SHA256SUMS says sha256:{want}"
+        )));
+    }
+    Ok(())
+}
+
 /// The digest SHA256SUMS gives for one name.
 ///
-/// A missing line is a failure rather than a reason to install unchecked.
+/// A missing line is a failure rather than a reason to install unchecked, and
+/// so are two lines for one name: a document that gives a file two digests
+/// cannot decide anything, and picking one of them would be this program
+/// deciding instead.
 fn digest_line(sums: &str, name: &str) -> Result<String, Failure> {
+    let mut found_hex: Option<&str> = None;
     for line in sums.lines() {
         let mut fields = line.split_whitespace();
-        let (Some(hex), Some(found)) = (fields.next(), fields.next()) else {
+        let (Some(hex), Some(named)) = (fields.next(), fields.next()) else {
             continue;
         };
-        if found.trim_start_matches('*') == name {
-            return parse_digest(hex);
+        if named.trim_start_matches('*') != name {
+            continue;
         }
+        if found_hex.is_some_and(|first| first != hex) {
+            return Err(failed(format!(
+                "SHA256SUMS gives `{name}` two different digests"
+            )));
+        }
+        found_hex = Some(hex);
     }
-    Err(failed(format!("SHA256SUMS has no line for `{name}`")))
+    match found_hex {
+        Some(hex) => parse_digest(hex),
+        None => Err(failed(format!("SHA256SUMS has no line for `{name}`"))),
+    }
 }
 
 /// A directory that is removed when it goes out of scope.
@@ -632,6 +660,79 @@ mod tests {
 9e37867d347e2fb7d8b5b833b0086cfaa9bbe14c6eecd5a4a5ef69f7cf9e318b  sic-v0.1.1-x86_64-unknown-linux-musl.tar.gz
 975d6bcb612ea728a43c8fe1ca44dc09213e5c1892f0a399fabe2ff8bf27f0c6  sic-v0.1.1-x86_64-unknown-linux-musl/sic
 ";
+
+    /// A file in a directory of this test's own, and the `SHA256SUMS` line
+    /// that describes it.
+    fn archive(name: &str, contents: &[u8]) -> (PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("sic-checked-{}-{name}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a writable temporary directory");
+        let path = dir.join(name);
+        std::fs::write(&path, contents).expect("writable");
+        let sums = format!("{}  {name}\n", Digest::of(contents).hex());
+        (path, sums)
+    }
+
+    #[test]
+    fn an_archive_that_matches_its_line_is_accepted() {
+        let (path, sums) = archive("match.tar.gz", b"the release");
+        assert!(checked("match.tar.gz", &sums, &path).is_ok());
+    }
+
+    /// The one comparison the fetch path rests on, failing. Both digests are in
+    /// the message, because "it did not match" without them says nothing about
+    /// which end is wrong.
+    #[test]
+    fn an_archive_that_does_not_match_is_refused_and_the_message_names_both() {
+        let (path, sums) = archive("swapped.tar.gz", b"the release");
+        std::fs::write(&path, b"something else").expect("writable");
+        let err = checked("swapped.tar.gz", &sums, &path).expect_err("the digests differ");
+        assert!(
+            err.message.contains(&Digest::of(b"the release").hex()),
+            "{}",
+            err.message
+        );
+        assert!(
+            err.message.contains(&Digest::of(b"something else").hex()),
+            "{}",
+            err.message
+        );
+    }
+
+    /// A file `SHA256SUMS` says nothing about is not installed unchecked.
+    #[test]
+    fn an_archive_that_is_not_listed_is_refused() {
+        let (path, _) = archive("unlisted.tar.gz", b"whatever");
+        let err = checked("unlisted.tar.gz", SUMS, &path).expect_err("it is not in SUMS");
+        assert!(err.message.contains("no line for"), "{}", err.message);
+    }
+
+    /// Reaching the comparison at all requires reading the file, and a file
+    /// that cannot be read is not a file that matched.
+    #[test]
+    fn an_archive_that_cannot_be_read_is_refused() {
+        let (path, sums) = archive("gone.tar.gz", b"the release");
+        std::fs::remove_file(&path).expect("it was just written");
+        let err = checked("gone.tar.gz", &sums, &path).expect_err("the file is gone");
+        assert!(err.message.contains("cannot read"), "{}", err.message);
+    }
+
+    /// A document that gives one name two digests has not said which one, and
+    /// choosing would be this program deciding on its behalf.
+    #[test]
+    fn two_lines_for_one_name_decide_nothing() {
+        let (path, sums) = archive("twice.tar.gz", b"the release");
+        let doubled = format!("{sums}{}  twice.tar.gz\n", Digest::of(b"another").hex());
+        let err = checked("twice.tar.gz", &doubled, &path).expect_err("SUMS disagrees with itself");
+        assert!(
+            err.message.contains("two different digests"),
+            "{}",
+            err.message
+        );
+
+        // The same line twice is not a disagreement.
+        let repeated = format!("{sums}{sums}");
+        assert!(checked("twice.tar.gz", &repeated, &path).is_ok());
+    }
 
     #[test]
     fn a_digest_is_read_by_the_name_it_belongs_to() {

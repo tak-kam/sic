@@ -57,7 +57,15 @@ Each step is refused before the next one can matter.
    handing an unverified archive to `tar` trusts it with more than a digest
    comparison needs.
 5. **The binary inside it, against the same list.** A name `SHA256SUMS` does not
-   mention is a failure, not a reason to install something unchecked.
+   mention is a failure, not a reason to install something unchecked. Neither is
+   a name it mentions twice with two different digests: a list that gives one
+   file two answers has not said which, and picking one would be sic deciding
+   on its behalf.
+
+Steps 4 and 5 are one function, `checked`, taking the name, the list and the
+file. It is separate from the fetch around it so that it can be run without a
+network - welded in after two downloads, the comparison the whole feature rests
+on was the one part of it no test could reach.
 6. **What the candidate says it is.** The verified bytes are written next to the
    destination, made executable, and run as `sic version`. Output that does not
    read as `sic <version>` stops the upgrade.
