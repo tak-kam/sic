@@ -174,3 +174,9 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 
 Simple, small, explicit, deterministic, testable, dependency-free, auditable.
 Do not build generic abstractions for features that do not exist yet.
+
+Small is about what a function does, not how many lines it takes to do it. A
+`match` arm is never extracted for length; a procedure two or more arms share
+is, so that the order between the steps can be checked in one place. The six
+longest functions here are exhaustive matches and are finished as they are -
+see [docs/design/extraction.md](docs/design/extraction.md).

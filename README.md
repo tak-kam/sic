@@ -247,6 +247,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
+| [extraction.md](docs/design/extraction.md) | why the longest functions are the right length |
 | [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
 
 Each design document records what was deliberately left out, and why. That is
