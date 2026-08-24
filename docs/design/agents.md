@@ -132,6 +132,13 @@ project is arranged to avoid, and JSON is small enough to write.
 `sic-json` holds a parser and a value type. It performs no I/O and reads no
 clock, like `sic-journal`, and has the same isolation test.
 
+It also writes the other direction's leaf: `quoted` and `write_quoted`, which
+turn a string into a JSON string. That is not a serializer, and is not meant to
+grow into one - every document this workspace writes is a fixed shape built by
+the code that owns it. Escaping is the one part they all needed, and it is a
+rule of the format rather than of any of them, so it belongs to the crate that
+owns the format. Four crates carried a copy of it before it did.
+
 What it accepts is RFC 8259 and nothing more: no trailing commas, no comments,
 no `NaN`. A model that produces those has produced invalid JSON, and saying so
 is more useful than guessing.

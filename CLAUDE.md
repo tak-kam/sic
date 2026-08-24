@@ -55,7 +55,7 @@ Source -> Lexer -> Parser -> AST -> Type Checker -> IR
 | `sic-vm` | the register VM, tasks, checkpoints |
 | `sic-broker` | performs capability calls |
 | `sic-journal` | the execution journal |
-| `sic-json` | a JSON parser, for what a model answers with |
+| `sic-json` | JSON: a parser, for what a model answers with, and the escaping every writer in the workspace uses |
 | `sic-otel` | journal to OTLP traces and metrics |
 | `sic-plan` | what a program may do, read from its bytecode |
 | `sic-cli` | the `sic` binary |

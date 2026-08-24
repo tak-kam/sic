@@ -7,6 +7,7 @@
 use std::path::{Path, PathBuf};
 
 use sic_journal::{Event, EventKind, RunId, TimedEvent};
+use sic_json::quoted;
 
 /// The default place runs are kept, relative to where `sic` was invoked.
 const DEFAULT_STORE: &str = ".sic/runs";
@@ -274,12 +275,12 @@ fn answer_to_json(answer: &Answer<'_>) -> String {
         CapValue::Bool(v) => v.to_string(),
         CapValue::I64(v) => v.to_string(),
         CapValue::F64(v) => format!("{v:?}"),
-        CapValue::Str(s) => json_string(s),
+        CapValue::Str(s) => quoted(s),
         // No capability answers with one yet; an argument vector goes the
         // other way. Recording it as an array keeps the file readable if one
         // ever does.
         CapValue::List(items) => {
-            let parts: Vec<String> = items.iter().map(|i| json_string(i)).collect();
+            let parts: Vec<String> = items.iter().map(|i| quoted(i)).collect();
             format!("[{}]", parts.join(","))
         }
     };
@@ -287,10 +288,10 @@ fn answer_to_json(answer: &Answer<'_>) -> String {
     // An index on its own says nothing six months later. The question carries
     // the alternatives, so recording it is what keeps what was *not* chosen.
     if let Some(asked) = answer.asked {
-        out.push_str(&format!(",\"asked\":{}", json_string(asked)));
+        out.push_str(&format!(",\"asked\":{}", quoted(asked)));
     }
     if let Some(because) = answer.because {
-        out.push_str(&format!(",\"because\":{}", json_string(because)));
+        out.push_str(&format!(",\"because\":{}", quoted(because)));
     }
     out.push('}');
     out
@@ -394,18 +395,18 @@ pub fn record_driver(dir: &Path, info: &sic_broker::DriverInfo) -> Result<(), St
         .map(|i| match &i.digest {
             Some(digest) => format!(
                 "{{\"path\":{},\"sha256\":{}}}",
-                json_string(&i.path),
-                json_string(&digest.to_string())
+                quoted(&i.path),
+                quoted(&digest.to_string())
             ),
-            None => format!("{{\"path\":{},\"absent\":true}}", json_string(&i.path)),
+            None => format!("{{\"path\":{},\"absent\":true}}", quoted(&i.path)),
         })
         .collect();
     let json = format!(
         "{{\"driver\":{},\"command\":{},\"agent\":{},\"multiplexer\":{},\"instructions\":[{}]}}\n",
-        json_string(&info.driver),
-        json_string(&info.command),
-        json_string(&info.agent),
-        json_string(&info.multiplexer),
+        quoted(&info.driver),
+        quoted(&info.command),
+        quoted(&info.agent),
+        quoted(&info.multiplexer),
         instructions.join(","),
     );
     let path = dir.join(DRIVER);
@@ -460,23 +461,6 @@ fn digest_from(text: &str) -> Option<sic_core::Digest> {
         *slot = u8::from_str_radix(hex.get(i * 2..i * 2 + 2)?, 16).ok()?;
     }
     Some(sic_core::Digest::from_bytes(bytes))
-}
-
-fn json_string(value: &str) -> String {
-    let mut out = String::from("\"");
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 #[cfg(test)]

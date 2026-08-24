@@ -17,8 +17,9 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use sic_broker::route::{Offered, Param, ask, json_string, list};
+use sic_broker::route::{Offered, Param, ask, list};
 use sic_core::{CapOutcome, CapRequest, CapValue};
+use sic_json::quoted;
 
 use super::EXIT_FAILURE;
 
@@ -123,7 +124,7 @@ fn initialize(id: &sic_json::Json, message: &sic_json::Json) -> String {
         id,
         format!(
             "{{\"protocolVersion\":{},\"capabilities\":{{\"tools\":{{}}}},\"serverInfo\":{}}}",
-            json_string(&wanted),
+            quoted(&wanted),
             server_info()
         ),
     )
@@ -132,7 +133,7 @@ fn initialize(id: &sic_json::Json, message: &sic_json::Json) -> String {
 fn server_info() -> String {
     format!(
         "{{\"name\":\"sic\",\"version\":{}}}",
-        json_string(crate::VERSION)
+        quoted(crate::VERSION)
     )
 }
 
@@ -165,14 +166,14 @@ fn tool_json(tool: &Offered) -> String {
             Param::Str => "{\"type\":\"string\"}".to_string(),
             Param::Strings => "{\"type\":\"array\",\"items\":{\"type\":\"string\"}}".to_string(),
         };
-        properties.push(format!("{}:{schema}", json_string(name)));
-        required.push(json_string(name));
+        properties.push(format!("{}:{schema}", quoted(name)));
+        required.push(quoted(name));
     }
     format!(
         "{{\"name\":{},\"description\":{},\"inputSchema\":{{\"type\":\"object\",\
          \"properties\":{{{}}},\"required\":[{}],\"additionalProperties\":false}}}}",
-        json_string(&tool.tool_name()),
-        json_string(&format!(
+        quoted(&tool.tool_name()),
+        quoted(&format!(
             "The program's `{}` capability, granted for {:?}. Performed by sic \
              against the program's manifest, not by you.",
             tool.cap, tool.constraint
@@ -257,7 +258,7 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
             format!(
                 "{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":{}}}],\
                  \"isError\":false}}",
-                json_string(&rendered(&value))
+                quoted(&rendered(&value))
             ),
         ),
         // A capability that cannot answer within the call suspends the run when
@@ -291,7 +292,7 @@ fn failed(id: &sic_json::Json, message: &str) -> String {
         format!(
             "{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":{}}}],\
              \"isError\":true}}",
-            json_string(message)
+            quoted(message)
         ),
     )
 }
@@ -307,7 +308,7 @@ fn error(id: &sic_json::Json, code: i64, message: &str) -> String {
     format!(
         "{{\"jsonrpc\":\"2.0\",\"id\":{},\"error\":{{\"code\":{code},\"message\":{}}}}}",
         id_json(id),
-        json_string(message)
+        quoted(message)
     )
 }
 
@@ -316,7 +317,7 @@ fn error(id: &sic_json::Json, code: i64, message: &str) -> String {
 fn id_json(id: &sic_json::Json) -> String {
     match id {
         sic_json::Json::Int(v) => v.to_string(),
-        sic_json::Json::Str(s) => json_string(s),
+        sic_json::Json::Str(s) => quoted(s),
         _ => "null".into(),
     }
 }

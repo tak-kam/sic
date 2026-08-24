@@ -2,7 +2,8 @@
 //!
 //! One event per line, append-only, so a file that is cut short still reads up
 //! to the cut. The writer is by hand: serde would be a dependency, and the
-//! shape here is small enough that the escaping rules are the whole of it.
+//! shape here is small enough that naming the fields in order is the whole of
+//! it. Escaping a string is not part of the shape and comes from `sic-json`.
 
 use crate::{Event, EventKind};
 
@@ -112,26 +113,7 @@ fn field_str(out: &mut String, name: &str, value: &str, first: bool) {
         out.push(',');
     }
     out.push_str(&format!("\"{name}\":"));
-    write_string(out, value);
-}
-
-/// Writes a JSON string, escaping what the grammar requires.
-fn write_string(out: &mut String, value: &str) {
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            // Every other control character has to be escaped as \u; the rest,
-            // including all non-ASCII text, is written as it is.
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
+    sic_json::write_quoted(out, value);
 }
 
 #[cfg(test)]
@@ -180,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn escapes_what_json_requires() {
+    fn a_field_value_goes_through_the_escaper() {
         let line = event_to_json(&event(EventKind::RunFailed {
             error: "a \"quote\", a \\, a \n and a \u{1}".into(),
         }));

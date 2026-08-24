@@ -2,6 +2,9 @@
 //!
 //! The shapes here are small and fixed, so a builder is enough; a serialization
 //! framework would be a dependency for something a hundred lines covers.
+//!
+//! What a builder does not decide is how a string is escaped. That belongs to
+//! the format rather than to OTLP, and comes from `sic-json`.
 
 #[derive(Debug, Clone)]
 pub enum Value {
@@ -42,7 +45,7 @@ impl Value {
 
     pub fn write(&self, out: &mut String) {
         match self {
-            Value::Str(text) => write_string(out, text),
+            Value::Str(text) => sic_json::write_quoted(out, text),
             // OTLP writes 64-bit numbers as strings, because JSON numbers are
             // doubles and would lose the low bits.
             Value::Int(v) => out.push_str(&v.to_string()),
@@ -63,7 +66,7 @@ impl Value {
                     if i > 0 {
                         out.push(',');
                     }
-                    write_string(out, name);
+                    sic_json::write_quoted(out, name);
                     out.push(':');
                     value.write(out);
                 }
@@ -77,20 +80,4 @@ impl Value {
         self.write(&mut out);
         out
     }
-}
-
-fn write_string(out: &mut String, value: &str) {
-    out.push('"');
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
 }

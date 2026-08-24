@@ -428,24 +428,3 @@ fn value_bytes(value: &sic_core::CapValue) -> Vec<u8> {
     value.write(&mut w);
     w.finish()
 }
-
-/// A JSON string, for the one small document this crate has to write.
-///
-/// Hand-written like every other serializer here. A path is the only thing it
-/// ever holds, and a path can contain a quote or a backslash.
-pub fn json_string(value: &str) -> String {
-    let mut out = String::from("\"");
-    for c in value.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}

@@ -76,7 +76,7 @@ fn rendered(value: &sic_json::Json) -> String {
         Json::Bool(v) => v.to_string(),
         Json::Int(v) => v.to_string(),
         Json::Float(v) => format!("{v}"),
-        Json::Str(s) => sic_broker::route::json_string(s),
+        Json::Str(s) => sic_json::quoted(s),
         Json::Array(items) => {
             let parts: Vec<String> = items.iter().map(rendered).collect();
             format!("[{}]", parts.join(","))
@@ -84,13 +84,7 @@ fn rendered(value: &sic_json::Json) -> String {
         Json::Object(members) => {
             let parts: Vec<String> = members
                 .iter()
-                .map(|(name, value)| {
-                    format!(
-                        "{}:{}",
-                        sic_broker::route::json_string(name),
-                        rendered(value)
-                    )
-                })
+                .map(|(name, value)| format!("{}:{}", sic_json::quoted(name), rendered(value)))
                 .collect();
             format!("{{{}}}", parts.join(","))
         }

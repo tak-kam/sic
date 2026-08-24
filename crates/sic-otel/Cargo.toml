@@ -9,6 +9,7 @@ repository.workspace = true
 [dependencies]
 sic-core = { path = "../sic-core" }
 sic-journal = { path = "../sic-journal" }
+sic-json = { path = "../sic-json" }
 
 [lints]
 workspace = true

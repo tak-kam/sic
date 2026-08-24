@@ -1,9 +1,15 @@
-//! A JSON parser.
+//! JSON: reading it, and writing a string of it.
 //!
 //! A model answers with text, and turning that into a value takes a parser. It
 //! is written here rather than depended on, like everything else in this
 //! workspace: JSON is small, and a parser that reads untrusted output from a
 //! model is exactly the kind of code worth being able to read in full.
+//!
+//! Writing is the other direction of the same format, and it lives here for
+//! that reason. What is offered is the leaf - `quoted`, and `write_quoted` -
+//! rather than a serializer: the several documents this workspace writes are
+//! each a fixed shape built by the code that owns it, and escaping was the only
+//! part every one of them needed. See `write.rs`.
 //!
 //! What it accepts is RFC 8259 and nothing else. No trailing commas, no
 //! comments, no `NaN`, no duplicate keys. A model that produces those has
@@ -434,6 +440,9 @@ fn not_utf8(byte: u8) -> String {
     // of their own, and worth saying so rather than rendering as something else.
     format!("the document is not UTF-8 (byte {byte:#04X})")
 }
+
+mod write;
+pub use write::{quoted, write_quoted};
 
 #[cfg(test)]
 mod tests;

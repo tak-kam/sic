@@ -14,8 +14,9 @@ use sic_core::CapError;
 use crate::agent::{
     AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
 };
-use crate::route::{Route, json_string};
+use crate::route::Route;
 use sic_core::Authority;
+use sic_json::quoted;
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.
@@ -217,8 +218,8 @@ impl TmuxDriver {
         let settings = format!(
             "{{\"hooks\":{{\"PreToolUse\":[{{\"matcher\":\"*\",\"hooks\":[{{\"type\":\"command\",\"command\":{}}}]}}]}},\
              \"env\":{{\"{SOCKET_VAR}\":{}}}}}",
-            json_string(&format!("{} hook", me.display())),
-            json_string(&route.path().display().to_string()),
+            quoted(&format!("{} hook", me.display())),
+            quoted(&route.path().display().to_string()),
         );
         vec!["--settings".into(), settings]
     }
@@ -237,8 +238,8 @@ impl TmuxDriver {
         };
         let config = format!(
             "{{\"mcpServers\":{{\"sic\":{{\"type\":\"stdio\",\"command\":{},\"args\":[\"mcp\"],\"env\":{{\"SIC_ROUTE\":{}}}}}}}}}",
-            json_string(&me.display().to_string()),
-            json_string(&route.path().display().to_string()),
+            quoted(&me.display().to_string()),
+            quoted(&route.path().display().to_string()),
         );
         vec!["--strict-mcp-config".into(), "--mcp-config".into(), config]
     }
