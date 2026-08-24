@@ -104,6 +104,34 @@ pub struct CapGrant {
 }
 
 /// What the VM asks the broker to do.
+///
+/// One struct, though three of its fields - `conversation`, `tools_left` and
+/// `answer_ms` - mean nothing to any capability but `llm.invoke`. A `fs.read`
+/// request carries all three, writes them to the wire, and carries them across
+/// a checkpoint. That is deliberate, and the reasons are here rather than
+/// re-derived by whoever reads the type next:
+///
+/// **The encoding is a format.** `write` and `read` below are what a
+/// checkpoint and the agent's socket both use, so splitting the type splits
+/// the encoding, and every checkpoint written before the split stops being
+/// readable by the binary that reads it after. A checkpoint is meant to outlive
+/// the process - see `docs/design/durable-execution.md` - and a tidier struct
+/// is not a reason to break that.
+///
+/// **The index is the contract, not the shape.** A capability is authorized
+/// against `manifest[index]`, and what the broker reads out of the request is
+/// whatever that entry's capability needs. A field it does not read costs it
+/// nothing. This type does not claim to say which capability is being called.
+///
+/// **A variant would move the check rather than remove it.** A
+/// `CapRequest::Agent { .. }` would let `llm.invoke` reach its fields without
+/// an `Option`, and would make every other call site match on a variant to
+/// reach `index`, `name` and `args` - which every call site needs. That trades
+/// three unread fields for a match nobody wanted.
+///
+/// The condition that would change the answer is worth naming now: a *second*
+/// capability that needs fields of its own. One capability with three extra
+/// fields is a struct; three capabilities with three each is a different type.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CapRequest {
     /// Index into the module's capability manifest. The broker checks the
