@@ -15,6 +15,7 @@ use crate::agent::{
     AgentDriver, Ask, DriverInfo, Thread, answer_from, ask_text, check_size, new_marker_id,
 };
 use crate::authority::Authority;
+use crate::route::{Route, json_string, offered};
 
 /// Where tmux is looked for. Absolute paths only: `PATH` decides what is on a
 /// machine, and what a run did should not.
@@ -55,6 +56,12 @@ const ANSWER_DEADLINE: Duration = Duration::from_secs(30 * 60);
 /// How often the pane is read. A person is not watching this number; an agent
 /// takes seconds at best.
 const POLL: Duration = Duration::from_millis(750);
+/// How often the socket is checked while waiting for the pane.
+///
+/// Far more often than the pane, because a call the agent makes is the reason
+/// it is working: sleeping through one would add three quarters of a second to
+/// every tool use.
+const SERVE: Duration = Duration::from_millis(20);
 /// A pause after the agent's first output, so that a prompt is not pasted into
 /// an interface that is still drawing itself.
 const SETTLE: Duration = Duration::from_millis(1500);
@@ -88,6 +95,8 @@ pub struct TmuxDriver {
     open: Vec<(u32, u32)>,
     /// What the agent may do, from the program's manifest.
     authority: Authority,
+    /// The socket the agent's routed calls arrive on, when it has any.
+    route: Option<Route>,
 }
 
 impl TmuxDriver {
@@ -143,6 +152,7 @@ impl TmuxDriver {
             state: session.state,
             open,
             authority: Authority::default(),
+            route: None,
         })
     }
 
@@ -152,14 +162,51 @@ impl TmuxDriver {
     /// tmux, is there an agent - and this is about one program. A driver opened
     /// and never given an authority runs the agent with nothing allowed, which
     /// is the right way round for a mistake to fail.
-    pub fn authorize(&mut self, authority: Authority) {
+    pub fn authorize(
+        &mut self,
+        authority: Authority,
+        manifest: Vec<sic_core::CapGrant>,
+    ) -> Result<(), CapError> {
+        // Only when there is something to route. A socket nobody can call is a
+        // door that did not need to exist.
+        if !offered(&manifest).is_empty() {
+            let path = std::env::temp_dir().join(format!("{}.sock", self.session));
+            let route = Route::open(path, manifest).map_err(|e| {
+                CapError::new(format!(
+                    "cannot open the socket the agent calls back on: {e}"
+                ))
+            })?;
+            self.route = Some(route);
+        }
         self.authority = authority;
+        Ok(())
+    }
+
+    /// The MCP server definition the agent is started with.
+    ///
+    /// `--strict-mcp-config` goes with it: without it the agent would also load
+    /// whatever servers the machine has configured, and the manifest would stop
+    /// being the whole story.
+    fn mcp_arguments(&self) -> Vec<String> {
+        let Some(route) = &self.route else {
+            return Vec::new();
+        };
+        let Ok(me) = std::env::current_exe() else {
+            return Vec::new();
+        };
+        let config = format!(
+            "{{\"mcpServers\":{{\"sic\":{{\"type\":\"stdio\",\"command\":{},\"args\":[\"mcp\"],\"env\":{{\"SIC_ROUTE\":{}}}}}}}}}",
+            json_string(&me.display().to_string()),
+            json_string(&route.path().display().to_string()),
+        );
+        vec!["--strict-mcp-config".into(), "--mcp-config".into(), config]
     }
 
     /// The command a pane runs: the agent, and what it may do.
     fn agent_command(&self) -> String {
         let mut parts = vec![sh_quote(&self.agent)];
         parts.extend(self.authority.arguments().iter().map(|a| sh_quote_str(a)));
+        parts.extend(self.mcp_arguments().iter().map(|a| sh_quote_str(a)));
         parts.join(" ")
     }
 
@@ -296,7 +343,19 @@ impl TmuxDriver {
     }
 
     /// Waits for the agent to draw something, then for it to settle.
-    fn wait_ready(&self, session: &str) -> Result<(), CapError> {
+    /// Waits for the next look at the pane, answering the agent's calls while
+    /// it waits.
+    fn wait_serving(&mut self) {
+        let until = Instant::now() + POLL;
+        while Instant::now() < until {
+            if let Some(route) = self.route.as_mut() {
+                route.serve_pending();
+            }
+            std::thread::sleep(SERVE);
+        }
+    }
+
+    fn wait_ready(&mut self, session: &str) -> Result<(), CapError> {
         let deadline = Instant::now() + READY_DEADLINE;
         loop {
             if !self.screen(session)?.trim().is_empty() {
@@ -310,12 +369,12 @@ impl TmuxDriver {
                     READY_DEADLINE.as_secs()
                 )));
             }
-            std::thread::sleep(POLL);
+            self.wait_serving();
         }
     }
 
     /// The whole of one call, once the pane exists.
-    fn converse(&self, target: &str, ask: Ask<'_>, fresh: bool) -> Result<String, CapError> {
+    fn converse(&mut self, target: &str, ask: Ask<'_>, fresh: bool) -> Result<String, CapError> {
         let id = new_marker_id();
         // A pane that has answered before is ready by definition; only one that
         // has just been started has to be waited for.
@@ -342,7 +401,7 @@ impl TmuxDriver {
                     ANSWER_DEADLINE.as_secs() / 60
                 )));
             }
-            std::thread::sleep(POLL);
+            self.wait_serving();
         }
     }
 }
@@ -360,6 +419,13 @@ impl AgentDriver for TmuxDriver {
         match ask.thread.remembers() {
             true => self.ask_remembering(ask),
             false => self.ask_once(ask),
+        }
+    }
+
+    fn take_tool_uses(&mut self) -> Vec<sic_core::ToolUse> {
+        match self.route.as_mut() {
+            Some(route) => route.take_tool_uses(),
+            None => Vec::new(),
         }
     }
 

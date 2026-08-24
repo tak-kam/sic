@@ -48,6 +48,9 @@ Usage:
                                   the same from a file already on disk, checked
                                   against a digest you bring; --check says what
                                   would happen and changes nothing
+  sic mcp                         serve the capabilities a run granted, to the
+                                  agent answering for it; started by a run, not
+                                  by a person
   sic help                        show this help
   sic version                     show the version
 
@@ -124,6 +127,12 @@ fn main() -> ExitCode {
                 },
             ),
             Err(msg) => usage_error(msg),
+        },
+        // Started by a run, not by a person: the agent answering a model call
+        // runs this to reach the capabilities the program granted.
+        "mcp" => match rest.is_empty() {
+            true => cmd::mcp::run(),
+            false => usage_error("`mcp` takes no arguments"),
         },
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
         "hir" => with_one_file(rest, "hir", cmd::hir::run),

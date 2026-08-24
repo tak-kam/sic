@@ -2828,16 +2828,17 @@ fn a_program_in_two_files_keeps_the_capability_call_its_source_has() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
-/// The agent's authority is the program's manifest, so a grant nothing can
-/// enforce against the agent stops the run before it starts - not at the first
-/// call. A manifest that cannot be enforced is worse than none once `sic plan`
-/// has printed it.
+/// The agent's authority is the program's manifest, and a grant its permission
+/// system cannot hold is not dropped and not weakened: it is offered back
+/// through the broker. So a program that grants one still runs.
+///
+/// `process.exec` is the case. A rule on a shell command would match text that
+/// can invoke anything, and a digest pin has no equivalent at all, so the tool
+/// is denied and the capability arrives at the broker instead.
 #[test]
-fn a_grant_that_cannot_reach_the_agent_refuses_the_run() {
-    // Granted and never called: the refusal is about what the manifest permits
-    // the agent to do, not about what this run happens to reach.
+fn a_grant_the_agent_cannot_hold_is_routed_rather_than_refused() {
     let src = write_temp(
-        "unenforceable.sic",
+        "routed.sic",
         concat!(
             "allow {\n",
             "    llm.invoke \"claude\";\n",
@@ -2851,16 +2852,14 @@ fn a_grant_that_cannot_reach_the_agent_refuses_the_run() {
     );
     let path = src.to_str().unwrap();
 
-    let (_, stderr, code) = sic(&["run", path, "--llm", "tmux:claude"]);
+    // Far enough to look for the agent, which is past the point where this
+    // used to stop. What fails is finding the agent, not enforcing the grant.
+    let (_, stderr, code) = sic(&["run", path, "--llm", "tmux:no-such-agent-exists"]);
     assert_eq!(code, 1, "{stderr}");
-    assert!(stderr.contains("process.exec"), "{stderr}");
-    assert!(
-        stderr.contains("cannot be enforced against the agent"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("no `no-such-agent-exists`"), "{stderr}");
+    assert!(!stderr.contains("cannot be enforced"), "{stderr}");
 
-    // Without a driver there is no agent, so there is nothing to enforce it
-    // against and the program runs as it always did.
+    // And without a driver there is no agent at all.
     let (stdout, stderr, code) = sic(&["run", path]);
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(stdout, "7\n");

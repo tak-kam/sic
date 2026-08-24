@@ -163,8 +163,17 @@ contain the marker it describes, because that property is the whole protocol.
 
 ### Extraction
 
-The answer is the text between the last begin marker and the first end marker
-after it. Each line then loses trailing spaces (`capture-pane` pads to the pane
+The answer is the lines strictly between the last begin marker line and the
+first end marker line after it.
+
+What is searched for is less than the whole marker: `SIC-BEGIN-<id>`, without
+the brackets. The split in the instructions falls between the `S` and the `IC`,
+so a screen holding that as one piece holds something an agent joined, and the
+echo still cannot. Looking for less costs nothing and buys the case that turned
+up the first time an agent used a tool and then answered: it printed
+`<<SIC-BEGIN-...>>`, having lost an angle bracket in the joining. The answer was
+right, and the run waited half an hour for a marker three characters away from
+the one it wanted. Each line then loses trailing spaces (`capture-pane` pads to the pane
 width) and any leading run of the characters a TUI draws with -
 `⏺ ⎿ │ ╭ ╰ ╮ ╯ ─ ▌ · •`.
 Lines that are nothing but those characters are dropped: they are the input box,

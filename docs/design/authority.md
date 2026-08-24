@@ -158,7 +158,31 @@ empty; the 2026-07-28 revision of the protocol went stateless and dropped
 Sampling, Roots and Logging, which makes a hand-written server considerably
 smaller than it would have been - and also means the target moves, which is an
 argument for keeping the surface sic implements to the smallest set that carries
-a capability call.
+a capability call: `tools/list`, `tools/call`, and whichever handshake arrives.
+
+### Whichever handshake arrives, and whichever revision
+
+The stateless revision opens with `server/discover`; the one before it opens
+with `initialize`. Answering both costs a few lines. Announcing a revision
+rather than agreeing on one costs a whole session: the first attempt replied
+`2026-07-28` to a client that speaks the older era, the client refused the
+connection, and what a person saw was a pane where the tool simply was not
+there. The server now echoes the revision the client asked for, which is both
+true - three methods, and the shape of a tool has not changed between them - and
+the only answer that connects.
+
+### The socket, and where it is served
+
+The server the agent starts performs nothing. It forwards each call to a unix
+socket the run is listening on, and that socket is served **from the loop that
+is already watching the pane** - no thread, no lock. The agent can only be
+making a call while it is answering, and that is exactly when sic is waiting for
+it, so the moment a tool use can happen is the moment something is watching for
+one.
+
+A connection carries one question and one answer. The socket is removed when the
+run ends: one outliving its run would be a door into a manifest nobody is
+enforcing any more.
 
 ---
 

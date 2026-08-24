@@ -343,6 +343,61 @@ impl<'a> Vm<'a> {
     }
 
     /// Continues the waiting task with the value the capability produced.
+    /// Records what an agent did while answering the call that is outstanding.
+    ///
+    /// A capability the agent reached through the broker is a capability call:
+    /// authorized against the same manifest, performed by the same code. So it
+    /// enters the journal as one, and needs no vocabulary of its own.
+    ///
+    /// They arrive when the call returns rather than as they happen, because
+    /// the journal belongs to this side and the agent is on the other one. What
+    /// that costs is visible only to somebody tailing the file; what it buys is
+    /// that the events are nested under the call they happened inside, which is
+    /// where a reader looks for them.
+    pub fn record_tool_uses(&mut self, uses: &[sic_core::ToolUse]) {
+        let Some(index) = self.answering else {
+            return;
+        };
+        let TaskState::WaitingCap(pending) = self.tasks[index].state.clone() else {
+            return;
+        };
+        for use_ in uses {
+            let span = self.journal.new_span();
+            self.journal.emit_for(
+                TaskId(index as u64),
+                span,
+                Some(pending.span),
+                EventKind::CapabilityRequested {
+                    cap: use_.cap.clone(),
+                    args: use_.args,
+                    attempt: 1,
+                },
+            );
+            match &use_.outcome {
+                Ok(result) => self.journal.emit_for(
+                    TaskId(index as u64),
+                    span,
+                    Some(pending.span),
+                    EventKind::CapabilityCompleted {
+                        cap: use_.cap.clone(),
+                        result: *result,
+                        attempt: 1,
+                    },
+                ),
+                Err(error) => self.journal.emit_for(
+                    TaskId(index as u64),
+                    span,
+                    Some(pending.span),
+                    EventKind::CapabilityFailed {
+                        cap: use_.cap.clone(),
+                        error: error.clone(),
+                        attempt: 1,
+                    },
+                ),
+            }
+        }
+    }
+
     pub fn resume(&mut self, value: CapValue) -> Status {
         let Some(index) = self.answering.take() else {
             return self.fail_now(FailKind::Internal("resumed while not suspended"));

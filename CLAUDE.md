@@ -86,6 +86,8 @@ sic explain <ID> | inspect-run <ID> | replay <ID>
 sic export <JOURNAL> [--traces P] [--metrics P]
 sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir
+sic mcp                           the capabilities a run granted, served to the
+                                  agent answering for it
 ```
 
 Exit code 3 means a run was suspended and checkpointed - waiting is not failing.

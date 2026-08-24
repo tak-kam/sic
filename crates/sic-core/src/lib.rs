@@ -11,7 +11,10 @@ pub mod id;
 pub mod span;
 
 pub use bin::{BinError, Reader, Writer};
-pub use cap::{CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue};
+pub use cap::{
+    CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue, ToolUse, answer_from_bytes,
+    answer_to_bytes,
+};
 pub use diag::{Diagnostic, Label, Severity};
 pub use hash::{Digest, Sha256};
 pub use id::{AgentId, BlockId, CapId, ConstIdx, FuncId, LocalId, NodeId, TypeId};

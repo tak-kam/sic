@@ -24,6 +24,8 @@ pub enum Reach {
     /// offered back through the broker instead - where it is performed by the
     /// same code, against the same constraint, into the same journal.
     Routed(&'static str),
+    /// Neither, so nothing can enforce it and the run does not start.
+    Unenforceable(&'static str),
 }
 
 /// One rule in the agent's permission configuration.
@@ -35,22 +37,33 @@ pub enum Reach {
 pub struct Rule {
     pub tool: &'static str,
     pub scope: Option<String>,
+    /// Appended to the tool name rather than parenthesised, which is how a
+    /// server's tools are named: `mcp__sic__process_exec`.
+    pub suffix: Option<String>,
 }
+
+/// How the agent names a tool this broker offers it.
+pub const TOOL_PREFIX: &str = "mcp__sic__";
 
 impl Rule {
     fn scoped(tool: &'static str, scope: &str) -> Rule {
         Rule {
             tool,
             scope: Some(scope.to_string()),
+            suffix: None,
         }
     }
 }
 
 impl fmt::Display for Rule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.tool)?;
+        if let Some(suffix) = &self.suffix {
+            f.write_str(suffix)?;
+        }
         match &self.scope {
-            Some(scope) => write!(f, "{}({scope})", self.tool),
-            None => f.write_str(self.tool),
+            Some(scope) => write!(f, "({scope})"),
+            None => Ok(()),
         }
     }
 }
@@ -119,16 +132,21 @@ pub fn authority_of(manifest: &[CapGrant]) -> Result<Authority, Refused> {
         match reach_of(grant) {
             Reach::Summons => {}
             Reach::Translated(rules) => authority.allowed.extend(rules),
-            // Routing is the broker offering the capability back to the agent
-            // as a tool it can call. Until that exists, a grant that needs it
-            // is a grant nothing can enforce, and the run does not start.
-            Reach::Routed(why) => {
+            // The agent's own tool stays denied; the capability arrives at
+            // the broker instead, where it is authorized against this same
+            // manifest and performed by the same code.
+            Reach::Unenforceable(why) => {
                 return Err(Refused {
                     grant: describe(grant),
-                    why: format!(
-                        "{why}, so it has to be routed through the broker, and routing is not \
-                         built yet"
-                    ),
+                    why: why.to_string(),
+                });
+            }
+            Reach::Routed(_) => {
+                authority.routed.push(grant.name.clone());
+                authority.allowed.push(Rule {
+                    tool: TOOL_PREFIX,
+                    scope: None,
+                    suffix: Some(grant.name.replace('.', "_")),
                 });
             }
         }
@@ -168,10 +186,13 @@ pub fn reach_of(grant: &CapGrant) -> Reach {
         // when the broker performs it. Only the broker can do either.
         "human.approve" | "human.choose" => Reach::Routed("only the broker can ask a person"),
 
-        other => {
-            debug_assert!(false, "unknown capability `{other}` reached the authority");
-            Reach::Routed("this broker does not know what it is")
-        }
+        // A capability the compiler knows and this broker does not. Routing it
+        // would offer the agent a tool nothing can perform, and translating it
+        // would need a constraint nobody here can read, so it is the case §5 is
+        // for: the run does not start.
+        _ => Reach::Unenforceable(
+            "this broker cannot perform it, so it can be neither translated nor routed",
+        ),
     }
 }
 

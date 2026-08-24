@@ -38,6 +38,10 @@ pub fn drive_recording(
         match status {
             Status::Suspended(request) => match broker.call(&request) {
                 Ok(CapOutcome::Value(value)) => {
+                    // What the agent reached for while answering. Recorded
+                    // before the answer, because that is the order it happened
+                    // in.
+                    vm.record_tool_uses(&broker.take_tool_uses());
                     if let Some(dir) = record_into {
                         let answer = super::store::Answer::from_broker(&value);
                         if let Err(msg) = super::store::record_answer(dir, &answer) {

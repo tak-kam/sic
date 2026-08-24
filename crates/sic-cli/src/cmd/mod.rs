@@ -4,6 +4,7 @@ pub mod drive;
 pub mod export;
 pub mod hir;
 pub mod journal;
+pub mod mcp;
 pub mod parse;
 pub mod plan;
 pub mod resume;

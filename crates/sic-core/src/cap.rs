@@ -170,6 +170,20 @@ impl std::fmt::Display for CapError {
     }
 }
 
+/// What an agent asked the broker to do while answering.
+///
+/// Digests rather than values, because this reaches the journal and the journal
+/// records digests. It lives here rather than in the broker for the reason
+/// everything else in this file does: the VM has to be able to read one without
+/// being able to see the crate that performs effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolUse {
+    pub cap: String,
+    pub args: crate::Digest,
+    /// The answer, or the message of the error that stopped it.
+    pub outcome: std::result::Result<crate::Digest, String>,
+}
+
 // ---- the wire ----
 //
 // This file's own opening paragraph calls itself the future IPC boundary and

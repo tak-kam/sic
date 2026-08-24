@@ -82,6 +82,15 @@ pub trait AgentDriver: std::fmt::Debug {
     /// Asks, and does not return until there is a whole answer or a failure.
     fn ask(&mut self, ask: Ask<'_>) -> Result<String, CapError>;
 
+    /// What the agent asked the broker to do while answering, since the last
+    /// time this was asked.
+    ///
+    /// A driver that offers the agent nothing answers with nothing, which is
+    /// why this has a default: it is not every driver's business.
+    fn take_tool_uses(&mut self) -> Vec<sic_core::ToolUse> {
+        Vec::new()
+    }
+
     /// The run is over.
     ///
     /// `waiting` means it stopped to be continued later, so anything holding a
@@ -98,6 +107,26 @@ pub fn begin_marker(id: &str) -> String {
 /// The line an agent prints after it.
 pub fn end_marker(id: &str) -> String {
     format!("<<<SIC-END-{id}>>>")
+}
+
+/// What is actually looked for on the screen.
+///
+/// Less than the whole marker, and deliberately: the instructions spell the
+/// marker as `<<<S` and `IC-BEGIN-{id}>>>` to be joined, so the split falls
+/// between the `S` and the `IC`. Any screen holding `SIC-BEGIN-{id}` as one
+/// piece therefore holds something an agent joined - the echo cannot.
+///
+/// Searching for this rather than for the whole marker costs nothing and buys
+/// the case that turned up the first time an agent used a tool and then
+/// answered: it printed `<<SIC-BEGIN-...>>`, having lost an angle bracket in
+/// the joining. The answer was right and the run waited half an hour for a
+/// marker that was three characters away from the one it wanted.
+fn begin_needle(id: &str) -> String {
+    format!("SIC-BEGIN-{id}")
+}
+
+fn end_needle(id: &str) -> String {
+    format!("SIC-END-{id}")
 }
 
 /// A fresh id, so that a marker left on screen by an earlier answer cannot end
@@ -149,10 +178,14 @@ pub fn ask_text(prompt: &str, id: &str, json: bool) -> String {
 /// The last begin marker rather than the first: an agent that answered twice -
 /// a retry inside its own conversation - has the answer that counts last.
 pub fn answer_from(screen: &str, id: &str, json: bool) -> Option<String> {
-    let begin = begin_marker(id);
-    let end = end_marker(id);
-    let start = screen.rfind(&begin)? + begin.len();
-    let stop = start + screen[start..].find(&end)?;
+    // The answer is the lines strictly between the two marker lines, which is
+    // what the instructions ask for. Taking whole lines is also what makes the
+    // rest of a marker line - the brackets, and whatever the interface drew
+    // around them - not part of it.
+    let found = screen.rfind(&begin_needle(id))?;
+    let start = screen[found..].find('\n').map(|n| found + n + 1)?;
+    let ends = start + screen[start..].find(&end_needle(id))?;
+    let stop = screen[..ends].rfind('\n').unwrap_or(ends);
     let text = clean(&screen[start..stop]);
     Some(match json {
         true => fold(&text),

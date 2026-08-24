@@ -34,6 +34,7 @@ Last updated at 451 tests.
 | 30 | `sic plan` | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
 | - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take, and `memory: task` keeps one conversation for as long as a task | `docs/design/driving.md` |
+| - | The agent's authority is the program's manifest: translated into its own permissions where those can hold a constraint, routed back through the broker where they cannot | `docs/design/authority.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 

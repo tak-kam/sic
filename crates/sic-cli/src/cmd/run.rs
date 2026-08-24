@@ -158,7 +158,9 @@ pub fn open_driver(
     // agent is worse than no manifest, because `sic plan` printed it.
     let authority = sic_broker::authority_of(manifest).map_err(|refused| refused.to_string())?;
     let mut driver = sic_broker::TmuxDriver::open(spec, session).map_err(|e| e.message)?;
-    driver.authorize(authority);
+    driver
+        .authorize(authority, manifest.to_vec())
+        .map_err(|e| e.message)?;
     let info = driver.info().clone();
     if let Some(dir) = recording {
         store::record_driver(dir, &info)?;

@@ -12,14 +12,16 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
+use sic_core::{CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256, ToolUse};
 
 pub mod agent;
 pub mod authority;
+pub mod route;
 pub mod tmux;
 
 pub use agent::{AgentDriver, Ask, DriverInfo, Thread};
 pub use authority::{Authority, Reach, Refused, Rule, authority_of};
+pub use route::{Offered, Param, Route};
 pub use tmux::TmuxDriver;
 
 /// The largest file `fs.read` will return. A capability that can exhaust the
@@ -88,41 +90,88 @@ impl Broker {
     pub fn call(&mut self, request: &CapRequest) -> Result<CapOutcome, CapError> {
         // Cloned so the borrow of the manifest ends here: performing a call
         // must not be able to change what it was authorized against.
-        let grant = self.authorize(request)?.clone();
+        let grant = authorize(&self.manifest, request)?.clone();
         match grant.name.as_str() {
-            "fs.read" => fs_read(&grant, request),
-            "fs.write" => fs_write(&grant, request),
-            "process.exec" => process_exec(&grant, request),
-            "human.approve" => human_approve(&grant, request),
-            "process.capture" => process_capture(&grant, request),
-            "human.choose" => human_choose(&grant, request),
+            // The one capability that needs the broker rather than only the
+            // grant, because what answers it is held here.
             "llm.invoke" => match self.driver.as_mut() {
                 Some(driver) => llm_driven(&grant, request, driver.as_mut()),
                 None => llm_invoke(&grant, request),
             },
-            other => Err(CapError::new(format!(
-                "`{other}` is in the manifest but this broker cannot perform it"
-            ))),
+            _ => perform_granted(&grant, request),
         }
     }
 
-    /// Checks that the request names an entry that exists and agrees with it.
+    /// What the agent's routed calls were, since the last time this was asked.
     ///
-    /// Both the index and the name are checked. A request whose index and name
-    /// disagree comes from a broken or hostile caller, and is not something to
-    /// reconcile.
-    fn authorize(&self, request: &CapRequest) -> Result<&CapGrant, CapError> {
-        let grant = self.manifest.get(request.index as usize).ok_or_else(|| {
-            CapError::new(format!("no capability {} in the manifest", request.index))
-        })?;
-        if grant.name != request.name {
-            return Err(CapError::new(format!(
-                "capability {} is `{}`, but the request says `{}`",
-                request.index, grant.name, request.name
-            )));
+    /// They are drained rather than kept because the caller puts them in the
+    /// journal, and an event recorded twice describes something that happened
+    /// once.
+    pub fn take_tool_uses(&mut self) -> Vec<ToolUse> {
+        match self.driver.as_mut() {
+            Some(driver) => driver.take_tool_uses(),
+            None => Vec::new(),
         }
-        Ok(grant)
     }
+}
+
+/// Checks that the request names an entry that exists and agrees with it.
+///
+/// Both the index and the name are checked. A request whose index and name
+/// disagree comes from a broken or hostile caller, and is not something to
+/// reconcile.
+///
+/// A free function because the agent's own calls arrive somewhere else and are
+/// authorized against the same manifest by the same code. A check that only
+/// ran on one of the two paths would not be a check.
+pub fn authorize<'a>(
+    manifest: &'a [CapGrant],
+    request: &CapRequest,
+) -> Result<&'a CapGrant, CapError> {
+    let grant = manifest
+        .get(request.index as usize)
+        .ok_or_else(|| CapError::new(format!("no capability {} in the manifest", request.index)))?;
+    if grant.name != request.name {
+        return Err(CapError::new(format!(
+            "capability {} is `{}`, but the request says `{}`",
+            request.index, grant.name, request.name
+        )));
+    }
+    Ok(grant)
+}
+
+/// Performs a call the grant already allows.
+///
+/// `llm.invoke` is not here: what answers it is held by a `Broker`, and nothing
+/// else is. That is also what stops an agent from summoning another one - the
+/// path its calls arrive on cannot reach this.
+pub fn perform_granted(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    match grant.name.as_str() {
+        "fs.read" => fs_read(grant, request),
+        "fs.write" => fs_write(grant, request),
+        "process.exec" => process_exec(grant, request),
+        "process.capture" => process_capture(grant, request),
+        "human.approve" => human_approve(grant, request),
+        "human.choose" => human_choose(grant, request),
+        other => Err(CapError::new(format!(
+            "`{other}` is in the manifest but this broker cannot perform it"
+        ))),
+    }
+}
+
+/// Performs one call for the agent, against the program's manifest.
+///
+/// The same authorization and the same code as a call from the VM. That is the
+/// whole argument for routing rather than translating: a routed effect is not
+/// the same effect with a similar policy, it is the same call.
+pub fn perform(manifest: &[CapGrant], request: &CapRequest) -> Result<CapOutcome, CapError> {
+    let grant = authorize(manifest, request)?.clone();
+    if grant.name == "llm.invoke" {
+        return Err(CapError::new(
+            "an agent may not summon another agent".to_string(),
+        ));
+    }
+    perform_granted(&grant, request)
 }
 
 // ---- the capabilities ----

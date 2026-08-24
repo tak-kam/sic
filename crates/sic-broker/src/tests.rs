@@ -985,20 +985,36 @@ fn running_a_binary_is_not_running_a_shell_command() {
     ));
 }
 
-/// A manifest that cannot be enforced is worse than none once `sic plan` has
-/// printed it, so the run does not start - and the refusal names the grant and
-/// says which half was missing.
+/// What the agent's permission system cannot hold, it does not get: the tool is
+/// denied and the capability arrives at the broker instead, named as a tool the
+/// agent may call.
 #[test]
-fn a_grant_nothing_can_enforce_stops_the_run_before_it_starts() {
+fn what_cannot_be_translated_is_offered_through_the_broker() {
     let manifest = vec![
         grant("llm.invoke", CapKind::Invoke, "claude"),
         grant("fs.read", CapKind::Read, "./docs"),
-        grant("process.exec", CapKind::Exec, "/usr/bin/cargo"),
+        pinned("process.exec", CapKind::Exec, "/usr/bin/cargo", "abc"),
     ];
-    let refused = authority_of(&manifest).expect_err("nothing can enforce the exec grant");
-    assert!(refused.grant.contains("process.exec"), "{refused}");
-    assert!(refused.grant.contains("/usr/bin/cargo"), "{refused}");
-    assert!(refused.to_string().contains("routed"), "{refused}");
+    let authority = authority_of(&manifest).expect("all of it reaches the agent somehow");
+    let rules: Vec<String> = authority.allowed.iter().map(Rule::to_string).collect();
+    assert_eq!(rules, ["Read(./docs)", "mcp__sic__process_exec"]);
+    assert_eq!(authority.routed, ["process.exec"]);
+}
+
+/// A manifest that cannot be enforced is worse than none once `sic plan` has
+/// printed it, so the run does not start - and the refusal names the grant.
+#[test]
+fn a_grant_nothing_can_enforce_stops_the_run_before_it_starts() {
+    // A capability the compiler could know and this broker does not.
+    let manifest = vec![grant("net.fetch", CapKind::Read, "https://example.com")];
+    let refused = authority_of(&manifest).expect_err("nothing can enforce it");
+    assert!(refused.grant.contains("net.fetch"), "{refused}");
+    assert!(
+        refused
+            .to_string()
+            .contains("neither translated nor routed"),
+        "{refused}"
+    );
 }
 
 /// Everything the agent may do comes from the manifest, in the order the
@@ -1046,4 +1062,133 @@ fn a_manifest_that_grants_nothing_allows_nothing() {
     let args = authority_of(&manifest).expect("it translates").arguments();
     assert!(!args.iter().any(|a| a == "--allowedTools"), "{args:?}");
     assert!(args.iter().any(|a| a == "dontAsk"), "{args:?}");
+}
+
+/// The whole of routing, with no agent in it: a call arrives on the socket, is
+/// authorized against the program's manifest, is performed by the same code
+/// that performs a call from the VM, and is recorded.
+///
+/// The pin is the point. `process.exec ... sha256` hashes the file on every
+/// call, and no permission setting in any agent expresses that - which is why
+/// this capability is routed rather than translated.
+#[test]
+fn a_routed_call_is_the_same_call() {
+    let _lock = scripts_lock();
+    let Some(path) = script("routed", "#!/bin/sh\nexit 0\n") else {
+        return;
+    };
+    let digest = digest_of(&path);
+    let manifest = vec![pinned("process.exec", CapKind::Exec, &path, &digest)];
+
+    let socket = std::path::PathBuf::from(temp_path("route.sock"));
+    let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
+
+    // What the agent is told it may call.
+    let offered = crate::route::offered(route_manifest(&path, &digest).as_slice());
+    assert_eq!(offered[0].tool_name(), "process_exec");
+
+    let request = CapRequest {
+        index: 0,
+        name: "process.exec".into(),
+        args: vec![CapValue::Str(path.clone()), CapValue::List(Vec::new())],
+        task: 0,
+        attempt: 1,
+        timeout_ms: 0,
+        conversation: 0,
+    };
+
+    // The caller is on the other side of the socket, so it has to be answered
+    // while this side is looking - which is what the driver's loop does.
+    let asking = std::thread::spawn({
+        let socket = socket.clone();
+        move || crate::route::ask(&socket, &request)
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !asking.is_finished() && std::time::Instant::now() < deadline {
+        route.serve_pending();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    let bytes = asking
+        .join()
+        .expect("the asker finished")
+        .expect("answered");
+    assert_eq!(
+        crate::route::answer(&bytes),
+        Ok(CapOutcome::Value(CapValue::I64(0)))
+    );
+
+    // And it is on the record, as digests.
+    let used = route.take_tool_uses();
+    assert_eq!(used.len(), 1);
+    assert_eq!(used[0].cap, "process.exec");
+    assert!(used[0].outcome.is_ok());
+    assert!(route.take_tool_uses().is_empty(), "draining happens once");
+
+    std::fs::remove_file(&path).ok();
+}
+
+/// A file whose digest is not the one the grant pins fails the routed call, the
+/// same way it fails a call from a program.
+#[test]
+fn a_routed_call_is_checked_against_the_pin() {
+    let _lock = scripts_lock();
+    let Some(path) = script("routed-pin", "#!/bin/sh\nexit 0\n") else {
+        return;
+    };
+    let manifest = vec![pinned(
+        "process.exec",
+        CapKind::Exec,
+        &path,
+        &"0".repeat(64),
+    )];
+    let request = CapRequest {
+        index: 0,
+        name: "process.exec".into(),
+        args: vec![CapValue::Str(path.clone()), CapValue::List(Vec::new())],
+        task: 0,
+        attempt: 1,
+        timeout_ms: 0,
+        conversation: 0,
+    };
+    let error = crate::perform(&manifest, &request).expect_err("the pin does not match");
+    assert!(error.message.contains("but the grant pins"), "{error}");
+    std::fs::remove_file(&path).ok();
+}
+
+/// An agent cannot summon another agent: the path its calls arrive on does not
+/// reach what answers a model call.
+#[test]
+fn an_agent_may_not_summon_another_agent() {
+    let manifest = vec![grant("llm.invoke", CapKind::Invoke, "claude")];
+    let error = crate::perform(&manifest, &invoke("why?")).expect_err("refused");
+    assert!(error.message.contains("summon another agent"), "{error}");
+}
+
+fn route_manifest(path: &str, digest: &str) -> Vec<CapGrant> {
+    vec![pinned("process.exec", CapKind::Exec, path, digest)]
+}
+
+/// An agent that joins the marker imperfectly still gets its answer read.
+///
+/// This is what happened the first time one used a tool and then answered: it
+/// printed two angle brackets where the instructions asked for three. The
+/// answer was right; the run waited half an hour for a marker three characters
+/// away from the one it wanted.
+#[test]
+fn a_marker_joined_imperfectly_is_still_a_marker() {
+    let id = "ebcc06e5";
+    let screen =
+        format!("some banner\n<<SIC-BEGIN-{id}>>\n{{\"said\": \"it worked\"}}\n<<SIC-END-{id}>>\n");
+    assert_eq!(
+        answer_from(&screen, id, true).as_deref(),
+        Some("{\"said\": \"it worked\"}")
+    );
+
+    // And the property the whole protocol rests on is untouched: the split
+    // falls between the `S` and the `IC`, so nothing in the instructions is a
+    // marker however it is read.
+    let text = ask_text("a question", id, true);
+    assert!(!text.contains(&format!("SIC-BEGIN-{id}")), "{text}");
+    assert!(!text.contains(&format!("SIC-END-{id}")), "{text}");
+    assert!(answer_from(&text, id, true).is_none());
 }
