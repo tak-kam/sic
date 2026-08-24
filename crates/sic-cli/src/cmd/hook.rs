@@ -42,7 +42,7 @@ pub fn run() -> ExitCode {
     // being interpreted here - and the rest of the payload, which is about the
     // session and not about the tool, is left out.
     let detail = match message.member("tool_input") {
-        Some(value) => rendered(value),
+        Some(value) => written_back(value),
         None => String::new(),
     };
 
@@ -66,10 +66,12 @@ fn refuse(reason: &str) -> ExitCode {
 
 /// A parsed value written back out.
 ///
-/// `sic-json` reads and does not write, because until now nothing needed it to.
-/// This is small enough to keep here rather than growing that crate for one
-/// caller: what it produces is never read back, only digested and shown.
-fn rendered(value: &sic_json::Json) -> String {
+/// `sic-json` writes the leaf - a string, escaped - and stops there, because
+/// every document this workspace writes is a fixed shape built by the code that
+/// owns it. This is the exception that proves it worth keeping: one caller
+/// needs a whole value written back, what it produces is never read back, only
+/// digested and shown, and that is not enough to make the crate a serializer.
+fn written_back(value: &sic_json::Json) -> String {
     use sic_json::Json;
     match value {
         Json::Null => "null".into(),
@@ -78,13 +80,13 @@ fn rendered(value: &sic_json::Json) -> String {
         Json::Float(v) => format!("{v}"),
         Json::Str(s) => sic_json::quoted(s),
         Json::Array(items) => {
-            let parts: Vec<String> = items.iter().map(rendered).collect();
+            let parts: Vec<String> = items.iter().map(written_back).collect();
             format!("[{}]", parts.join(","))
         }
         Json::Object(members) => {
             let parts: Vec<String> = members
                 .iter()
-                .map(|(name, value)| format!("{}:{}", sic_json::quoted(name), rendered(value)))
+                .map(|(name, value)| format!("{}:{}", sic_json::quoted(name), written_back(value)))
                 .collect();
             format!("{{{}}}", parts.join(","))
         }

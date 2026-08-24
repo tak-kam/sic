@@ -258,7 +258,7 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
             format!(
                 "{{\"resultType\":\"complete\",\"content\":[{{\"type\":\"text\",\"text\":{}}}],\
                  \"isError\":false}}",
-                quoted(&rendered(&value))
+                quoted(&for_the_agent(&value))
             ),
         ),
         // A capability that cannot answer within the call suspends the run when
@@ -273,7 +273,11 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
 }
 
 /// A value as the agent reads it.
-fn rendered(value: &CapValue) -> String {
+///
+/// Not the same job as `runs::as_recorded`, which renders a `CapValue` for a
+/// person reading a run back. This one is the text of an answer to a tool
+/// call, so a string is itself and a list is one item per line.
+fn for_the_agent(value: &CapValue) -> String {
     match value {
         CapValue::Unit => "done".into(),
         CapValue::Bool(v) => v.to_string(),

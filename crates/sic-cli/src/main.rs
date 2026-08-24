@@ -6,6 +6,7 @@
 
 mod cmd;
 mod module;
+mod path;
 
 use std::process::ExitCode;
 

@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use sic_core::{Diagnostic, Label, SourceFile, SourceMap, Span};
+
+use crate::path::display;
 use sic_syntax::ast::{Item, Module};
 
 /// A program, gathered from every file it is built out of.
@@ -229,13 +231,6 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     out
-}
-
-/// A path as it should appear in a message. Paths that came from an import are
-/// built from strings that were valid UTF-8, so the lossy case cannot be hit by
-/// anything sic itself produced.
-fn display(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
 }
 
 /// Refuses a path any component of which is a symbolic link.

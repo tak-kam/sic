@@ -291,7 +291,7 @@ pub fn explain(prefix: &str) -> ExitCode {
         for line in question.lines() {
             println!("    {line}");
         }
-        println!("    answered {}", rendered(&recorded.value));
+        println!("    answered {}", as_recorded(&recorded.value));
         if let Some(because) = &recorded.because {
             println!("    because {because}");
         }
@@ -300,7 +300,11 @@ pub fn explain(prefix: &str) -> ExitCode {
 }
 
 /// A recorded answer, as a person reads it back.
-fn rendered(value: &CapValue) -> String {
+///
+/// Not the same job as `mcp::for_the_agent`, which renders a `CapValue` as the
+/// text of an answer. This one is read next to other values in a listing, so a
+/// string is quoted and a list is bracketed.
+fn as_recorded(value: &CapValue) -> String {
     match value {
         CapValue::Unit => "null".to_string(),
         CapValue::Bool(v) => v.to_string(),

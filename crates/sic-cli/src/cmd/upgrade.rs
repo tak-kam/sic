@@ -19,6 +19,7 @@ use std::process::{Command, ExitCode};
 use sic_core::{Digest, Sha256};
 
 use super::{EXIT_FAILURE, EXIT_USAGE};
+use crate::path::display;
 
 /// How much of a file is hashed at a time. A binary is large enough that
 /// reading it whole to check it would be a waste of memory for no gain.
@@ -621,10 +622,6 @@ fn manager_of(path: &Path) -> Option<&'static str> {
         return Some("Homebrew");
     }
     None
-}
-
-fn display(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
 }
 
 #[cfg(test)]
