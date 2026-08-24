@@ -211,3 +211,76 @@ fn a_journal_without_timestamps_still_exports() {
     assert!(json.contains("\"name\":\"main\""), "{json}");
     assert!(json.contains("\"startTimeUnixNano\":\"0\""), "{json}");
 }
+
+/// A budget being spent belongs to the call that spent it.
+///
+/// `docs/design/observability.md` §3 named `sic.budget.remaining` all along and
+/// nothing carried it. It is on the capability span rather than the enclosing
+/// function's, because two budgeted sites in one function would otherwise write
+/// to one place and a reader could not tell which had spent what.
+#[test]
+fn a_capability_span_says_what_is_left_of_the_budget() {
+    let d = Digest::of(b"x");
+    let events = vec![
+        event(
+            0,
+            0,
+            None,
+            100,
+            EventKind::RunStarted {
+                workflow: "main".into(),
+                args: d,
+            },
+        ),
+        event(
+            1,
+            2,
+            Some(0),
+            120,
+            EventKind::BudgetConsumed {
+                kind: "calls".into(),
+                amount: 1,
+                remaining: 7,
+            },
+        ),
+        event(
+            2,
+            2,
+            Some(0),
+            121,
+            EventKind::CapabilityRequested {
+                cap: "llm.invoke".into(),
+                args: d,
+                attempt: 1,
+            },
+        ),
+        event(
+            3,
+            2,
+            Some(0),
+            130,
+            EventKind::CapabilityCompleted {
+                cap: "llm.invoke".into(),
+                result: d,
+                attempt: 1,
+            },
+        ),
+        event(4, 0, None, 140, EventKind::RunCompleted { result: d }),
+    ];
+
+    let doc = traces(&events, &Resource::default());
+    // On the span of the call, not on the run's: each span object starts with
+    // its own `traceId`, so splitting on that is what separates them.
+    let call = doc
+        .split("{\"traceId\"")
+        .find(|span| span.contains("\"name\":\"llm.invoke\""))
+        .expect("a span for the call");
+    assert!(call.contains("sic.budget.remaining"), "{call}");
+    assert!(call.contains("\"intValue\":7"), "{call}");
+
+    let run = doc
+        .split("{\"traceId\"")
+        .find(|span| span.contains("\"name\":\"main\""))
+        .expect("a span for the run");
+    assert!(!run.contains("sic.budget.remaining"), "{run}");
+}

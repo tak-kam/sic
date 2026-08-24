@@ -1473,11 +1473,16 @@ impl<'a> Vm<'a> {
             }
         }
 
-        self.charge_budget(index, pc, &name)?;
-
         let policy = self.program.policy_at(pc);
         let frame_span = self.tasks[index].frames.last().map(|f| f.span);
+        // The span exists before the budget is charged so that the charge is
+        // recorded against the call that spent it. It used to be recorded
+        // against the enclosing function, where two budgeted sites in one
+        // function wrote to one place and a reader could not tell which had
+        // spent what.
         let span = self.journal.new_span();
+        self.charge_budget(index, pc, &name, span, frame_span)?;
+
         // Recorded here, where the instruction runs, rather than where the
         // request leaves the VM. Two tasks can be waiting at once, and the
         // journal should show that.
@@ -1524,7 +1529,14 @@ impl<'a> Vm<'a> {
     /// A refused call is therefore neither charged nor recorded. The journal is
     /// this runtime's account of itself, and an account should not bill for
     /// something it declined to do.
-    fn charge_budget(&mut self, index: usize, pc: u32, name: &str) -> Result<(), FailInfo> {
+    fn charge_budget(
+        &mut self,
+        index: usize,
+        pc: u32,
+        name: &str,
+        span: SpanId,
+        parent: Option<SpanId>,
+    ) -> Result<(), FailInfo> {
         let Some(budget) = self
             .program
             .policy_at(pc)
@@ -1544,11 +1556,10 @@ impl<'a> Vm<'a> {
         }
         self.spent.insert(pc, used);
 
-        let frame_span = self.tasks[index].frames.last().map(|f| f.span);
         self.journal.emit_for(
             TaskId(index as u64),
-            frame_span.unwrap_or(self.root_span),
-            Some(self.root_span),
+            span,
+            parent,
             EventKind::BudgetConsumed {
                 kind: "calls".into(),
                 amount: 1,

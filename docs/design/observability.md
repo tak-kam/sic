@@ -86,9 +86,26 @@ Language-specific attributes use the `sic.` namespace, per section 24 of the
 specification:
 
 ```text
-sic.run.id, sic.task.id, sic.capability.name, sic.capability.attempt,
-sic.checkpoint.digest, sic.budget.remaining
+sic.run.id, sic.task.id, sic.workflow.name, sic.function.name,
+sic.capability.name, sic.capability.attempt, sic.args.digest,
+sic.result.digest, sic.budget.remaining
 ```
+
+`sic.budget.remaining` is on the span of the call that spent it, not on the
+enclosing function's: two budgeted sites in one function would otherwise write
+to one place and a reader could not tell which had spent what. The charge is
+recorded before the request - a call the budget refuses must not leave a request
+behind it - so the exporter holds the attribute until the span it belongs to
+opens, and drops it if the call never left the VM.
+
+**There is no `sic.checkpoint.digest`.** This list used to name one, and nothing
+carried it. It is gone rather than implemented, and the reason is the one the
+exporter already applies to `RunSuspended` and `RunResumed`: a checkpoint is how
+a run was carried out rather than what the program did, and the program did not
+ask for one. A span describes the program's work; the machinery that let the
+work stop and start again is the journal's business and not a trace's. The name
+was also wrong about what exists - the journal records `checkpoint_id`, which is
+not a digest.
 
 For a model call the GenAI conventions apply, so a capability span for
 `llm.invoke` also carries:

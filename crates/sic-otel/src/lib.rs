@@ -50,6 +50,7 @@ pub mod attr {
     pub const FUNCTION: &str = "sic.function.name";
     pub const ARGS_DIGEST: &str = "sic.args.digest";
     pub const RESULT_DIGEST: &str = "sic.result.digest";
+    pub const BUDGET_REMAINING: &str = "sic.budget.remaining";
 
     /// The GenAI conventions, for a model call.
     pub const GEN_AI_SYSTEM: &str = "gen_ai.system";

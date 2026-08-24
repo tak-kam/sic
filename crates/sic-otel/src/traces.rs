@@ -37,6 +37,9 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
     let mut open: HashMap<SpanId, SpanBuilder> = HashMap::new();
     // Insertion order, so the output is stable and readable.
     let mut order: Vec<SpanId> = Vec::new();
+    // Budget charges waiting for the span they belong to, which the request
+    // after them opens.
+    let mut charged: Vec<(SpanId, i64)> = Vec::new();
     let mut finished: Vec<SpanBuilder> = Vec::new();
     let mut trace_id = 0u128;
     let mut last_ts = 0u128;
@@ -94,6 +97,17 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
                         .push((attr::GEN_AI_SYSTEM.into(), Value::str("sic")));
                     span.attributes
                         .push((attr::GEN_AI_OPERATION.into(), Value::str("invoke")));
+                }
+                // The charge is recorded before the request, because a call the
+                // budget refuses must not leave a request behind it. So the
+                // attribute is held until its span exists.
+                if let Some(at) = charged
+                    .iter()
+                    .position(|(span_id, _)| *span_id == event.span)
+                {
+                    let (_, remaining) = charged.remove(at);
+                    span.attributes
+                        .push((attr::BUDGET_REMAINING.into(), Value::Int(remaining)));
                 }
                 push(&mut open, &mut order, span);
             }
@@ -161,15 +175,28 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
                     |_| {},
                 );
             }
-            // These do not open or close a span; they belong to one that is
-            // already open.
+            // A budget being spent belongs to the call that spent it, and the
+            // event carries that call's span. It opens nothing: it is a fact
+            // about a call that is about to happen, not a thing other things
+            // happen inside - so it waits for the request that opens the span.
+            EventKind::BudgetConsumed { remaining, .. } => {
+                charged.push((event.span, *remaining as i64));
+            }
+            // These do not open or close a span, and do not belong on one. A
+            // suspension and a checkpoint are how a run was carried out rather
+            // than what the program did - the program did not ask for either -
+            // and a tool use is the agent's, recorded beside the call it
+            // happened inside rather than as an attribute of it.
             EventKind::RunSuspended { .. }
             | EventKind::RunResumed { .. }
             | EventKind::CheckpointWritten { .. }
-            | EventKind::ToolUsed { .. }
-            | EventKind::BudgetConsumed { .. } => {}
+            | EventKind::ToolUsed { .. } => {}
         }
     }
+
+    // A charge whose call never left the VM. Nothing to attach it to, and
+    // nothing lost: the run failed, and the failure says why.
+    drop(charged);
 
     // A span that never closed - the run was killed - is exported with the last
     // timestamp seen and a status saying so. Dropping it would hide exactly the
