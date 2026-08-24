@@ -2877,3 +2877,60 @@ fn a_grant_the_agent_cannot_hold_is_routed_rather_than_refused() {
     assert_eq!(stdout, "7\n");
     std::fs::remove_file(src).ok();
 }
+
+/// A run killed mid-write loses its last line, and that line is the one that
+/// says how the run ended. Losing it is allowed; losing it in silence is not.
+///
+/// The `run_suspended` case is the one that decides this: the run drops out of
+/// `sic runs --waiting`, which is the list a person or an agent answering runs
+/// works from, and nothing tells them a line could not be read.
+#[test]
+fn a_journal_cut_mid_write_says_so_rather_than_going_quiet() {
+    let store = temp_dir("cut-journal");
+    let checkpoint = store.join("cut.sicc");
+    let (_, stderr, code) = sic_with_store(
+        repo_root(),
+        Some(&store),
+        &[
+            "run",
+            &example("approval.sic"),
+            "--record",
+            "--checkpoint",
+            checkpoint.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, 3, "{stderr}");
+
+    let dir = std::fs::read_dir(&store)
+        .expect("the store")
+        .find_map(|e| {
+            let path = e.ok()?.path();
+            path.join("journal.jsonl").exists().then_some(path)
+        })
+        .expect("one recorded run");
+    let journal = dir.join("journal.jsonl");
+    let text = std::fs::read_to_string(&journal).expect("readable");
+
+    // Before: it is waiting, and it says so.
+    let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+    assert!(stdout.contains("waiting"), "{stdout}");
+
+    // Cut the last line in half, the way a killed process does.
+    let keep = text.trim_end().rfind('\n').expect("more than one line");
+    let cut = &text[..keep + 1 + (text.len() - keep) / 2];
+    std::fs::write(&journal, cut).expect("writable");
+
+    for command in [
+        vec!["runs", "--waiting"],
+        vec!["runs"],
+        vec!["explain", dir.file_name().unwrap().to_str().unwrap()],
+    ] {
+        let (_, stderr, _) = sic_with_store(repo_root(), Some(&store), &command);
+        assert!(
+            stderr.contains("skipped line"),
+            "{command:?} went quiet: {stderr}"
+        );
+    }
+
+    std::fs::remove_dir_all(&store).ok();
+}

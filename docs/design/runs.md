@@ -145,6 +145,25 @@ That is also why `llm.invoke` deferring is not a limitation to be fixed later.
 The thing outside that answers a model call can be whatever is driving `sic`,
 and it finds its work with `sic runs --waiting`.
 
+### A journal cut mid-write says so
+
+A journal is append-only and a run can be killed while writing one, so its last
+line may be a fragment. It is skipped rather than refused, because refusing to
+look at a run whose last line is half-written would refuse exactly the runs
+worth looking at.
+
+But every command that reads a recorded run now says which lines it could not
+read, and the reason is which line that usually is. The last line of a journal
+is `run_completed`, `run_failed` or `run_suspended`, and those three are the
+only ones an outcome is read from - so a run that was waiting becomes
+`unfinished`, drops out of the list above without a word, and whatever was going
+to answer it never learns that anything was missing. `sic replay` has the same
+problem wearing a different hat: it reports the missing event as a determinism
+finding against the VM.
+
+A warning does not make `unfinished` correct. It makes it visibly uncertain,
+which is all the reader needs.
+
 ---
 
 ## 6. Not here

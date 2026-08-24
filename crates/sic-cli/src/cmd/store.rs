@@ -85,12 +85,35 @@ pub fn list() -> Result<Vec<PathBuf>, String> {
     Ok(runs)
 }
 
-/// Reads a run's journal.
+/// Reads a run's journal, saying what it could not read.
+///
+/// A journal is append-only and a run can be killed mid-write, so its last line
+/// may be a fragment. Skipping it is right - refusing to look at a run because
+/// its last line is half-written would refuse exactly the runs worth looking at
+/// - but skipping it in silence is not, because of which line that usually is.
+///
+/// The last line of a journal is `run_completed`, `run_failed` or
+/// `run_suspended`, and those three are the only ones `summarize` reads an
+/// outcome from. So a run that is waiting for an answer becomes `unfinished`
+/// and drops out of `sic runs --waiting` - the list a person or an agent works
+/// from - without a word, and whatever was going to answer it never learns that
+/// a line could not be read. `sic replay` has the second version of the same
+/// problem: it reports the missing event as a determinism finding against the
+/// VM, caused by half a line.
+///
+/// The warning is printed here rather than handed back so that every command
+/// reading a recorded run inherits it. A caller that has to remember to ask is
+/// a caller that will not.
 pub fn read_journal(dir: &Path) -> Result<Vec<TimedEvent>, String> {
     let path = dir.join(JOURNAL);
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("cannot read `{}`: {e}", path.display()))?;
     let result = sic_journal::read_jsonl(&text);
+    for skipped in &result.skipped {
+        // Named, because `sic runs` reads many journals and a warning that did
+        // not say which one would send somebody to the wrong run.
+        eprintln!("warning: {}: skipped {skipped}", path.display());
+    }
     Ok(result.events)
 }
 
