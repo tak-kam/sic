@@ -167,13 +167,8 @@ fn a_large_file_is_refused_rather_than_read() {
 
 #[test]
 fn runs_a_granted_executable() {
-    // Skip where the usual no-op binary is absent rather than fail.
-    let Some(path) = ["/bin/true", "/usr/bin/true"]
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists())
-    else {
-        return;
-    };
+    let path = system_binary(&["/bin/true", "/usr/bin/true"]);
+    let path = path.as_str();
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, path)]);
     assert_eq!(
         broker.call(&request(0, "process.exec", &[path])),
@@ -183,12 +178,8 @@ fn runs_a_granted_executable() {
 
 #[test]
 fn reports_a_nonzero_exit_code() {
-    let Some(path) = ["/bin/false", "/usr/bin/false"]
-        .into_iter()
-        .find(|p| std::path::Path::new(p).exists())
-    else {
-        return;
-    };
+    let path = system_binary(&["/bin/false", "/usr/bin/false"]);
+    let path = path.as_str();
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, path)]);
     match broker.call(&request(0, "process.exec", &[path])) {
         Ok(CapOutcome::Value(CapValue::I64(code))) => assert_ne!(code, 0),
@@ -253,50 +244,96 @@ fn call_settled(broker: &mut Broker, request: &CapRequest) -> Result<CapOutcome,
 ///
 /// Each test uses its own name: they run in parallel, and a shared file would
 /// be busy or already deleted.
+///
+/// It panics rather than returning `None` when `/bin/sh` is absent, and that is
+/// the point. These are the tests for the one crate allowed to run other
+/// programs; a green result that means "the property holds" and a green result
+/// that means "nothing was checked" have to be distinguishable. `/bin/sh` is
+/// required by POSIX and this function is `#[cfg(unix)]`, so a machine without
+/// it is a broken machine and saying so is more useful than passing.
 #[cfg(unix)]
-fn script(name: &str, body: &str) -> Option<String> {
+fn script(name: &str, body: &str) -> String {
     use std::os::unix::fs::PermissionsExt;
 
-    if !std::path::Path::new("/bin/sh").exists() {
-        return None;
-    }
+    assert!(
+        std::path::Path::new("/bin/sh").exists(),
+        "these tests run scripts, and this machine has no /bin/sh"
+    );
     let path = temp_path(name);
-    std::fs::write(&path, body).ok()?;
-    let mut perms = std::fs::metadata(&path).ok()?.permissions();
+    std::fs::write(&path, body).expect("a writable temporary directory");
+    let mut perms = std::fs::metadata(&path)
+        .expect("the file just written")
+        .permissions();
     perms.set_mode(0o755);
-    std::fs::set_permissions(&path, perms).ok()?;
-    Some(path)
+    std::fs::set_permissions(&path, perms).expect("the file just written");
+    path
 }
 
-/// A script that runs longer than any deadline a test sets.
+/// The first of `candidates` that is on this machine.
+///
+/// Where a standard tool lives varies; whether it is there does not. A unix
+/// machine with none of these is one where the test cannot say anything, and
+/// that is a failure rather than a pass.
+fn system_binary(candidates: &[&str]) -> String {
+    candidates
+        .iter()
+        .find(|p| std::path::Path::new(p).exists())
+        .unwrap_or_else(|| {
+            panic!("this test needs one of {candidates:?}, and this machine has none")
+        })
+        .to_string()
+}
+
+/// How long a slow child sleeps before it finishes.
+///
+/// Long enough to outlast a 100ms deadline by a wide margin, short enough that
+/// the test which waits for it does not cost five seconds every run.
+#[cfg(unix)]
+const SLOW_CHILD: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// A script that runs longer than any deadline a test sets, and the file it
+/// writes if it is allowed to finish.
+///
+/// The marker is what makes "killed" and "waited for" tell each other apart.
+/// A stopwatch cannot: a child that ran to completion also comes back inside
+/// any generous bound, so an elapsed-time assertion passes either way.
 ///
 /// `process.exec` takes no arguments yet, so a slow child has to be a file
-/// rather than `sleep 5`.
+/// rather than `sleep 1`.
 #[cfg(unix)]
-fn slow_script(name: &str) -> Option<String> {
-    // Long enough to outlast a 100ms deadline by a wide margin, short enough
-    // that the test which waits for it does not cost five seconds every run.
-    script(name, "#!/bin/sh\nsleep 1\n")
+fn slow_script(name: &str) -> (String, String) {
+    let marker = temp_path(&format!("{name}.finished"));
+    std::fs::remove_file(&marker).ok();
+    let body = format!(
+        "#!/bin/sh\nsleep {}\necho finished > {marker}\n",
+        SLOW_CHILD.as_secs()
+    );
+    (script(name, &body), marker)
 }
 
 #[cfg(unix)]
 #[test]
 fn a_deadline_kills_a_slow_child() {
     let _serialized = scripts_lock();
-    let Some(script) = slow_script("deadline.sh") else {
-        return;
-    };
+    let (script, marker) = slow_script("deadline.sh");
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
     let mut req = request(0, "process.exec", &[&script]);
     req.timeout_ms = 100;
 
-    let started = std::time::Instant::now();
     let err = call_settled(&mut broker, &req).unwrap_err();
     assert!(err.message.contains("did not finish within"), "{err}");
-    // The child was killed rather than waited out.
-    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+
+    // The child was killed rather than left running. Waiting out its own sleep
+    // twice over is a wait rather than a race: if the kill did not happen, the
+    // marker is there well before this returns.
+    std::thread::sleep(SLOW_CHILD * 2);
+    assert!(
+        !std::path::Path::new(&marker).exists(),
+        "the deadline was reported, and the child ran to completion anyway"
+    );
 
     std::fs::remove_file(&script).ok();
+    std::fs::remove_file(&marker).ok();
 }
 
 #[cfg(unix)]
@@ -304,15 +341,20 @@ fn a_deadline_kills_a_slow_child() {
 fn without_a_deadline_a_slow_child_is_waited_for() {
     // The same script, with no timeout, runs to completion.
     let _serialized = scripts_lock();
-    let Some(script) = slow_script("waited.sh") else {
-        return;
-    };
+    let (script, marker) = slow_script("waited.sh");
     let mut broker = Broker::new(vec![grant("process.exec", CapKind::Exec, &script)]);
     match call_settled(&mut broker, &request(0, "process.exec", &[&script])) {
         Ok(CapOutcome::Value(CapValue::I64(code))) => assert_eq!(code, 0),
         other => panic!("expected an exit code, got {other:?}"),
     }
+    // The other half of what the deadline test asserts: this child did finish,
+    // so the marker's absence there means something.
+    assert!(
+        std::path::Path::new(&marker).exists(),
+        "the call returned, and the child it waited for never finished"
+    );
     std::fs::remove_file(&script).ok();
+    std::fs::remove_file(&marker).ok();
 }
 
 #[test]
@@ -331,9 +373,7 @@ fn a_capability_that_cannot_honour_a_deadline_says_so() {
 fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
     // A path says where to look, not what is there.
     let _serialized = scripts_lock();
-    let Some(script) = script("pinned.sh", "#!/bin/sh\nexit 0\n") else {
-        return;
-    };
+    let script = script("pinned.sh", "#!/bin/sh\nexit 0\n");
     let digest = digest_of(&script);
 
     let mut broker = Broker::new(vec![pinned(
@@ -360,9 +400,7 @@ fn a_pinned_executable_runs_only_if_it_is_the_pinned_one() {
 fn a_pin_is_checked_on_every_call() {
     // A check that ran earlier tells you what was true earlier.
     let _serialized = scripts_lock();
-    let Some(script) = script("recheck.sh", "#!/bin/sh\nexit 0\n") else {
-        return;
-    };
+    let script = script("recheck.sh", "#!/bin/sh\nexit 0\n");
     let digest = digest_of(&script);
     let mut broker = Broker::new(vec![pinned(
         "process.exec",
@@ -1081,9 +1119,7 @@ fn a_manifest_that_grants_nothing_allows_nothing() {
 #[test]
 fn a_routed_call_is_the_same_call() {
     let _lock = scripts_lock();
-    let Some(path) = script("routed", "#!/bin/sh\nexit 0\n") else {
-        return;
-    };
+    let path = script("routed", "#!/bin/sh\nexit 0\n");
     let digest = digest_of(&path);
     let manifest = vec![pinned("process.exec", CapKind::Exec, &path, &digest)];
 
@@ -1146,9 +1182,7 @@ fn a_routed_call_is_the_same_call() {
 #[test]
 fn a_routed_call_is_checked_against_the_pin() {
     let _lock = scripts_lock();
-    let Some(path) = script("routed-pin", "#!/bin/sh\nexit 0\n") else {
-        return;
-    };
+    let path = script("routed-pin", "#!/bin/sh\nexit 0\n");
     let manifest = vec![pinned(
         "process.exec",
         CapKind::Exec,
@@ -1329,8 +1363,12 @@ fn a_grant_follows_a_symbolic_link_deliberately() {
     let link = temp_path("the-link.txt");
     std::fs::write(&target, "what it points at").expect("writable");
     std::fs::remove_file(&link).ok();
-    if std::os::unix::fs::symlink(&target, &link).is_err() {
-        // A filesystem without links has nothing to say here.
+    if let Err(e) = std::os::unix::fs::symlink(&target, &link) {
+        // A filesystem without links has nothing to say here - and unlike the
+        // tests that need `/bin/sh`, this is a real environment rather than a
+        // broken one, so it skips. Out loud: a skip nobody can see is a test
+        // that passes without running.
+        eprintln!("skipped a_grant_follows_a_symbolic_link_deliberately: {e}");
         return;
     }
 
