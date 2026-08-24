@@ -230,4 +230,21 @@ fn every_diagnostic_code_is_in_the_index() {
         stale.is_empty(),
         "these codes are in docs/diagnostics.md but nothing reports them: {stale:?}"
     );
+
+    // And once each. A code names one error, so two rows for one code is two
+    // answers to the question a person greps this file with - which the two
+    // checks above are both satisfied by, since a duplicate is neither missing
+    // nor stale.
+    let mut seen = listed.clone();
+    seen.sort();
+    let mut twice: Vec<String> = Vec::new();
+    for pair in seen.windows(2) {
+        if pair[0] == pair[1] && !twice.contains(&pair[0]) {
+            twice.push(pair[0].clone());
+        }
+    }
+    assert!(
+        twice.is_empty(),
+        "these codes are listed more than once in docs/diagnostics.md: {twice:?}"
+    );
 }

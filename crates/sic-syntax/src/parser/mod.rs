@@ -540,7 +540,7 @@ impl Parser {
                 other => {
                     let span = self.span();
                     self.error(
-                        "E0210",
+                        "E0215",
                         "`memory` takes `task`",
                         span,
                         format!("found {}, and `task` is the only scope", other.describe()),

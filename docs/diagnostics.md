@@ -4,8 +4,15 @@ Every diagnostic `sic` reports carries a code. They are grouped by the layer
 that produces them, and the ranges are deliberately sparse so a layer can gain a
 code without renumbering anything.
 
+**A code names one error.** Not one site: `E0302` is every wrong argument count
+anywhere in the checker, and that is one error reported in many places. Two
+unrelated errors sharing a code is the thing this rules out, because a code is a
+promise to whoever reads the output - somebody who greps this file for what they
+were told should find one answer.
+
 A test in `sic-core` fails if a code appears in the source and not in this file,
-or the other way round. An index that drifts is worse than none.
+if a code is listed here and nothing reports it, or if a code is listed twice.
+An index that drifts is worse than none.
 
 | Range | Layer |
 |---|---|
@@ -44,12 +51,12 @@ reason.
 | E0207 | `retry` or `timeout` without a positive number |
 | E0208 | `budget` without a positive number |
 | E0209 | an unknown setting in an `agent` body |
-| E0210 | `memory` with anything but `task` |
 | E0210 | a word reserved for a later phase |
 | E0211 | `sha256` without a digest |
 | E0212 | `import` without a path |
 | E0213 | `args` without a list of strings |
 | E0214 | an expression tree deeper than the parser will build |
+| E0215 | `memory` with anything but `task` |
 
 ## E03xx — names, types and effects
 

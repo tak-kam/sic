@@ -380,8 +380,8 @@ fn an_agent_may_keep_a_conversation() {
     let dump = ok("agent r { input: String, output: P, budget: 2, memory: task }\nfn main() { }");
     assert!(dump.contains("memory"), "{dump}");
 
-    assert!(codes("agent r { memory: run }\nfn main() { }").contains(&"E0210"));
-    assert!(codes("agent r { memory: 3 }\nfn main() { }").contains(&"E0210"));
+    assert!(codes("agent r { memory: run }\nfn main() { }").contains(&"E0215"));
+    assert!(codes("agent r { memory: 3 }\nfn main() { }").contains(&"E0215"));
     // An unknown setting still says what the settings are.
     assert!(codes("agent r { recall: task }\nfn main() { }").contains(&"E0209"));
 }
