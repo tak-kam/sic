@@ -103,6 +103,19 @@ fn section_entry(bytes: &[u8], kind: u32) -> usize {
         .expect("the section is in the table")
 }
 
+/// The table entry of the last section in the file that has a body.
+///
+/// The empty ones are skipped because growing one of those is a different test:
+/// a signature section that is not empty is refused for being a signature.
+fn last_section(bytes: &[u8]) -> usize {
+    let count = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+    (0..count)
+        .map(|i| 16 + i * 12)
+        .filter(|off| u32::from_le_bytes(bytes[*off + 8..*off + 12].try_into().unwrap()) > 0)
+        .max_by_key(|off| u32::from_le_bytes(bytes[*off + 4..*off + 8].try_into().unwrap()))
+        .expect("the table has a section with a body")
+}
+
 fn set_section_len(bytes: &mut [u8], kind: u32, len: u32) {
     let entry = section_entry(bytes, kind);
     bytes[entry + 8..entry + 12].copy_from_slice(&len.to_le_bytes());
@@ -163,10 +176,16 @@ fn bytes_left_over_inside_a_section_are_refused() {
     // A section whose body holds more than its own elements is a place to hide
     // data that travels with the module and that nothing else looks at. Each
     // decoder ends with `expect_end` for that reason, and this is the check.
+    // Grown into a byte added at the end of the file rather than into its
+    // neighbour: a section that reaches into the next one is refused earlier,
+    // for aliasing, and this test is about what a decoder does with a body it
+    // can read to the end of and still have bytes left.
     let err = decode_corrupted(|bytes| {
-        let entry = section_entry(bytes, section::CONSTANTS);
-        let len = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().unwrap());
-        set_section_len(bytes, section::CONSTANTS, len + 1);
+        let last = last_section(bytes);
+        let kind = u32::from_le_bytes(bytes[last..last + 4].try_into().unwrap());
+        let len = u32::from_le_bytes(bytes[last + 8..last + 12].try_into().unwrap());
+        bytes.push(0);
+        set_section_len(bytes, kind, len + 1);
     })
     .expect_err("a body longer than its contents is not that body");
     assert!(err.message.contains("left over"), "{}", err.message);
@@ -480,4 +499,63 @@ fn a_make_list_whose_elements_start_at_b_still_verifies() {
     let program = decode(&encode(&p)).expect("decodes");
     let report = verify(&program);
     assert!(report.ok(), "{:#?}", report.errors);
+}
+
+/// Two sections claiming the same bytes are refused.
+///
+/// The third of the three things v0.1 §9 item 2 says decoding establishes, and
+/// the one that was not being checked. It matters for the same reason an
+/// unknown section kind is refused: what a signature covers is a set of byte
+/// ranges, and a file whose sections may alias is one where the bytes signed
+/// and the bytes read need not be the same set.
+#[test]
+fn sections_that_claim_the_same_bytes_are_refused() {
+    // The plainest case there is: point one entry at another's offset, change
+    // nothing else. Both are empty in a well-formed file, so give them a body
+    // to claim first.
+    let refused = decode_corrupted(|bytes| {
+        let target = section_entry(bytes, section::FUNCTIONS);
+        let off = u32::from_le_bytes(bytes[target + 4..target + 8].try_into().unwrap());
+        let len = u32::from_le_bytes(bytes[target + 8..target + 12].try_into().unwrap());
+        let entry = section_entry(bytes, section::CODE);
+        bytes[entry + 4..entry + 8].copy_from_slice(&off.to_le_bytes());
+        bytes[entry + 8..entry + 12].copy_from_slice(&(len & !3).to_le_bytes());
+    })
+    .expect_err("a file whose sections alias must not decode");
+    assert!(
+        refused.to_string().contains("claim the same bytes"),
+        "{refused}"
+    );
+
+    // Identical ranges, which is the case that used to go all the way through
+    // to a program that verified.
+    let refused = decode_corrupted(|bytes| {
+        let from = section_entry(bytes, section::TYPES);
+        let off = u32::from_le_bytes(bytes[from + 4..from + 8].try_into().unwrap());
+        let len = u32::from_le_bytes(bytes[from + 8..from + 12].try_into().unwrap());
+        let entry = section_entry(bytes, section::CAPABILITIES);
+        bytes[entry + 4..entry + 8].copy_from_slice(&off.to_le_bytes());
+        bytes[entry + 8..entry + 12].copy_from_slice(&len.to_le_bytes());
+    })
+    .expect_err("identical ranges are the plainest overlap there is");
+    assert!(
+        refused.to_string().contains("claim the same bytes"),
+        "{refused}"
+    );
+}
+
+/// A section of no bytes claims none, so two of them at one offset are not two
+/// names for one byte - and a file is still allowed bytes no section names.
+#[test]
+fn empty_sections_and_gaps_are_still_allowed() {
+    let program = decode_corrupted(|bytes| {
+        // `SIGNATURE` is empty in v0.1. Point it inside another section: it
+        // claims no bytes, so it aliases nothing.
+        let types = section_entry(bytes, section::TYPES);
+        let off = u32::from_le_bytes(bytes[types + 4..types + 8].try_into().unwrap());
+        let entry = section_entry(bytes, section::SIGNATURE);
+        bytes[entry + 4..entry + 8].copy_from_slice(&off.to_le_bytes());
+    })
+    .expect("an empty section claims no bytes");
+    assert!(!program.types.is_empty());
 }

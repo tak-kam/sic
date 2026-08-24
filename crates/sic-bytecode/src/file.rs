@@ -220,6 +220,7 @@ pub fn decode(bytes: &[u8]) -> Result<Program> {
         }
         entries.push((kind, off, len));
     }
+    no_overlap(&entries)?;
 
     let mut p = Program::default();
     for (kind, off, len) in entries {
@@ -245,6 +246,48 @@ pub fn decode(bytes: &[u8]) -> Result<Program> {
         }
     }
     Ok(p)
+}
+
+/// Refuses a section table whose entries claim the same bytes.
+///
+/// The third of the three things §9 item 2 of `docs/design/v0.1.md` says
+/// decoding establishes, and the one that was not being checked. A check in the
+/// specification that is not in the code is worse than one that is in neither:
+/// §9 is the list the verifier's contract with the VM is written against, and
+/// the VM drops runtime checks because that list says the property holds.
+///
+/// It matters for the same reason an unknown section kind is refused a few
+/// lines below. That comment says ignoring one "would be a channel for hidden
+/// data to ride along past signature checking"; aliasing is the same argument
+/// from the other side. The `SIGNATURE` section is empty in v0.1 and exists so
+/// signatures can be added without changing the shape of the file, and once it
+/// is filled in, what was signed is a set of byte ranges - so a file whose
+/// sections may alias is one where the bytes a signature covers and the bytes
+/// the decoder reads need not be the same set. One comparison now; a format
+/// version later.
+///
+/// Empty sections are skipped: a section of no bytes claims none, and two of
+/// them at the same offset are not two names for one byte.
+///
+/// Gaps are allowed. A file may have bytes no section names, and refusing that
+/// is a different question with a different answer - the one there might be
+/// "the signature covers the file" rather than "the sections tile it".
+fn no_overlap(entries: &[(u32, u32, u32)]) -> Result<()> {
+    let mut ranges: Vec<(u32, u32, u32)> = entries
+        .iter()
+        .filter(|(_, _, len)| *len > 0)
+        .map(|(kind, off, len)| (*off, off + len, *kind))
+        .collect();
+    ranges.sort_unstable();
+    for pair in ranges.windows(2) {
+        let ((_, first_end, first), (second_off, _, second)) = (pair[0], pair[1]);
+        if second_off < first_end {
+            return Err(DecodeError::new(format!(
+                "sections {first} and {second} claim the same bytes"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn decode_consts(body: &[u8]) -> Result<Vec<Const>> {
