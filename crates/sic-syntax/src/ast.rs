@@ -143,6 +143,10 @@ pub struct CapGrant {
     /// What the argument vector has to start with, from `args ["a", "b"]`.
     /// Absent and empty mean the same thing: the call passes no arguments.
     pub args: Vec<Ident2>,
+    /// Whether the grant says performing this twice is the same as performing
+    /// it once, from `repeatable`. Without it, `retry` on a call to this
+    /// capability does not compile.
+    pub repeatable: bool,
     pub span: Span,
 }
 

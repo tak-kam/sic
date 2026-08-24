@@ -138,6 +138,10 @@ pub struct Grant {
     /// are runtime values a plan cannot know, so this prefix is the only part
     /// of them it can report.
     pub args: Vec<String>,
+    /// Whether the grant says performing this twice is the same as performing
+    /// it once. Whoever reads a plan is the person who should be deciding that,
+    /// which is why it is printed rather than only checked.
+    pub repeatable: bool,
     /// The files whose code calls it. Derived from the call sites rather than
     /// from a declaration, so it says where a grant is really used.
     pub called_from: Vec<String>,
@@ -278,6 +282,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             constraint: c.constraints.clone(),
             pin: c.pin.clone(),
             args: c.args.clone(),
+            repeatable: c.repeatable,
             called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
@@ -384,6 +389,9 @@ pub fn render(plan: &Plan, source: &str) -> String {
             out.push_str("  (not pinned)");
         } else {
             out.push_str(&format!("  sha256:{}", grant.pin));
+        }
+        if grant.repeatable {
+            out.push_str("  repeatable");
         }
         out.push('\n');
         // The one grant whose answer comes from something that acts on its own.

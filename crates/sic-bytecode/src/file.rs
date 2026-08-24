@@ -22,7 +22,10 @@ pub const VERSION_MAJOR: u16 = 0;
 /// next entry's `pc` for it.
 /// Bumped from 4 for the two bounds an agent with tools needs, in the same
 /// entry and for the same reason.
-pub const VERSION_MINOR: u16 = 5;
+/// Bumped from 5 for `repeatable`: a manifest entry now says whether the effect
+/// may be performed twice, and a reader that did not know would take the flag
+/// for the start of the parameter list.
+pub const VERSION_MINOR: u16 = 6;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -106,6 +109,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u8(c.kind as u8);
         w.str(&c.constraints);
         w.str(&c.pin);
+        w.bool(c.repeatable);
         w.u8(c.args.len() as u8);
         for a in &c.args {
             w.str(a);
@@ -344,7 +348,7 @@ fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
     let mut r = Reader::new(body);
     // The smallest possible entry: an empty name, no parameters, and the fixed
     // fields.
-    let n = r.count(18)?;
+    let n = r.count(19)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -368,7 +372,7 @@ fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
 
 fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
     let mut r = Reader::new(body);
-    let n = r.count(18)?;
+    let n = r.count(19)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -377,6 +381,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             .ok_or_else(|| DecodeError::new(format!("unknown capability kind {raw}")))?;
         let constraints = r.str()?;
         let pin = r.str()?;
+        let repeatable = r.bool()?;
         let arg_count = r.u8()? as usize;
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
@@ -392,6 +397,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             kind,
             constraints,
             pin,
+            repeatable,
             args,
             params,
             ret_type: r.u32()?,
@@ -478,6 +484,7 @@ mod tests {
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
                 pin: "a".repeat(64),
+                repeatable: false,
                 args: Vec::new(),
                 params: vec![4],
                 ret_type: 2,
@@ -574,6 +581,7 @@ mod tests {
                     kind: CapKind::Exec,
                     constraints: "/usr/bin/git".into(),
                     pin: "b".repeat(64),
+                    repeatable: false,
                     args: vec!["status".into(), "--porcelain".into()],
                     params: vec![4],
                     ret_type: 2,
@@ -583,6 +591,7 @@ mod tests {
                     kind: CapKind::Read,
                     constraints: "./data.txt".into(),
                     pin: String::new(),
+                    repeatable: false,
                     args: Vec::new(),
                     params: Vec::new(),
                     ret_type: 4,

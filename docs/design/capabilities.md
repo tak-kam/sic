@@ -207,6 +207,24 @@ different feature - it would have to say what the contents must be, which is not
 what a grant is for - and accepting the syntax while ignoring it would be worse
 than refusing it.
 
+### `repeatable`
+
+A grant may say that performing the effect twice is the same as performing it
+once:
+
+```text
+allow {
+    process.exec "/usr/bin/cargo" repeatable;
+}
+```
+
+Without it, `retry` on a call to that capability does not compile. The argument
+is in `docs/design/concurrency.md` §4; the part that belongs here is why the
+claim is on the grant rather than in a table of which capabilities are
+retryable. It is a property of the binary and not of `process.exec`:
+`/usr/bin/cargo` twice is a slow build, `/usr/bin/deploy` twice is an incident,
+and only the file that names the binary can tell those apart.
+
 ### A grant names a path, and the filesystem resolves it
 
 The sentence this section opens with - a path says where to look, not what is

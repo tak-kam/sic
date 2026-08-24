@@ -172,6 +172,58 @@ The policy also travels in the bytecode, attached to the `CALL_CAP` site, so
 `sic plan` can eventually say "this call may run three times, each up to half a
 second" without executing anything.
 
+### What retrying an effect means
+
+It performs the effect again. That is what retrying is, and it is worth writing
+down because the interesting case is not a flaky read:
+
+```sic
+let code = process.exec("/usr/bin/deploy") retry 3;
+```
+
+If the first attempt starts the deploy and then the machine stops answering,
+`retry 3` deploys again. The journal records both attempts, which is better than
+most systems manage, and the deploy still happened twice.
+
+**So a grant has to say that repeating is the same as not repeating**, and a
+`retry` on a capability whose grant does not is refused by the type checker:
+
+```sic
+allow {
+    process.exec "/usr/bin/cargo" repeatable;
+}
+```
+
+Three things about the shape of that.
+
+It is **opt-in**. The alternative - a grant that can forbid retrying - leaves
+whoever has never heard of the modifier finding out by deploying twice, and this
+project does not permit what was not named anywhere else either.
+
+It is **on the grant, not on the capability**. "May this be retried" is not a
+property of `process.exec`; it is a property of the binary. `/usr/bin/cargo`
+twice is a slow build and `/usr/bin/deploy` twice is an incident, and a table in
+the type checker could not tell them apart. It also puts the claim where
+`sic plan` prints it, in front of the person who should be deciding it.
+
+It composes with `requires`. A library may write `retry` against a capability it
+only `requires`, and the program that supplies the `allow` block is the one that
+names the binary - so it is the only file that can honestly make the claim, and
+it is the one the checker asks. `examples/import.sic` is exactly that.
+
+### Not an idempotency key
+
+Every durable engine surveyed has one, and they need it because the engine
+retries on the developer's behalf. This is different: the retry is written in
+the source, where somebody can see it and be wrong about it, so the question can
+be asked at compile time instead of answered at run time.
+
+Carrying a key across attempts would mean a capability result the broker can
+deduplicate against, which is state in the broker between calls, which the
+broker has never had. A grant saying `repeatable` costs one word and refuses the
+dangerous case; a key would cost the broker's statelessness and would still
+require somebody to decide which calls get one.
+
 ---
 
 ## 5. Checkpoints hold tasks

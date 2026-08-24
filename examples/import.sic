@@ -7,7 +7,11 @@
 import "./lib/deploy.sic";
 
 allow {
-    process.exec "/bin/echo";
+    // `repeatable` is this file's claim, not the library's: `lib/deploy.sic`
+    // asks to retry, and the file that decides which binary that means is the
+    // only one that can say whether running it twice is the same as running it
+    // once. Running `/bin/echo` twice is.
+    process.exec "/bin/echo" repeatable;
 }
 
 fn main() -> Bool {

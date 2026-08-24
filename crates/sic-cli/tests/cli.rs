@@ -779,7 +779,7 @@ fn a_policy_is_visible_in_the_bytecode() {
     // `sic plan` will read this without executing anything.
     let src = write_temp(
         "policy.sic",
-        "allow { fs.read \"./x.txt\"; }\nfn main() -> String { return fs.read(\"./x.txt\") retry 3 timeout 250; }\n",
+        "allow { fs.read \"./x.txt\" repeatable; }\nfn main() -> String { return fs.read(\"./x.txt\") retry 3 timeout 250; }\n",
     );
     let out = src.with_extension("sicb");
     let out_str = out.to_str().unwrap().to_string();
@@ -799,7 +799,7 @@ fn a_policy_is_visible_in_the_bytecode() {
 fn a_retried_call_records_every_attempt() {
     let src = write_temp(
         "retry-journal.sic",
-        "allow { fs.read \"./definitely-missing.txt\"; }\n\
+        "allow { fs.read \"./definitely-missing.txt\" repeatable; }\n\
          fn main() -> String { return fs.read(\"./definitely-missing.txt\") retry 3; }\n",
     );
     let journal = src.with_extension("jsonl");

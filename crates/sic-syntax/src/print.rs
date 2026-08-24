@@ -84,6 +84,9 @@ impl Printer {
             if let Some(pin) = &g.sha256 {
                 parts.push(format!("sha256 {:?}", pin.text));
             }
+            if g.repeatable {
+                parts.push("repeatable".to_string());
+            }
             self.line(&format!("({})", parts.join(" ")));
         }
         self.depth -= 1;

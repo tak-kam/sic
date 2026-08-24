@@ -317,6 +317,33 @@ fn a_policy_belongs_to_a_capability_call() {
     ));
 }
 
+/// `retry` performs the effect again, so a program may only ask for it where
+/// the manifest says performing it twice is the same as performing it once.
+#[test]
+fn a_retry_needs_a_grant_that_says_the_effect_can_be_repeated() {
+    let cs = codes(&format!(
+        "{ALLOW_ALL}fn main() -> Int {{ return process.exec(\"/usr/bin/true\") retry 3; }}"
+    ));
+    assert!(cs.contains(&"E0374"), "{cs:?}");
+
+    // Saying so makes it compile, and the claim is about this grant rather
+    // than about the capability: `fs.read` above says it and `process.exec`
+    // does not.
+    ok(&format!(
+        "{ALLOW_ALL}fn main() -> String {{ return fs.read(\"./in.txt\") retry 3; }}"
+    ));
+
+    // One attempt is not a retry, so it needs nothing.
+    ok(&format!(
+        "{ALLOW_ALL}fn main() -> Int {{ return process.exec(\"/usr/bin/true\") retry 1; }}"
+    ));
+
+    // Nor does a deadline, which repeats nothing.
+    ok(&format!(
+        "{ALLOW_ALL}fn main() -> Int {{ return process.exec(\"/usr/bin/true\") timeout 50; }}"
+    ));
+}
+
 #[test]
 fn a_policy_on_a_function_call_is_rejected() {
     let cs = codes("fn work() -> Int { return 1; }\nfn main() -> Int { return work() retry 3; }");
@@ -325,7 +352,7 @@ fn a_policy_on_a_function_call_is_rejected() {
 
 // ---- capabilities ----
 
-const ALLOW_ALL: &str = "allow {\n  fs.read \"./in.txt\";\n  fs.write \"./out.txt\";\n  process.exec \"/usr/bin/true\";\n}\n";
+const ALLOW_ALL: &str = "allow {\n  fs.read \"./in.txt\" repeatable;\n  fs.write \"./out.txt\";\n  process.exec \"/usr/bin/true\";\n}\n";
 
 #[test]
 fn a_granted_capability_can_be_called() {

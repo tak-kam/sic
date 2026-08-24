@@ -142,6 +142,10 @@ pub struct CapEntry {
     /// What the argument vector has to start with, from `args [...]` on the
     /// grant. Empty means the call passes no arguments.
     pub args: Vec<String>,
+    /// Whether the grant claims that performing this twice is the same as
+    /// performing it once, from `repeatable`. Without it, `retry` on a call to
+    /// this capability does not compile.
+    pub repeatable: bool,
     pub params: Vec<TypeId>,
     /// From the signature: whether the last parameter may be left off.
     pub optional_tail: bool,

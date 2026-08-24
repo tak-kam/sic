@@ -273,6 +273,11 @@ pub struct CapDecl {
     /// What the argument vector has to start with. Empty means a call passes
     /// no arguments at all.
     pub args: Vec<String>,
+    /// Whether the grant says performing this twice is the same as performing
+    /// it once. It is here rather than only in the compiler because `sic plan`
+    /// reads bytecode, and whoever reads a plan is the person who should be
+    /// deciding whether re-running this is safe.
+    pub repeatable: bool,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

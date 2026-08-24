@@ -660,6 +660,17 @@ impl Parser {
             }
             _ => None,
         };
+        // `repeatable` says that performing this twice is the same as
+        // performing it once. Without it, `retry` on a call to this capability
+        // does not compile: what retrying an effect means is a claim about the
+        // effect, and the manifest is where claims about effects live.
+        let repeatable = match self.peek().clone() {
+            TokenKind::Ident(name) if name == "repeatable" => {
+                self.bump();
+                true
+            }
+            _ => false,
+        };
         if !self.expect(&TokenKind::Semi, "after a capability grant") {
             self.recover_to_grant_end();
         }
@@ -669,6 +680,7 @@ impl Parser {
             constraint,
             sha256,
             args,
+            repeatable,
             span: Span::new(start, self.prev_end()),
         }
     }

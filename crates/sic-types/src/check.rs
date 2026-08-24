@@ -420,6 +420,7 @@ impl Checker {
                     constraint,
                     pin,
                     args,
+                    repeatable: grant.repeatable,
                     params: sig.params.to_vec(),
                     optional_tail: sig.optional_tail,
                     ret: sig.ret,
@@ -1039,7 +1040,7 @@ impl Checker {
         // shape is a capability call and nothing else, because there are no
         // object types to take a method from.
         if let ExprKind::Field { base, name } = &callee.kind {
-            return self.check_cap_call(callee, base, name, args, span);
+            return self.check_cap_call(callee, base, name, args, policy, span);
         }
         // Retrying a pure function computes the same answer again, and a
         // deadline on one measures nothing that can be waited for.
@@ -1177,6 +1178,7 @@ impl Checker {
         base: &Expr,
         name: &Ident,
         args: &[Expr],
+        policy: &CallPolicy,
         span: Span,
     ) -> TypeId {
         let Some(full) = self.capability_name(base, name) else {
@@ -1227,6 +1229,27 @@ impl Checker {
         self.res.insert(callee.id, Res::Cap(id));
         self.cap_used.insert(full.clone());
 
+        let entry = &self.caps[id.index()];
+        // Retrying performs the effect again - that is what retrying is - so a
+        // program may only ask for it where the manifest says performing it
+        // twice is the same as performing it once. The claim belongs to the
+        // manifest because that is where claims about effects live and where
+        // `sic plan` reads them from, and it is opt-in because whoever has not
+        // heard of it would otherwise find out by deploying twice.
+        let repeatable = entry.repeatable;
+        if !repeatable && policy.attempts.is_some_and(|n| n > 1) {
+            let at = policy.span.unwrap_or(span);
+            self.error(
+                "E0374",
+                format!("`{full}` may not be retried"),
+                at,
+                "this grant does not say the effect can be repeated",
+            );
+            self.note(format!(
+                "retrying performs the effect again; if that is safe, say so: \
+                 allow {{ {full} \"...\" repeatable; }}"
+            ));
+        }
         let entry = &self.caps[id.index()];
         let (params, ret) = (entry.params.clone(), entry.ret);
         // An optional tail means the call may stop one short of the signature.

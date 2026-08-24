@@ -10,11 +10,15 @@
 // The journal names the task each event belongs to, so the interleaving is
 // visible afterwards.
 allow {
-    process.exec "/usr/bin/true";
+    process.exec "/usr/bin/true" repeatable;
 }
 
 fn check() -> Int {
-    // `retry 2` is carried out by the VM, which records every attempt.
+    // `retry 2` is carried out by the VM, which records every attempt. The
+    // grant has to say `repeatable` for a program to ask: retrying performs
+    // the effect again, and running `/usr/bin/true` twice is the same as
+    // running it once, which is a claim about this binary and not about
+    // `process.exec`.
     return process.exec("/usr/bin/true") retry 2;
 }
 

@@ -43,6 +43,7 @@ fn well_formed() -> Program {
             kind: CapKind::Exec,
             constraints: "/usr/bin/true".into(),
             pin: "a".repeat(64),
+            repeatable: false,
             args: Vec::new(),
             params: vec![4],
             ret_type: 2,

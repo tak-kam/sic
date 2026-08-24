@@ -129,6 +129,7 @@ reason.
 | E0371 | using a value where its provenance makes it unusable |
 | E0372 | a model's answer reaching a capability that changes something |
 | E0373 | `choose` without the `human.choose` grant |
+| E0374 | `retry` on a capability whose grant does not say the effect can be repeated |
 
 ## E04xx — modules
 
