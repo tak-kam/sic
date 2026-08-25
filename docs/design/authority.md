@@ -434,11 +434,31 @@ nobody sees. A duration literal - `30m` - is what would fix the reading, and it
 belongs to the lexer and to `timeout` as much as to this, so it is not smuggled
 in here.
 
-`deadline` also replaces two numbers nobody declared. `driving.md` §4 hard-codes
-60 seconds for the agent to become ready and 30 minutes for a whole answer,
-`sic plan` does not print them, and §11 there lists "a deadline in the source"
-as not-here with the note that it needs somewhere to write one. This is that
+`deadline` also replaces a number nobody declared: `driving.md` §4 hard-codes 30
+minutes for a whole answer, and §11 there lists "a deadline in the source" as
+not-here with the note that it needs somewhere to write one. This is that
 somewhere, and it is the declaration the budget is already written in.
+
+**It replaces it for a program that sets one, and only then.** A program that
+says nothing still gets the driver's 30 minutes, and this section used to claim
+otherwise. What `sic plan` prints now is the absence:
+
+```text
+    1. INVOKE   llm.invoke  "claude"  any number of tool uses  no deadline of its own
+```
+
+Both, because both mean something when they are missing: an unset `tools` is no
+limit at all, and an unset `deadline` is whatever the driver allows. A reader
+who is told neither assumes the line is the whole of the bound - which is the
+same reason a `process` grant prints its directory whether or not the manifest
+named one (§4a, `capabilities.md`).
+
+The other hard-coded number, the 60 seconds `driving.md` §4 allows a pane to
+print anything at all, is **not** replaced and should not be. It is about the
+machine rather than about the workload: it answers "did the agent start", which
+is the same question whatever the program asked. A per-program number for it
+would be a number about a program's work applied to a question that has nothing
+to do with it. This section claimed to replace both; it replaces one.
 
 ### What survives a checkpoint
 

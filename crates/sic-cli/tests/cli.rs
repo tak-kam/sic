@@ -2149,6 +2149,76 @@ mod recorded_runs {
         std::fs::remove_dir_all(store).ok();
     }
 
+    /// A model call is bounded by three numbers and gets all three whether or
+    /// not the program set them: the driver has a fallback for the deadline
+    /// and no limit at all for the tools. A reader told neither assumes the
+    /// line is the whole of the bound.
+    #[test]
+    fn a_plan_says_when_a_model_call_is_bounded_by_nothing() {
+        let unbounded = write_temp(
+            "deadline-none.sic",
+            "type D { cause: String }\n\
+             allow { llm.invoke \"m\"; }\n\
+             agent diagnose { input: String, output: D }\n\
+             fn main() -> LLM<String> {\n\
+             \x20   let d = diagnose(\"why\");\n\
+             \x20   return d.cause;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", unbounded.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("any number of tool uses"), "{stdout}");
+        assert!(stdout.contains("no deadline of its own"), "{stdout}");
+
+        let bounded = write_temp(
+            "deadline-set.sic",
+            "type D { cause: String }\n\
+             allow { llm.invoke \"m\"; }\n\
+             agent diagnose {\n\
+             \x20   input: String,\n\
+             \x20   output: D,\n\
+             \x20   tools: 20,\n\
+             \x20   deadline: 300000,\n\
+             }\n\
+             fn main() -> LLM<String> {\n\
+             \x20   let d = diagnose(\"why\");\n\
+             \x20   return d.cause;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", bounded.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("at most 20 tool use(s)"), "{stdout}");
+        assert!(stdout.contains("300000ms per answer"), "{stdout}");
+        assert!(!stdout.contains("no deadline"), "{stdout}");
+
+        std::fs::remove_file(unbounded).ok();
+        std::fs::remove_file(bounded).ok();
+    }
+
+    /// `timeout` on an agent call is refused, and rightly: `deadline` bounds an
+    /// answer where `timeout` bounds a call, and keeping them apart is what
+    /// stops a program from appearing to have set the other. What was wrong was
+    /// the note, which told a reader there was nothing to wait for.
+    #[test]
+    fn a_timeout_on_an_agent_call_says_where_the_number_goes() {
+        let src = write_temp(
+            "deadline-timeout.sic",
+            "type D { cause: String }\n\
+             allow { llm.invoke \"m\"; }\n\
+             agent diagnose { input: String, output: D }\n\
+             fn main() -> LLM<String> {\n\
+             \x20   let d = diagnose(\"why\") timeout 60000;\n\
+             \x20   return d.cause;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0330"), "{stderr}");
+        assert!(stderr.contains("this is an agent call"), "{stderr}");
+        assert!(stderr.contains("`deadline` for wall clock"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
     /// A check that reached a live agent would be answering a different
     /// question, so the flag is refused rather than ignored.
     #[test]

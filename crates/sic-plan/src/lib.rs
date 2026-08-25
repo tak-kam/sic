@@ -364,11 +364,22 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     if *timeout_ms > 0 {
                         out.push_str(&format!("  within {timeout_ms}ms"));
                     }
-                    if let Some(tools) = tools {
-                        out.push_str(&format!("  at most {tools} tool use(s)"));
-                    }
-                    if let Some(ms) = deadline_ms {
-                        out.push_str(&format!("  {ms}ms per answer"));
+                    // A model call is bounded by three numbers and gets all
+                    // three whether or not the program set them: the driver
+                    // has a fallback for the deadline and no limit at all for
+                    // the tools. So the absences are printed rather than left
+                    // out. A reader who is not told assumes what is on the
+                    // line is the whole of it - which is the same reason a
+                    // `process` grant prints its directory either way.
+                    if name == "llm.invoke" {
+                        match tools {
+                            Some(tools) => out.push_str(&format!("  at most {tools} tool use(s)")),
+                            None => out.push_str("  any number of tool uses"),
+                        }
+                        match deadline_ms {
+                            Some(ms) => out.push_str(&format!("  {ms}ms per answer")),
+                            None => out.push_str("  no deadline of its own"),
+                        }
                     }
                 }
                 Action::Verify { type_name } => out.push_str(type_name),

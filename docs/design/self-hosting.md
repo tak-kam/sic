@@ -112,7 +112,12 @@ five is not going to. Thirty is a number nobody chose for this program, and the
 `agent` declaration - which already carries `budget`, `tools` and `memory` - is
 where a chosen one would go.
 
-→ #52
+→ #52, **half a finding**: an `agent` *can* be given a deadline - `deadline` on
+the declaration, which reaches the driver and which `sic plan` prints. What
+cannot be given one is an agent *call*, through `timeout`, and E0330 is right to
+refuse it. What was true is that a program which sets none gets the driver's
+thirty minutes and no plan said so; the plan says it now, and E0330's note
+points at the declaration instead of claiming there is nothing to wait for.
 
 ## 5. A long string is one long line
 

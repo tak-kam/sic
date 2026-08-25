@@ -1118,14 +1118,31 @@ impl Checker {
         }
         // Retrying a pure function computes the same answer again, and a
         // deadline on one measures nothing that can be waited for.
+        //
+        // An agent call is the exception a reader will meet: it is written as a
+        // function call and it does have an effect, so the note says where the
+        // number it was reaching for actually goes rather than telling them
+        // there is nothing to wait for.
         if let Some(policy_span) = policy.span {
+            let is_agent = matches!(&callee.kind, ExprKind::Path(name)
+                if self.agents.iter().any(|a| a.name == name.name));
             self.error(
                 "E0330",
                 "`retry` and `timeout` apply to capability calls only",
                 policy_span,
-                "this is a function call",
+                match is_agent {
+                    true => "this is an agent call",
+                    false => "this is a function call",
+                },
             );
-            self.note("a function has no effect to retry or to wait for");
+            if is_agent {
+                self.note(
+                    "an agent is bounded in its declaration: `budget` for model calls, \
+                     `tools` for tool uses, `deadline` for wall clock",
+                );
+            } else {
+                self.note("a function has no effect to retry or to wait for");
+            }
         }
         let ExprKind::Path(name) = &callee.kind else {
             for a in args {
