@@ -64,6 +64,40 @@ jobs:
       - name: Lockfile is current
         run: cargo metadata --format-version 1 --locked > /dev/null
 
+  # The release publishes binaries for four targets and this job is the only
+  # thing that compiles for three of them. It is not a matrix of runners,
+  # because what goes wrong is a compile and a compile does not need the
+  # platform it is for: `cargo check --target` on the runner already here says
+  # everything a `#[cfg]` mistake has to say, without linking and without a
+  # second machine.
+  #
+  # It exists because the tree stopped compiling for Windows the day
+  # `sic-broker::route` was added and nothing noticed for a week - the next tag
+  # would have found out, during a release.
+  targets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup update --no-self-update stable
+          rustup default stable
+          rustup target add \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            x86_64-pc-windows-msvc
+          rustc --version
+
+      # The targets `release.yml` publishes, minus the one the job above
+      # already builds and tests. A target nobody ships is a target nobody has.
+      - name: Compiles for every target the release publishes
+        run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-pc-windows-msvc; do
+            echo "== $target"
+            cargo check --workspace --all-targets --locked --target "$target"
+          done
+
   # `rust-version` in the workspace manifest is a promise made to whoever
   # builds sic from source, and Cargo uses it when resolving. A minimum
   # nothing compiles against is a guess, and it drifts one way only: every

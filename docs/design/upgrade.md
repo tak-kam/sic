@@ -119,6 +119,12 @@ therefore both allowed and atomic: a reader either sees the whole old file or
 the whole new one, and a process already running the old inode keeps running it
 until it exits.
 
+The Windows half of this is written and, until CI compiled for the target, was
+never compiled: `sic-broker` imported `std::os::unix::net` unconditionally from
+the day the agent's socket was added, so the tree did not build for Windows for
+a week and the next tag would have found out during a release. What that code
+does has not changed; what changed is that something checks it still compiles.
+
 Windows will not let a running image be replaced or deleted, but it does allow
 it to be **renamed**. So there the old binary is moved aside first, the new one
 renamed into place, and the leftover deleted if the operating system will part

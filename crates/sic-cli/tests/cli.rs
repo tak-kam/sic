@@ -2997,6 +2997,8 @@ fn deploy(binary: String) -> Int {
     /// deliberate: a grant names a path on somebody's machine, where `/bin` is a
     /// link on half of them; an import names a file in the program, where a link is
     /// a choice somebody made about this program.
+    // A filesystem with links, which is a unix.
+    #[cfg(unix)]
     #[test]
     fn an_import_may_not_reach_outside_through_a_symbolic_link() {
         let main = write_temp_program(
@@ -3046,6 +3048,12 @@ mod upgrade {
 
     /// Copies the built binary into a directory of its own, so that a test which
     /// replaces a running binary replaces that copy and not the one cargo built.
+    ///
+    /// These four serve the tests below that replace a running binary, and those
+    /// are Linux-only for the reason written on them: the candidate is the
+    /// binary with a byte appended, which an ELF loader ignores and a signed
+    /// Mach-O does not.
+    #[cfg(target_os = "linux")]
     fn install_copy(name: &str, rel: &str) -> std::path::PathBuf {
         let mut dir = std::env::temp_dir();
         dir.push(format!("sic-test-{}-{name}", std::process::id()));
@@ -3056,12 +3064,14 @@ mod upgrade {
         path
     }
 
+    #[cfg(target_os = "linux")]
     fn digest_of(path: &std::path::Path) -> String {
         sic_core::Digest::of(&std::fs::read(path).unwrap()).hex()
     }
 
     /// Runs a binary by its own path, which is what `sic upgrade` needs: the file it
     /// replaces is the one it is running from.
+    #[cfg(target_os = "linux")]
     fn sic_at(binary: &std::path::Path, args: &[&str]) -> (String, String, i32) {
         let out = Command::new(binary)
             .args(args)
@@ -3218,6 +3228,7 @@ mod upgrade {
         assert_eq!(digest_of(&installed), before);
     }
 
+    #[cfg(target_os = "linux")]
     fn leftovers(dir: &std::path::Path) -> usize {
         std::fs::read_dir(dir).unwrap().count()
     }

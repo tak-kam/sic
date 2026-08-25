@@ -145,15 +145,25 @@ fn main() -> ExitCode {
         },
         // Started by a run, not by a person: the agent answering a model call
         // runs this to reach the capabilities the program granted.
+        //
+        // Both of these talk to a unix socket the run is listening on. Where
+        // there is none they are refused with the reason rather than reported
+        // as unknown, because whoever typed one read it in a document.
+        #[cfg(unix)]
         "mcp" => match rest.is_empty() {
             true => cmd::mcp::run(),
             false => usage_error("`mcp` takes no arguments"),
         },
         // Also started by a run: the agent asks this before every tool call.
+        #[cfg(unix)]
         "hook" => match rest.is_empty() {
             true => cmd::hook::run(),
             false => usage_error("`hook` takes no arguments"),
         },
+        #[cfg(not(unix))]
+        "mcp" | "hook" => {
+            usage_error("this serves the unix socket a run listens on, and this build has none")
+        }
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
         "hir" => with_one_file(rest, "hir", cmd::hir::run),
         "export" => match parse_flags(rest, &["--traces", "--metrics"], 1) {

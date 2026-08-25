@@ -127,13 +127,13 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         );
         return ExitCode::from(EXIT_USAGE);
     }
-    let session = sic_broker::tmux::Session {
+    let session = super::driver::Session {
         run: super::journal::new_run_id().to_string(),
         continuing: false,
         state: None,
     };
     let grants = manifest(&program);
-    let mut broker = match super::run::open_driver(options.llm, session, &grants, None) {
+    let mut broker = match super::driver::open(options.llm, session, &grants, None) {
         Ok(Some(driver)) => Broker::with_driver(grants, driver),
         Ok(None) => Broker::new(grants),
         Err(message) => {

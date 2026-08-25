@@ -15,14 +15,25 @@ use std::time::{Duration, Instant};
 use sic_core::{AgentAction, CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
 
 pub mod agent;
+// Driving an agent needs a unix socket and it needs tmux, and neither is a
+// thing on Windows. They were not conditional and the tree stopped compiling
+// for `x86_64-pc-windows-msvc` the day `route` was added - which nothing
+// noticed, because no CI job compiled for a target the release publishes.
+//
+// `AgentDriver` itself is portable and stays: a driver is a trait, and the two
+// implementations that need a unix are what is conditional.
+#[cfg(unix)]
 pub mod route;
+#[cfg(unix)]
 pub mod tmux;
 
 pub use agent::{AgentDriver, Ask, DriverInfo, Thread};
+#[cfg(unix)]
 pub use route::{Offered, Param, Route};
 // Re-exported because every caller that has a broker also wants these, and the
 // classification is pure enough to live at the boundary rather than here.
 pub use sic_core::{Authority, Reach, Refused, Rule, authority_of};
+#[cfg(unix)]
 pub use tmux::TmuxDriver;
 
 /// The largest file `fs.read` will return. A capability that can exhaust the

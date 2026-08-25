@@ -58,6 +58,12 @@ written by hand.
 From a release, which publishes a static Linux binary, both macOS
 architectures, and Windows, with a `SHA256SUMS` beside them:
 
+Driving an agent needs a unix socket and tmux, so `--llm`, `sic mcp` and
+`sic hook` are unix-only and say so on Windows rather than being missing.
+Everything else - compiling, running, planning, recording, replaying - is the
+same everywhere. CI compiles for all four targets, which is how that stays
+true.
+
 ```console
 $ tar xzf sic-v0.1.2-x86_64-unknown-linux-musl.tar.gz
 $ ./sic-v0.1.2-x86_64-unknown-linux-musl/sic version

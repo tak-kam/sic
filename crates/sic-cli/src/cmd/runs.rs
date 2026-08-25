@@ -194,13 +194,13 @@ pub fn attach(
     // Continuing, not starting: the run's session is named after its id, so a
     // conversation it was holding is found without anything being looked up -
     // and a pane that is gone is a failure rather than a fresh start.
-    let session = sic_broker::tmux::Session {
+    let session = super::driver::Session {
         run: run_id_of(&dir),
         continuing: true,
         state: Some(dir.join(store::CONVERSATIONS)),
     };
     let grants = super::drive::manifest(&program);
-    let mut broker = match super::run::open_driver(llm, session, &grants, None) {
+    let mut broker = match super::driver::open(llm, session, &grants, None) {
         Ok(Some(driver)) => sic_broker::Broker::with_driver(grants, driver),
         Ok(None) => sic_broker::Broker::new(grants),
         Err(message) => {

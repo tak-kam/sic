@@ -31,6 +31,7 @@ fn pinned(name: &str, kind: CapKind, constraint: &str, pin: &str) -> CapGrant {
     }
 }
 
+#[cfg(unix)]
 /// The sha256 of a file, as the broker computes it.
 fn digest_of(path: &str) -> String {
     let mut hash = sic_core::Sha256::new();
@@ -681,6 +682,7 @@ fn invoke_shaped(prompt: &str, shape: &str) -> CapRequest {
     request(0, "llm.invoke", &[prompt, shape])
 }
 
+#[cfg(unix)]
 fn a_session() -> crate::tmux::Session {
     crate::tmux::Session {
         run: "0123456789abcdef".into(),
@@ -839,6 +841,7 @@ fn a_pane_too_large_to_be_an_answer_is_refused() {
     assert!(error.message.contains("over the"), "{}", error.message);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_driver_spec_says_what_drives_what() {
     // These fail on the spec, before anything is looked for on the machine.
@@ -935,6 +938,7 @@ fn a_call_says_which_conversation_it_belongs_to() {
     assert!(heard[1].starts_with("t0c0 "), "{}", heard[1]);
 }
 
+#[cfg(unix)]
 /// What a run had open is read back, so a pane that was closed can be told from
 /// one that was never made.
 #[test]
@@ -1066,6 +1070,7 @@ fn what_cannot_be_translated_is_offered_through_the_broker() {
     assert_eq!(authority.routed, ["process.exec"]);
 }
 
+#[cfg(unix)]
 /// The same manifest without the word. The program keeps the capability and the
 /// agent is not offered it, which is what `delegable` is for: for the `process`
 /// family the constraint does not bound the authority, because one argument can
@@ -1164,6 +1169,7 @@ fn a_manifest_that_grants_nothing_allows_nothing() {
     assert!(args.iter().any(|a| a == "dontAsk"), "{args:?}");
 }
 
+#[cfg(unix)]
 /// The whole of routing, with no agent in it: a call arrives on the socket, is
 /// authorized against the program's manifest, is performed by the same code
 /// that performs a call from the VM, and is recorded.
@@ -1232,6 +1238,7 @@ fn a_routed_call_is_the_same_call() {
     std::fs::remove_file(&path).ok();
 }
 
+#[cfg(unix)]
 /// A file whose digest is not the one the grant pins fails the routed call, the
 /// same way it fails a call from a program.
 #[test]
@@ -1269,6 +1276,7 @@ fn an_agent_may_not_summon_another_agent() {
     assert!(error.message.contains("summon another agent"), "{error}");
 }
 
+#[cfg(unix)]
 fn route_manifest(path: &str, digest: &str) -> Vec<CapGrant> {
     vec![delegable(pinned(
         "process.exec",
@@ -1303,6 +1311,7 @@ fn a_marker_joined_imperfectly_is_still_a_marker() {
     assert!(answer_from(&text, id, true).is_none());
 }
 
+#[cfg(unix)]
 /// A shell is refused whatever the rules say.
 ///
 /// `dontAsk` always permits a fixed set of read-only commands - `cat` among
@@ -1374,6 +1383,7 @@ fn no_grant_names_a_shell() {
     }
 }
 
+#[cfg(unix)]
 /// A tool allowance is a bound, not a note: the call that used it up is refused
 /// the next one, and told which of the two reasons it was.
 #[test]
@@ -1406,6 +1416,7 @@ fn an_answer_that_used_its_allowance_gets_no_more_tools() {
     assert!(!spent.contains("shell"), "{spent}");
 }
 
+#[cfg(unix)]
 /// A grant names a path, and a symbolic link at that path is followed.
 ///
 /// This is the decision rather than an oversight, and it is written down in

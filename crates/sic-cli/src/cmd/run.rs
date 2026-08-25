@@ -7,9 +7,9 @@
 
 use std::process::ExitCode;
 
-use sic_broker::{AgentDriver, Broker};
+use sic_broker::Broker;
 use sic_bytecode::Program;
-use sic_core::{CapGrant, Digest};
+use sic_core::Digest;
 use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
@@ -95,20 +95,21 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 
     // Opened before the run starts, so a run that is going to fail for want of
     // a tool fails before it has done anything.
-    let session = sic_broker::tmux::Session {
+    let session = super::driver::Session {
         run: run_id.to_string(),
         continuing: false,
         state: recording.as_ref().map(|dir| dir.join(store::CONVERSATIONS)),
     };
     let manifest = manifest(&program);
-    let mut broker = match open_driver(options.llm, session, &manifest, recording.as_deref()) {
-        Ok(Some(driver)) => Broker::with_driver(manifest, driver),
-        Ok(None) => Broker::new(manifest),
-        Err(message) => {
-            eprintln!("error: {message}");
-            return ExitCode::from(EXIT_FAILURE);
-        }
-    };
+    let mut broker =
+        match super::driver::open(options.llm, session, &manifest, recording.as_deref()) {
+            Ok(Some(driver)) => Broker::with_driver(manifest, driver),
+            Ok(None) => Broker::new(manifest),
+            Err(message) => {
+                eprintln!("error: {message}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+        };
 
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let status = vm.run(entry, &[]);
@@ -135,41 +136,6 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         checkpoint.as_deref(),
         hint.as_deref(),
     )
-}
-
-/// Opens the driver a run was told to use, and records what it turned out to
-/// be.
-///
-/// Nothing is chosen here. A driver that started answering model calls because
-/// it happened to be installed would make what a run did depend on what was
-/// lying around, which is the same argument as refusing to search `PATH`.
-pub fn open_driver(
-    spec: Option<&str>,
-    session: sic_broker::tmux::Session,
-    manifest: &[CapGrant],
-    recording: Option<&std::path::Path>,
-) -> Result<Option<Box<dyn sic_broker::AgentDriver>>, String> {
-    let Some(spec) = spec else {
-        // No driver, no agent: `llm.invoke` defers and a person answers it, so
-        // there is nothing here whose authority has to be worked out.
-        return Ok(None);
-    };
-    // Before anything runs. A manifest that cannot be enforced against the
-    // agent is worse than no manifest, because `sic plan` printed it.
-    let authority = sic_broker::authority_of(manifest).map_err(|refused| refused.to_string())?;
-    let mut driver = sic_broker::TmuxDriver::open(spec, session).map_err(|e| e.message)?;
-    driver
-        .authorize(authority, manifest.to_vec())
-        .map_err(|e| e.message)?;
-    let info = driver.info().clone();
-    if let Some(dir) = recording {
-        store::record_driver(dir, &info)?;
-    }
-    eprintln!(
-        "llm.invoke answered by {} - {}, {}",
-        info.driver, info.agent, info.multiplexer
-    );
-    Ok(Some(Box::new(driver)))
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.

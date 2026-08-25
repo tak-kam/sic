@@ -409,6 +409,8 @@ fn answer_from_json(json: &sic_json::Json) -> Option<Recorded> {
 /// which tool was on this machine is neither, and it is exactly what a person
 /// reading a run's answers back needs to know, because reading a terminal user
 /// interface is a bet on a version.
+// Only a driver produces one, and only a unix has a driver.
+#[cfg_attr(not(unix), allow(dead_code))]
 pub fn record_driver(dir: &Path, info: &sic_broker::DriverInfo) -> Result<(), String> {
     // Every path that was looked at, with a digest or without one. A file that
     // was not there is as much a fact about the run as one that was.

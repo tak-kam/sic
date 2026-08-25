@@ -1,10 +1,13 @@
 pub mod compile;
 pub mod disasm;
 pub mod drive;
+pub mod driver;
 pub mod export;
 pub mod hir;
+#[cfg(unix)]
 pub mod hook;
 pub mod journal;
+#[cfg(unix)]
 pub mod mcp;
 pub mod parse;
 pub mod plan;
