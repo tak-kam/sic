@@ -150,6 +150,20 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
     }
 }
 
+/// The level as one byte, which is what an ABC operand is.
+///
+/// The numbers are part of the file format, like an opcode's: a reader that
+/// took `2` for `warn` would report the wrong thing about a run.
+fn level_code(level: sic_ir::hir::LogLevel) -> u8 {
+    use sic_ir::hir::LogLevel;
+    match level {
+        LogLevel::Debug => 0,
+        LogLevel::Info => 1,
+        LogLevel::Warn => 2,
+        LogLevel::Error => 3,
+    }
+}
+
 fn to_bytecode_const(c: &HirConst) -> Const {
     match c {
         HirConst::Unit => Const::Unit,
@@ -607,10 +621,9 @@ impl<'a> FnCompile<'a> {
                 let type_index = self.type_index(*ty);
                 self.emit(Inst::abc(Op::FromJson, dst, type_index, src), span);
             }
-            InstKind::Log { .. } => {
-                self.errors.push(CompileError::new(
-                    "logging arrives in a later phase".to_string(),
-                ));
+            InstKind::Log { level, msg } => {
+                let msg = self.reg(*msg);
+                self.emit(Inst::abc(Op::Log, level_code(*level), msg, 0), span);
             }
         }
     }

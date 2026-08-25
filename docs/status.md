@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 575 tests.
+Last updated at 583 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -21,7 +21,7 @@ in the source, so it is the same on every platform - four of them are
 | 3 | No external crates | lexer, parser, types, IR, bytecode, verifier, VM, JSON, SHA-256, scheduler, journal all written by hand |
 | 4 | Recursive descent, Pratt for expressions | `sic-syntax` |
 | 5 | Source → AST → typed → IR → bytecode → verifier → VM | the whole pipeline runs |
-| 6, 7 | A register VM, 30 instructions | `sic-vm`, `sic-bytecode` |
+| 6, 7 | A register VM, 31 instructions | `sic-vm`, `sic-bytecode` |
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
 | 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix, output read back - and `process.run`, which reads it whether or not the program worked | `sic-broker`, `docs/design/arguments.md`, `docs/design/output.md` |
@@ -42,6 +42,7 @@ in the source, so it is the same on every platform - four of them are
 | - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take, and `memory: task` keeps one conversation for as long as a task | `docs/design/driving.md` |
 | - | The agent's authority is the program's manifest, and for the `process` family deliberately less: translated into its own permissions where those can hold a constraint, routed back through the broker where they cannot but only when the grant says `delegable`, and a hook that fails closed refuses every tool the manifest does not account for, which is what denies the agent the network, and puts every tool use in the journal; `budget`, `tools` and `deadline` bound it, each where it can be enforced; `sic plan` prints all of it, naming where each line is enforced | `docs/design/authority.md` |
 | - | This repository's own development loop, written in sic: it plans, runs, checkpoints at the model call, and reads back with `sic explain`. Seven things bent it on the way, each now an issue | `workflows/ci.sic`, `docs/design/self-hosting.md` |
+| 26 | `log <level> <expr>;` - the journal keeps the level and the digest, the run's values file keeps the text, and stderr shows it as it happens | `docs/design/logging.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
@@ -82,10 +83,6 @@ broker does not report either, so any number would be invented.
 ---
 
 ## Not built
-
-**§26, structured logging.** `log info "..." { ... }` does not parse. The IR has
-the instruction, the journal has nowhere for it to go yet, and the exporter says
-so.
 
 **§9, as separate processes.** The VM and the broker are separate crates with no
 dependency between them, and the values that cross between them are already

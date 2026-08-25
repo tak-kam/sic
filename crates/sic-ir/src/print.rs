@@ -73,7 +73,7 @@ fn inst_str(kind: &InstKind) -> String {
         }
         InstKind::Len { dst, src } => format!("%{} = len %{}", dst.0, src.0),
         InstKind::FromJson { dst, src, .. } => format!("%{} = from_json %{}", dst.0, src.0),
-        InstKind::Log { level, msg, .. } => format!("log {level:?} %{}", msg.0),
+        InstKind::Log { level, msg } => format!("log {} %{}", level.name(), msg.0),
     }
 }
 

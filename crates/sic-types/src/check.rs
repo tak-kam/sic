@@ -925,6 +925,16 @@ impl Checker {
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }
+            // A message is text, whatever produced it. Any provenance is
+            // allowed and erased: logging reaches nothing outside the run's own
+            // account of itself, so the rule that stops a value from deciding
+            // what runs has nothing to say here. `docs/design/logging.md` says
+            // what changes the day `Secret<T>` exists.
+            Stmt::Log { message, .. } => {
+                let found = self.check_expr(message);
+                let erased = self.types.untrusted_deep(found);
+                self.expect_type(Types::STR, erased, message.span, "this message");
+            }
         }
     }
 

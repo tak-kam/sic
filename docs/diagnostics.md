@@ -59,6 +59,7 @@ reason.
 | E0215 | `memory` with anything but `task` |
 | E0216 | `in` without a directory |
 | E0217 | `env` without `NAME: "value"` pairs |
+| E0218 | a `log` level that is not one of the four |
 
 ## E03xx — names, types and effects
 

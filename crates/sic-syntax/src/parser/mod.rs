@@ -146,6 +146,16 @@ impl Parser {
         &self.tokens[self.pos].kind
     }
 
+    /// The token after the one `peek` returns. One is enough: the only place
+    /// this parser needs to look past the next token is `log <level>`, where
+    /// both words are ordinary identifiers.
+    fn peek_next(&self) -> &TokenKind {
+        match self.tokens.get(self.pos + 1) {
+            Some(token) => &token.kind,
+            None => &self.tokens[self.tokens.len() - 1].kind,
+        }
+    }
+
     fn span(&self) -> Span {
         self.tokens[self.pos].span
     }
@@ -965,6 +975,18 @@ impl Parser {
     }
 
     fn parse_stmt(&mut self) -> Option<Stmt> {
+        // `log info ...` is two identifiers in a row, which no expression can
+        // be, so `log` stays an ordinary identifier and a function may still be
+        // called that. Same reason `args` and `sha256` are not keywords.
+        if let (TokenKind::Ident(name), TokenKind::Ident(_)) = (self.peek(), self.peek_next()) {
+            // Two identifiers in a row, which no expression can be - so this
+            // is a `log` statement whatever the second word is, and a word
+            // that is not a level is a mistyped level rather than a sentence
+            // the parser has to guess at.
+            if name == "log" {
+                return Some(self.parse_log());
+            }
+        }
         match self.peek() {
             TokenKind::Kw(Keyword::Let) => Some(self.parse_let()),
             TokenKind::Kw(Keyword::Return) => Some(self.parse_return()),
@@ -995,6 +1017,43 @@ impl Parser {
                     span: Span::new(start, self.prev_end()),
                 })
             }
+        }
+    }
+
+    /// `log <level> <expr>;`
+    ///
+    /// The level is one of four words and the message is an expression, so a
+    /// program can say what happened rather than only that something did.
+    fn parse_log(&mut self) -> Stmt {
+        let id = self.id();
+        let start = self.span().lo;
+        self.bump(); // `log`
+        let TokenKind::Ident(name) = self.peek().clone() else {
+            unreachable!("parse_stmt only calls this when a word follows `log`");
+        };
+        let span = self.span();
+        self.bump();
+        let level = match LogLevel::from_name(&name) {
+            Some(level) => level,
+            None => {
+                self.error(
+                    "E0218",
+                    format!("`{name}` is not a log level"),
+                    span,
+                    "the levels are `debug`, `info`, `warn` and `error`",
+                );
+                LogLevel::Info
+            }
+        };
+        let message = self.parse_expr();
+        if !self.expect(&TokenKind::Semi, "after a `log` statement") {
+            self.recover_to_stmt_end();
+        }
+        Stmt::Log {
+            id,
+            level,
+            message,
+            span: Span::new(start, self.prev_end()),
         }
     }
 

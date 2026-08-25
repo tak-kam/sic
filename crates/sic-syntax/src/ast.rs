@@ -244,12 +244,58 @@ pub enum Stmt {
         expr: Expr,
         span: Span,
     },
+    /// `log info "starting";` - what the program has to say about itself.
+    ///
+    /// A statement rather than a capability: it reaches nothing outside the
+    /// run's own account of itself, so a grant would be a grant to do nothing.
+    /// See `docs/design/logging.md`.
+    Log {
+        id: NodeId,
+        level: LogLevel,
+        message: Expr,
+        span: Span,
+    },
+}
+
+/// How much a line matters, as the program says it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    /// The four, as they are written. Ordinary identifiers rather than
+    /// keywords, like `args` and `repeatable`: nothing is reserved for them.
+    pub fn from_name(name: &str) -> Option<LogLevel> {
+        Some(match name {
+            "debug" => LogLevel::Debug,
+            "info" => LogLevel::Info,
+            "warn" => LogLevel::Warn,
+            "error" => LogLevel::Error,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
 }
 
 impl Stmt {
     pub fn span(&self) -> Span {
         match self {
-            Stmt::Let { span, .. } | Stmt::Return { span, .. } | Stmt::Expr { span, .. } => *span,
+            Stmt::Let { span, .. }
+            | Stmt::Return { span, .. }
+            | Stmt::Expr { span, .. }
+            | Stmt::Log { span, .. } => *span,
             Stmt::If(s) => s.span,
         }
     }

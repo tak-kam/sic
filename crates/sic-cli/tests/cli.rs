@@ -100,6 +100,204 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// what a program has to say about itself.
+///
+/// A log line goes where a person can see it and is kept where the run is
+/// kept, and the journal holds the digest of it rather than the text - which
+/// is the split that let §26 be built at all. See `docs/design/logging.md`.
+mod logging {
+    use super::*;
+
+    const SAYS: &str = "fn main() -> Int {\n\
+                        \x20   log info \"looking\";\n\
+                        \x20   log warn \"and again\";\n\
+                        \x20   return 1;\n\
+                        }\n";
+
+    /// stderr, as it happens, whether or not anybody asked for a journal.
+    /// stdout is the value the program returned and must not be mistakable
+    /// for a line saying what happened.
+    #[test]
+    fn a_line_is_shown_without_anybody_asking_for_a_journal() {
+        let src = write_temp("log-shown.sic", SAYS);
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stderr.contains("info: looking"), "{stderr}");
+        assert!(stderr.contains("warn: and again"), "{stderr}");
+        assert_eq!(stdout.trim(), "1", "the value is the only thing on stdout");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The journal is the run's account and holds digests. Putting the text
+    /// there would cost the rule that makes telemetry safe by default.
+    #[test]
+    fn the_journal_holds_the_digest_and_the_values_file_holds_the_text() {
+        let store = temp_store("log-kept");
+        let src = write_temp("log-kept.sic", SAYS);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 0, "{stderr}");
+
+        let dir = std::fs::read_dir(&store).unwrap().flatten().next().unwrap();
+        let journal = std::fs::read_to_string(dir.path().join("journal.jsonl")).unwrap();
+        assert!(journal.contains("\"event\":\"logged\""), "{journal}");
+        assert!(journal.contains("\"level\":\"warn\""), "{journal}");
+        assert!(
+            !journal.contains("looking"),
+            "the text is not here: {journal}"
+        );
+        assert!(
+            journal.contains(&sic_core::Digest::of(b"looking").to_string()),
+            "{journal}"
+        );
+
+        let logs = std::fs::read_to_string(dir.path().join("logs.jsonl")).unwrap();
+        assert!(logs.contains("\"message\":\"looking\""), "{logs}");
+        assert!(logs.contains("\"message\":\"and again\""), "{logs}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// Read back, the lines sit where they happened rather than in a section
+    /// of their own: what a program said is only useful next to what it did.
+    #[test]
+    fn explain_shows_the_lines_where_they_happened() {
+        let store = temp_store("log-explain");
+        let src = write_temp(
+            "log-explain.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [];\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   log info \"before\";\n\
+             \x20   let r = process.run(\"/bin/echo\", []);\n\
+             \x20   log info \"after\";\n\
+             \x20   return r.code;\n\
+             }\n",
+        );
+        let (_, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 0);
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0, "{stderr}");
+        let before = stdout.find("info: before").expect(&stdout);
+        let call = stdout.find("call process.run").expect(&stdout);
+        let after = stdout.find("info: after").expect(&stdout);
+        assert!(before < call && call < after, "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A run nobody asked to keep keeps nothing, which is what
+    /// `responses.jsonl` already promises. Saying so beats printing a digest
+    /// where a sentence goes.
+    #[test]
+    fn a_run_that_was_not_recorded_says_the_text_was_not_kept() {
+        let store = temp_store("log-unkept");
+        let src = write_temp("log-unkept.sic", SAYS);
+        let journal = store.join("run.jsonl");
+        std::fs::create_dir_all(&store).ok();
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "run",
+                src.to_str().unwrap(),
+                "--journal",
+                journal.to_str().unwrap(),
+            ],
+        );
+        assert_eq!(code, 0, "{stderr}");
+        let text = std::fs::read_to_string(&journal).unwrap();
+        assert!(text.contains("\"event\":\"logged\""), "{text}");
+        assert!(!text.contains("looking"), "{text}");
+        assert!(!store.join("logs.jsonl").exists(), "nothing was kept");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// Any provenance, erased on the way in: logging reaches nothing outside
+    /// the run's own account of itself.
+    #[test]
+    fn a_value_with_a_provenance_may_be_logged() {
+        let src = write_temp(
+            "log-trust.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [];\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let r = process.run(\"/bin/echo\", []);\n\
+             \x20   log info r.output;\n\
+             \x20   return r.code;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stderr.contains("info: "), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A message is text, whatever produced it.
+    #[test]
+    fn a_message_that_is_not_text_does_not_compile() {
+        let src = write_temp(
+            "log-int.sic",
+            "fn main() -> Int {\n    log info 1;\n    return 1;\n}\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0301"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `log info "x"` is two identifiers in a row, which no expression can be,
+    /// so the parser knows it is a log statement whatever the second word is -
+    /// and a mistyped level is a mistyped level rather than a parser guessing
+    /// at an expression.
+    #[test]
+    fn a_level_that_is_not_one_of_the_four_says_so() {
+        let src = write_temp(
+            "log-level.sic",
+            "fn main() -> Int {\n    log shout \"x\";\n    return 1;\n}\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0218"), "{stderr}");
+        assert!(
+            stderr.contains("`debug`, `info`, `warn` and `error`"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Nothing is reserved for it, the way nothing is reserved for `args` or
+    /// `repeatable`, so a program may still have a function called `log`.
+    #[test]
+    fn log_is_still_a_name_a_program_may_use() {
+        let src = write_temp(
+            "log-name.sic",
+            "fn log(x: Int) -> Int { return x; }\n\
+             fn main() -> Int { return log(3); }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "3");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// what the documents show against what the binary prints.
 ///
 /// `docs/diagnostics.md` and `docs/status.md` are already checked against the

@@ -77,21 +77,28 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         (Some(dir), None) => Some(dir.join(store::JOURNAL).to_string_lossy().into_owned()),
         (_, given) => given.map(str::to_string),
     };
-    let journal = match journal_path.as_deref() {
+    // Always wrapped, including around the sink that writes nothing: `log` is
+    // what a program says while it works, and a person watching should not
+    // have to have asked for a journal to see it.
+    let sink: Box<dyn sic_journal::Sink> = match journal_path.as_deref() {
         Some(path) => match FileSink::create(path) {
             Ok(sink) => {
                 if recording.is_none() {
                     eprintln!("run {run_id} -> {path}");
                 }
-                Journal::new(run_id, Box::new(sink))
+                Box::new(sink)
             }
             Err(msg) => {
                 eprintln!("error: {msg}");
                 return ExitCode::from(EXIT_FAILURE);
             }
         },
-        None => Journal::new(run_id, Box::new(sic_journal::NullSink)),
+        None => Box::new(sic_journal::NullSink),
     };
+    let journal = Journal::new(
+        run_id,
+        Box::new(super::journal::LogSink::around(sink, recording.as_deref())),
+    );
 
     // Opened before the run starts, so a run that is going to fail for want of
     // a tool fails before it has done anything.

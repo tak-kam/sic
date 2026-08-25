@@ -1199,6 +1199,32 @@ impl<'a> Vm<'a> {
                     self.finish_task(index, TaskState::Finished(Value::Unit));
                     return;
                 }
+                // The only instruction whose whole effect is a journal entry.
+                // The VM does no I/O - a sink is the CLI's code and decides
+                // whether a person sees this - so what happens here is that
+                // the event exists.
+                Op::Log => {
+                    let Value::Str(handle) = self.get(index, base + b) else {
+                        die!(
+                            FailKind::Internal("LOG on a register that is not a string"),
+                            None,
+                            None
+                        );
+                    };
+                    let message = self.arena.str(handle).to_string();
+                    let level = match sic_journal::LogLevel::from_code(a as u8) {
+                        Some(level) => level,
+                        None => die!(FailKind::Internal("LOG names no level"), None, None),
+                    };
+                    let parent = self.tasks[index].frames.last().map(|f| f.span);
+                    let span = self.journal.new_span();
+                    self.journal.emit_for(
+                        TaskId(index as u64),
+                        span,
+                        parent,
+                        EventKind::Logged { level, message },
+                    );
+                }
             }
         }
     }

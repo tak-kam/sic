@@ -258,6 +258,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [trust.md](docs/design/trust.md) | provenance in the type system |
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
+| [logging.md](docs/design/logging.md) | what a program has to say about itself, and where it goes |
 | [plan.md](docs/design/plan.md) | `sic plan` |
 | [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
@@ -279,7 +280,7 @@ Source → Lexer → Parser → AST → Type Checker → IR
        → Bytecode → Verifier → VM → Capability Broker
 ```
 
-Fourteen crates, no external dependencies, 30 instructions in a register VM that
+Fourteen crates, no external dependencies, 31 instructions in a register VM that
 only runs bytecode a verifier has accepted. Three boundaries are enforced by
 tests rather than left as intentions:
 

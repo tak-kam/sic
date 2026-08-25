@@ -2,9 +2,11 @@
 //
 // This is issue #8: whether sic can be used to build sic. What the attempt
 // established, and the seven things that bent it, are in
-// `docs/design/self-hosting.md`. Two of them are fixed: #50 gave the language
+// `docs/design/self-hosting.md`. Most of them are fixed: #50 gave the language
 // `process.run`, so this program no longer has to grant itself a shell to see
-// why a build failed, and #49 followed from that.
+// why a build failed; #49 followed from that; #51 let the grant say what
+// directory and environment a call gets, which is what makes the `RUSTFLAGS`
+// line below possible; and #58 gave the diagnosis somewhere to go.
 //
 //     sic plan workflows/ci.sic
 //     sic run workflows/ci.sic --record
@@ -66,17 +68,19 @@ fn tests() -> Exit {
 }
 
 fn main() -> Observed<String> {
+    log info "running the tests";
     let r = tests();
     if r.code == 0 {
         // Nothing to diagnose. The agent is not asked and the budget is not
         // spent, which is what `sic plan` means by "at most 1".
+        log info "they passed";
         return r.output;
     }
-    // The diagnosis goes into the run's record rather than into this value:
-    // `sic explain` shows what the agent was asked and what it answered. A
-    // program has nowhere else to put it, because a model's answer is
-    // `LLM<String>` and this function has already promised a different type -
-    // and because §26, logging, is unbuilt. See `docs/design/self-hosting.md`.
+    log warn "they failed, asking the agent why";
     let d = diagnose(r.output);
+    // This is what #58 was for. The binding used to go nowhere: a model's
+    // answer is `LLM<String>` and this function had already promised a
+    // different type, so the diagnosis had no channel out of the program.
+    log error d.cause;
     return r.output;
 }

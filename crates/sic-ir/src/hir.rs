@@ -141,10 +141,14 @@ pub enum InstKind {
         dst: LocalId,
         task: LocalId,
     },
+    /// What the program has to say about itself.
+    ///
+    /// No fields: `log info "..." { key: value }` is not syntax, and a vector
+    /// nothing fills is a promise the IR does not keep. It comes back with the
+    /// syntax that needs it.
     Log {
         level: LogLevel,
         msg: LocalId,
-        fields: Vec<(String, LocalId)>,
     },
 }
 
@@ -204,10 +208,4 @@ impl CallPolicy {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LogLevel {
-    Debug,
-    Info,
-    Warn,
-    Error,
-}
+pub use sic_syntax::ast::LogLevel;

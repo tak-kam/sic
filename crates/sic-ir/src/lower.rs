@@ -195,6 +195,15 @@ impl<'a> FnLower<'a> {
                 let v = value.as_ref().map(|e| self.expr(e));
                 self.terminate(Term::Return(v), *span);
             }
+            Stmt::Log {
+                level,
+                message,
+                span,
+                ..
+            } => {
+                let msg = self.expr(message);
+                self.emit(InstKind::Log { level: *level, msg }, *span);
+            }
             Stmt::If(if_stmt) => self.if_stmt(if_stmt),
             Stmt::Expr { expr, .. } => {
                 self.expr(expr);

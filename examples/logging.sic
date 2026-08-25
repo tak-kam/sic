@@ -1,0 +1,32 @@
+// What a program has to say about itself.
+//
+//     sic run examples/logging.sic
+//     sic run examples/logging.sic --record
+//
+// A log line goes where a person can see it - stderr, as it happens - and is
+// kept where the run is kept. Without `--record` nothing is written down,
+// which is the same promise `responses.jsonl` makes about what a capability
+// answered: if the text must not be kept, do not ask for it to be.
+//
+// The journal holds the level and the digest of the message, never the text.
+// That rule is what makes a run's account safe to export by default, and it is
+// why §26 waited for somewhere to put the text rather than for time to write
+// it: see docs/design/logging.md.
+allow {
+    process.run "/bin/sh" args ["-c"];
+}
+
+fn main() -> Int {
+    log info "looking for two findings";
+    let r = process.run("/bin/sh", ["-c", "echo two findings; exit 1"]);
+    if r.code == 0 {
+        log info "nothing to report";
+        return 0;
+    }
+    // The message is an expression, so a program can say what happened rather
+    // than only that something did. Its provenance is erased on the way in:
+    // logging changes nothing outside the run's own account of itself, so the
+    // rule that stops a value from deciding what runs has nothing to say here.
+    log warn r.output;
+    return r.code;
+}

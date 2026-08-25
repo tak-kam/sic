@@ -167,6 +167,9 @@ impl Printer {
                 None => self.line("(return)"),
             },
             Stmt::Expr { expr, .. } => self.line(&format!("(expr {})", expr_str(expr))),
+            Stmt::Log { level, message, .. } => {
+                self.line(&format!("(log {} {})", level.name(), expr_str(message)));
+            }
             Stmt::If(i) => self.if_stmt(i),
         }
     }

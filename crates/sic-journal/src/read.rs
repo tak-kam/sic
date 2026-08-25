@@ -11,7 +11,7 @@
 use sic_core::Digest;
 use sic_json::Json;
 
-use crate::{Event, EventKind, RunId, SpanId, TaskId};
+use crate::{Event, EventKind, LogLevel, RunId, SpanId, TaskId};
 
 /// An event and the wall clock the sink stamped it with.
 ///
@@ -140,6 +140,20 @@ fn kind_from_json(json: &Json) -> Option<EventKind> {
         "checkpoint_written" => EventKind::CheckpointWritten {
             digest: digest(json, "checkpoint")?,
             bytes: int(json, "bytes")? as u64,
+        },
+        // A journal line holds the digest, so what comes back is a line that
+        // says one was logged and at what level. The text is in the run's
+        // values file; `sic explain` reads it from there, the way it reads
+        // what a person was asked.
+        "logged" => EventKind::Logged {
+            level: match string(json, "level")? {
+                "debug" => LogLevel::Debug,
+                "info" => LogLevel::Info,
+                "warn" => LogLevel::Warn,
+                "error" => LogLevel::Error,
+                _ => return None,
+            },
+            message: string(json, "message")?.to_string(),
         },
         "tool_used" => EventKind::ToolUsed {
             tool: string(json, "tool")?.to_string(),

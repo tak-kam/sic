@@ -58,6 +58,41 @@ pub struct Event {
     pub kind: EventKind,
 }
 
+/// How much a logged line matters, as the program said it.
+///
+/// Repeated here rather than taken from `sic-ir`: the journal is downstream of
+/// the compiler and must not depend on it, which is the same reason `sic-core`
+/// holds the capability types.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    pub fn name(self) -> &'static str {
+        match self {
+            LogLevel::Debug => "debug",
+            LogLevel::Info => "info",
+            LogLevel::Warn => "warn",
+            LogLevel::Error => "error",
+        }
+    }
+
+    /// The four, by the numbers the bytecode uses.
+    pub fn from_code(code: u8) -> Option<LogLevel> {
+        Some(match code {
+            0 => LogLevel::Debug,
+            1 => LogLevel::Info,
+            2 => LogLevel::Warn,
+            3 => LogLevel::Error,
+            _ => return None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
     RunStarted {
@@ -148,6 +183,20 @@ pub enum EventKind {
         digest: Digest,
         bytes: u64,
     },
+    /// What the program said about itself.
+    ///
+    /// A sink is code the CLI owns and may show a person what the program
+    /// said; a journal file is the run's account and holds digests, which is
+    /// the split `docs/design/runs.md` §2 already made for what a capability
+    /// answered.
+    Logged {
+        level: LogLevel,
+        /// The text as the VM emits it, and the digest when this event has
+        /// been read back out of a `journal.jsonl` - because the digest is
+        /// what that file holds. Whoever wants the text after the fact reads
+        /// the run's values file, which is where `sic explain` gets it.
+        message: String,
+    },
 }
 
 impl EventKind {
@@ -171,6 +220,7 @@ impl EventKind {
             EventKind::RunSuspended { .. } => "run_suspended",
             EventKind::RunResumed { .. } => "run_resumed",
             EventKind::CheckpointWritten { .. } => "checkpoint_written",
+            EventKind::Logged { .. } => "logged",
         }
     }
 }

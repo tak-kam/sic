@@ -24,6 +24,7 @@ $ sic replay 9b41d0
     program.sicb      the bytecode that ran
     journal.jsonl     what happened
     responses.jsonl   what the broker answered
+    logs.jsonl        what the program said, if it said anything
     checkpoint.sicc   present only if the run is waiting
     driver.json       what answered its model calls, if anything did
     conversations     which agent conversations it has open, if any
@@ -61,6 +62,12 @@ Where a person answered, the line also holds the question they were asked and,
 if they gave one, the reason: `docs/design/decisions.md` §6 says why free text a
 person wrote belongs in this file rather than in the journal.
 
+
+`logs.jsonl` is the same split used a second time. A log line is a value the
+program wrote, so the journal keeps its level and its digest and the text lives
+here - which is what let §26 be built at all, because putting the text in the
+journal would have cost the rule that makes telemetry safe by default. See
+`docs/design/logging.md`.
 ---
 
 ## 3. `explain` and `inspect-run`

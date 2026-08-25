@@ -74,6 +74,9 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         },
         None => Box::new(NullSink),
     };
+    // A checkpoint has no run directory to keep values in, so the lines are
+    // shown and not written - which is what a run nobody asked to keep gets.
+    let sink: Box<dyn sic_journal::Sink> = Box::new(super::journal::LogSink::around(sink, None));
 
     // A checkpoint is state, not a program: what runs after it is resumed is
     // this bytecode, and it has to have been checked like any other.

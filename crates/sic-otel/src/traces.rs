@@ -191,6 +191,12 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
             | EventKind::RunResumed { .. }
             | EventKind::CheckpointWritten { .. }
             | EventKind::ToolUsed { .. } => {}
+            // A log line is a log record, and this converts a journal into
+            // traces and metrics. OTLP has a third signal for these and it is
+            // its own document with its own shape; putting the text on a span
+            // instead would be the wrong signal chosen because it was nearer.
+            // See `docs/design/logging.md`.
+            EventKind::Logged { .. } => {}
         }
     }
 

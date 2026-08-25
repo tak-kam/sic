@@ -88,6 +88,7 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
         Form::ABC => match op {
             Op::Return | Op::Fail => format!("r{}", inst.a()),
             Op::Halt => String::new(),
+            Op::Log => format!("{}, r{}", level_name(inst.a()), inst.b()),
             Op::Move | Op::Not => format!("r{}, r{}", inst.a(), inst.b()),
             Op::Call => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::CallCap => format!("r{}, c{}, r{}", inst.a(), inst.b(), inst.c()),
@@ -142,6 +143,19 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
 
 fn target(pc: u32, offset: i16) -> i64 {
     pc as i64 + 1 + offset as i64
+}
+
+/// The four levels, by the numbers the bytecode uses. Anything else is a file
+/// the verifier refuses, and a disassembly says what it saw rather than
+/// guessing.
+fn level_name(code: u8) -> String {
+    match code {
+        0 => "debug".to_string(),
+        1 => "info".to_string(),
+        2 => "warn".to_string(),
+        3 => "error".to_string(),
+        other => format!("level{other}"),
+    }
 }
 
 #[cfg(test)]

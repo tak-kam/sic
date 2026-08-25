@@ -88,3 +88,64 @@ pub fn new_run_id() -> RunId {
     bytes.copy_from_slice(&digest.bytes()[..16]);
     RunId(u128::from_le_bytes(bytes))
 }
+
+/// Shows what the program said, and keeps it when the run is being kept.
+///
+/// Always wrapped around whatever sink a run has, including the one that
+/// writes nothing: `log` is what a program says about itself while it works,
+/// and a person watching should not have to have passed `--journal` to see it.
+///
+/// Two destinations because a log line has two audiences, and they are one
+/// statement rather than two decisions: it goes where a person can see it, and
+/// it is kept where the run is kept. That is what `responses.jsonl` already
+/// does with what a capability answered.
+///
+/// stderr rather than stdout, because stdout is the value the program returned
+/// and `sic run` prints it there. A line saying what happened must not be
+/// mistaken for what came out.
+#[derive(Debug)]
+pub struct LogSink {
+    inner: Box<dyn Sink>,
+    /// Where the text is kept, for a run that is being recorded. `None` is a
+    /// run nobody asked to keep, and its lines are shown and not written -
+    /// the same promise `responses.jsonl` makes.
+    values: Option<BufWriter<File>>,
+}
+
+impl LogSink {
+    pub fn around(inner: Box<dyn Sink>, keep_in: Option<&std::path::Path>) -> Self {
+        let values = keep_in.and_then(|dir| {
+            let path = dir.join(super::store::LOGS);
+            match File::options().create(true).append(true).open(&path) {
+                Ok(file) => Some(BufWriter::new(file)),
+                Err(e) => {
+                    eprintln!(
+                        "warning: cannot keep log lines in `{}`: {e}",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        });
+        Self { inner, values }
+    }
+}
+
+impl Sink for LogSink {
+    fn emit(&mut self, event: &Event) {
+        if let sic_journal::EventKind::Logged { level, message } = &event.kind {
+            eprintln!("{}: {message}", level.name());
+            if let Some(out) = self.values.as_mut() {
+                let line = format!(
+                    "{{\"level\":{},\"message\":{}}}",
+                    sic_json::quoted(level.name()),
+                    sic_json::quoted(message)
+                );
+                if let Err(e) = writeln!(out, "{line}") {
+                    eprintln!("warning: cannot keep a log line: {e}");
+                }
+            }
+        }
+        self.inner.emit(event);
+    }
+}

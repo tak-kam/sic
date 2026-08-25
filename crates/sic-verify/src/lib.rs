@@ -442,6 +442,9 @@ impl<'a> Verifier<'a> {
                     ok &= check_reg(self, inst.c(), "index");
                 }
                 Op::Return | Op::Fail => ok &= check_reg(self, inst.a(), "operand"),
+                // `a` is the level, which is a number rather than a register,
+                // so only `b` is one.
+                Op::Log => ok &= check_reg(self, inst.b(), "message"),
                 Op::Halt => {}
             }
         }
@@ -811,6 +814,20 @@ impl<'a> Verifier<'a> {
                 }
                 Op::Fail => {
                     self.read(&name, pc, &state, inst.a(), None);
+                }
+                // A message is a string and the level is one of four. Both are
+                // checked here rather than trusted, because a file that
+                // decodes says nothing about what is in it.
+                Op::Log => {
+                    self.read(&name, pc, &state, inst.b(), Some(STR));
+                    if inst.a() > 3 {
+                        self.error(
+                            Some(&name),
+                            Some(pc),
+                            format!("LOG names level {}, and there are four", inst.a()),
+                        );
+                    }
+                    successors.push(index + 1);
                 }
                 Op::Halt => {}
             }

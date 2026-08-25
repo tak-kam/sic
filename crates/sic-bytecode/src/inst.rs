@@ -107,6 +107,10 @@ opcodes! {
     Return = 27, "RETURN", ABC;
     Fail = 28, "FAIL", ABC;
     Halt = 29, "HALT", ABC;
+    /// What the program has to say about itself. `a` is the level, `b` the
+    /// register holding the message. The only instruction whose whole effect
+    /// is an entry in the journal.
+    Log = 30, "LOG", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

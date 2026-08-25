@@ -144,7 +144,7 @@ pub fn attach(
 
     let sink: Box<dyn sic_journal::Sink> =
         match super::journal::FileSink::append(&dir.join(store::JOURNAL).to_string_lossy()) {
-            Ok(sink) => Box::new(sink),
+            Ok(sink) => Box::new(super::journal::LogSink::around(Box::new(sink), Some(&dir))),
             Err(msg) => {
                 eprintln!("error: {msg}");
                 return ExitCode::from(EXIT_FAILURE);
@@ -274,9 +274,27 @@ pub fn explain(prefix: &str) -> ExitCode {
     // The same shape as the OTLP exporter's fix in #28. This is the reader
     // that was not part of it.
     let mut charged: Vec<(sic_journal::SpanId, u64)> = Vec::new();
+    // What the program said, in the order it said it. The journal holds the
+    // digest of each line, so the text comes from the run's values file and is
+    // matched by position - the same way `responses.jsonl` answers a replay.
+    let said = store::read_logs(&dir);
+    let mut logged = 0usize;
     for timed in &events {
         if let EventKind::BudgetConsumed { remaining, .. } = &timed.event.kind {
             charged.push((timed.event.span, *remaining));
+            continue;
+        }
+        if let EventKind::Logged { level, .. } = &timed.event.kind {
+            let text = match said.get(logged) {
+                Some(text) => text.clone(),
+                // A run that was not recorded kept no text, and a digest is
+                // not a line anybody can read. Saying which is better than
+                // printing a hash where a sentence goes.
+                None => "(not kept: the run was not recorded)".to_string(),
+            };
+            logged += 1;
+            let indent = "  ".repeat(store::depth_of(&timed.event, &events) + 1);
+            println!("{indent}{}: {text}", level.name());
             continue;
         }
         let Some(mut line) = explain_event(timed) else {

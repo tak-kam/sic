@@ -96,6 +96,20 @@ pub fn event_to_json(event: &Event) -> String {
             field_str(&mut out, "checkpoint", &digest.to_string(), false);
             field_u64(&mut out, "bytes", *bytes, false);
         }
+        // The digest, not the message. A journal is the run's account and it
+        // records digests, which is what lets a run be exported to telemetry
+        // without deciding first whether the program said anything it should
+        // not have. The text is in the run's values file, beside the answers
+        // - `docs/design/runs.md` §2 made that split and this uses it.
+        EventKind::Logged { level, message } => {
+            field_str(&mut out, "level", level.name(), false);
+            field_str(
+                &mut out,
+                "message",
+                &sic_core::Digest::of(message.as_bytes()).to_string(),
+                false,
+            );
+        }
     }
     out.push('}');
     out

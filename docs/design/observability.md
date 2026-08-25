@@ -155,9 +155,13 @@ is at this level - the exporter does not know what an agent is either.
 
 ## 5. What is not here
 
-- **No logs.** There is no log event to export yet; `log` as a statement arrives
-  with the phase that adds it. Failures appear as span statuses, which is where
-  a trace backend looks for them.
+- **No logs.** There is one now - `log` is a statement and the journal carries a
+  `logged` event - and this still does not export it. OTLP has a third signal
+  for log records, with its own document and its own shape; putting the text on
+  a span instead would be the wrong signal chosen because it was nearer. The
+  journal holds the digest anyway, and the text is in the run's values file:
+  `docs/design/logging.md`. Failures appear as span statuses, which is where a
+  trace backend looks for them.
 - **No sending, no OTLP/gRPC, no protobuf.** JSON is what OTLP defines for the
   HTTP transport, and a document is what this produces.
 - **No sampling and no batching.** Both are decisions about a stream of runs,

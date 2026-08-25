@@ -20,6 +20,9 @@ pub const PROGRAM: &str = "program.sicb";
 /// docs/design/runs.md.
 pub const RESPONSES: &str = "responses.jsonl";
 pub const CHECKPOINT: &str = "checkpoint.sicc";
+/// What the program said about itself. Values, like `responses.jsonl` and for
+/// the same reason - see docs/design/logging.md.
+pub const LOGS: &str = "logs.jsonl";
 /// What answered the run's model calls, when anything did - see
 /// docs/design/driving.md §6.
 pub const DRIVER: &str = "driver.json";
@@ -316,6 +319,25 @@ pub struct Recorded {
     pub asked: Option<String>,
     /// Why they answered that way, if they said.
     pub because: Option<String>,
+}
+
+/// Every line a run logged, in the order it logged them.
+///
+/// The journal says a line happened and at what level; this is what it said.
+/// A run that logged nothing has no file, which is not an error - the same
+/// reading `read_answers` gives a run that called nothing.
+pub fn read_logs(dir: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(dir.join(LOGS)) else {
+        return Vec::new();
+    };
+    text.lines()
+        .filter_map(
+            |line| match sic_json::parse(line).ok()?.member("message")? {
+                sic_json::Json::Str(message) => Some(message.clone()),
+                _ => None,
+            },
+        )
+        .collect()
 }
 
 /// Every answer a run recorded, in the order it recorded them.
