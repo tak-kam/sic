@@ -32,6 +32,10 @@ Usage:
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
+  sic recheck <RUN-ID> <FILE.sic>
+                                  run FILE against those answers instead, to
+                                  see whether an edit still asks what the
+                                  recording answered
   sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH] [--llm SPEC]
                                   continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
@@ -107,6 +111,14 @@ fn main() -> ExitCode {
             "`replay` re-runs a recorded run against its recorded answers, so it takes no driver",
         ),
         "replay" => with_one_file(rest, "replay", cmd::runs::replay),
+        "recheck" if rest.iter().any(|a| a == "--llm") => usage_error(
+            "`recheck` answers a program's calls from what was recorded, so it takes no driver: \
+             a check that reached a live agent would be answering a different question",
+        ),
+        "recheck" => match rest {
+            [run, source] => cmd::runs::recheck(run, source),
+            _ => usage_error("`recheck` takes a run id and a source file"),
+        },
         "resume" => match parse_flags(
             rest,
             &["--value", "--journal", "--checkpoint", "--because", "--llm"],

@@ -1,9 +1,14 @@
-//! `sic runs`, `sic explain`, `sic inspect-run` and `sic replay`.
+//! `sic runs`, `sic explain`, `sic inspect-run`, `sic replay` and `sic recheck`.
 //!
-//! None of these run a program except `replay`, and that one answers every
-//! capability call from what was recorded rather than asking the broker. A
-//! replay that called out would be a second run, with a second set of effects,
-//! which is the opposite of what replaying is for.
+//! None of these run a program except the last two, and both answer every
+//! capability call from what was recorded rather than asking the broker. One
+//! that called out would be a second run, with a second set of effects, which
+//! is the opposite of what either is for.
+//!
+//! The two are different claims. `replay` runs the *stored* bytecode, so a
+//! difference means sic changed. `recheck` compiles a source file and runs
+//! that, so a difference means the program did. See `docs/design/runs.md` §4
+//! and §5.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -559,5 +564,162 @@ impl SharedSink {
 impl sic_journal::Sink for SharedSink {
     fn emit(&mut self, event: &sic_journal::Event) {
         self.0.borrow_mut().emit(event);
+    }
+}
+
+/// One capability call, as the comparison sees it.
+///
+/// The name and the digest of the arguments, and nothing else. That pair is the
+/// question the recorded answer was an answer to; see `docs/design/runs.md` §5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Asked {
+    cap: String,
+    args: Digest,
+}
+
+fn calls_of<'a>(events: impl Iterator<Item = &'a EventKind>) -> Vec<Asked> {
+    events
+        .filter_map(|kind| match kind {
+            EventKind::CapabilityRequested { cap, args, .. } => Some(Asked {
+                cap: cap.clone(),
+                args: *args,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// `sic recheck <RUN-ID> <FILE.sic>`: is this program still one those answers fit?
+///
+/// A recorded run is a case the program has been through with real answers, and
+/// the question before shipping an edit is whether they still apply. It is not
+/// the question `replay` asks - that one runs the *stored* bytecode and
+/// establishes determinism, so it failing means sic changed and this failing
+/// means the program did.
+///
+/// It cannot tell you whether a waiting run will resume, because that is
+/// already answered: a recorded run keeps its own bytecode and `sic attach`
+/// picks it up against that. See `docs/design/runs.md` §5.
+pub fn recheck(prefix: &str, source: &str) -> ExitCode {
+    let (dir, recorded) = match open(prefix) {
+        Ok(v) => v,
+        Err(code) => return code,
+    };
+    let summary = store::summarize(&recorded);
+
+    let program = match super::compile_source(source) {
+        Ok(p) => p,
+        Err(code) => return code,
+    };
+    if let Err(code) = super::verified(&program, super::From::Compiler(source)) {
+        return code;
+    }
+    let answers = match store::read_answers(&dir) {
+        Ok(answers) => answers,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
+    let Some(entry) = program.func_by_name("main") else {
+        eprintln!("error: `{source}` has no `main`");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+
+    println!(
+        "rechecking {} ({}) against {source}",
+        summary.run, summary.workflow
+    );
+
+    let wanted = calls_of(recorded.iter().map(|t| &t.event.kind));
+    // The recording stops where the run stopped, so running out of answers at
+    // exactly that point is the recording ending rather than the program
+    // diverging.
+    let recording_is_complete = !matches!(summary.outcome, store::Outcome::Waiting(_));
+
+    let sink = SharedSink::default();
+    let journal = sic_journal::Journal::new(summary.run, Box::new(sink.clone()));
+    let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
+
+    let mut findings: Vec<String> = Vec::new();
+    let mut matched = 0usize;
+    let mut status = vm.run(entry, &[]);
+    loop {
+        match status {
+            Status::Suspended(_) => {
+                let asked = calls_of(sink.events().iter().map(|e| &e.kind));
+                let index = asked.len() - 1;
+                let now = &asked[index];
+                match wanted.get(index) {
+                    Some(before) if before == now => {}
+                    Some(before) if before.cap != now.cap => {
+                        findings.push(format!(
+                            "call {}: the recording answered `{}`, this program asks `{}`",
+                            index + 1,
+                            before.cap,
+                            now.cap
+                        ));
+                        break;
+                    }
+                    Some(_) => {
+                        findings.push(format!(
+                            "call {}: `{}`, with different arguments than the recording answered",
+                            index + 1,
+                            now.cap
+                        ));
+                        break;
+                    }
+                    None => {
+                        if recording_is_complete {
+                            findings.push(format!(
+                                "call {}: `{}`, which the recording has no answer for",
+                                index + 1,
+                                now.cap
+                            ));
+                        }
+                        break;
+                    }
+                }
+                // The call lined up. Counted here rather than after the answer
+                // is found, because what is being counted is calls that match
+                // the recording - and the last call of a waiting run is one
+                // the recording has but never got an answer to.
+                matched += 1;
+                let Some(answer) = answers.get(index).map(|a| a.value.clone()) else {
+                    if recording_is_complete {
+                        findings.push(format!(
+                            "call {}: `{}` lines up, and there is no recorded answer to give it",
+                            index + 1,
+                            now.cap
+                        ));
+                    }
+                    break;
+                };
+                status = vm.resume(answer);
+            }
+            Status::Failed(ref info) => {
+                findings.push(format!("the program failed: {}", info.describe()));
+                break;
+            }
+            _ => break,
+        }
+    }
+
+    if findings.is_empty() && matched < wanted.len() {
+        findings.push(format!(
+            "the program made {matched} of the recording's {} calls, so it no longer goes where the run went",
+            wanted.len()
+        ));
+    }
+
+    if findings.is_empty() {
+        println!("  {matched} of {} calls matched", wanted.len());
+        ExitCode::SUCCESS
+    } else {
+        println!("  {matched} of {} calls matched", wanted.len());
+        for line in &findings {
+            println!("  {line}");
+        }
+        ExitCode::from(EXIT_FAILURE)
     }
 }

@@ -1680,6 +1680,235 @@ mod trust {
 mod recorded_runs {
     use super::*;
 
+    /// A program with one `fs.read`.
+    ///
+    /// `sic recheck` compiles a source file, so the grant has to name a path
+    /// that exists from the repository root, which is where these run.
+    const READER: &str = "allow {\n\
+                          \x20   fs.read \"./examples/greeting.txt\";\n\
+                          }\n\
+                          \n\
+                          fn main() -> String {\n\
+                          \x20   return fs.read(\"./examples/greeting.txt\");\n\
+                          }\n";
+
+    /// Records one run of `src` and returns its id.
+    fn recorded(store: &std::path::Path, src: &std::path::Path) -> String {
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert!(code == 0 || code == 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(store), &["runs"]);
+        stdout
+            .lines()
+            .next()
+            .and_then(|l| l.split_whitespace().next())
+            .expect("one recorded run")
+            .to_string()
+    }
+
+    /// The same program the run was recorded from still asks what it asked.
+    ///
+    /// The bytecode is not the same - the file is compiled again - so this is
+    /// the claim `recheck` makes and `replay` does not: the recorded answers
+    /// still fit.
+    #[test]
+    fn an_unchanged_program_still_asks_what_the_recording_answered() {
+        let store = temp_store("recheck-same");
+        let src = write_temp("recheck-same.sic", READER);
+        let id = recorded(&store, &src);
+
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, src.to_str().unwrap()],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}\n{stdout}");
+        assert!(stdout.contains("1 of 1 calls matched"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// An edit that changes no call is not a difference. Bytecode digests move
+    /// for a comment; the question the recording answered does not.
+    #[test]
+    fn an_edit_that_changes_no_call_is_not_a_difference() {
+        let store = temp_store("recheck-comment");
+        let src = write_temp("recheck-comment.sic", READER);
+        let id = recorded(&store, &src);
+
+        let edited = write_temp(
+            "recheck-comment-edited.sic",
+            &format!("// a comment nobody ran\n{READER}"),
+        );
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, edited.to_str().unwrap()],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}\n{stdout}");
+        assert!(stdout.contains("1 of 1 calls matched"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(edited).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The recorded answer would be handed to a different question, so it is a
+    /// finding and the message says which call.
+    #[test]
+    fn a_program_that_asks_something_else_says_which_call() {
+        let store = temp_store("recheck-other");
+        let src = write_temp("recheck-other.sic", READER);
+        let id = recorded(&store, &src);
+
+        let other = write_temp(
+            "recheck-other-cap.sic",
+            "allow {\n\
+             \x20   process.exec \"/usr/bin/true\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   return process.exec(\"/usr/bin/true\");\n\
+             }\n",
+        );
+        let (stdout, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, other.to_str().unwrap()],
+        );
+        assert_eq!(code, 1, "{stdout}");
+        assert!(
+            stdout.contains(
+                "call 1: the recording answered `fs.read`, this program asks `process.exec`"
+            ),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(other).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The same capability with different arguments is a different question,
+    /// which is why the comparison is on the argument digest and not the name.
+    #[test]
+    fn the_same_capability_with_other_arguments_is_a_different_question() {
+        let store = temp_store("recheck-args");
+        let src = write_temp("recheck-args.sic", READER);
+        let id = recorded(&store, &src);
+
+        let other = write_temp(
+            "recheck-args-other.sic",
+            "allow {\n\
+             \x20   fs.read \"./examples/milestone.sic\";\n\
+             }\n\
+             \n\
+             fn main() -> String {\n\
+             \x20   return fs.read(\"./examples/milestone.sic\");\n\
+             }\n",
+        );
+        let (stdout, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, other.to_str().unwrap()],
+        );
+        assert_eq!(code, 1, "{stdout}");
+        assert!(
+            stdout.contains("with different arguments than the recording answered"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(other).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A program that no longer reaches the call the recording made.
+    #[test]
+    fn a_program_that_makes_fewer_calls_is_a_finding() {
+        let store = temp_store("recheck-fewer");
+        let src = write_temp("recheck-fewer.sic", READER);
+        let id = recorded(&store, &src);
+
+        let other = write_temp("recheck-none.sic", "fn main() -> Int { return 1; }\n");
+        let (stdout, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, other.to_str().unwrap()],
+        );
+        assert_eq!(code, 1, "{stdout}");
+        assert!(
+            stdout.contains("no longer goes where the run went"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(other).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A waiting run's recording stops where the run stopped, so running out of
+    /// answers there is the recording ending rather than the program diverging.
+    /// This is the case a comparison that only counted calls would get wrong.
+    #[test]
+    fn a_waiting_recording_ending_early_is_not_a_difference() {
+        let store = temp_store("recheck-waiting");
+        let src = write_temp(
+            "recheck-waiting.sic",
+            "allow {\n\
+             \x20   human.approve \"a test\";\n\
+             \x20   process.exec \"/usr/bin/true\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let ok = human.approve(\"go?\");\n\
+             \x20   if ok {\n\
+             \x20       return process.exec(\"/usr/bin/true\");\n\
+             \x20   }\n\
+             \x20   return 1;\n\
+             }\n",
+        );
+        let id = recorded(&store, &src);
+
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        assert!(stdout.contains("waiting"), "{stdout}");
+        assert_eq!(code, 0);
+
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["recheck", &id, src.to_str().unwrap()],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}\n{stdout}");
+        assert!(stdout.contains("1 of 1 calls matched"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A check that reached a live agent would be answering a different
+    /// question, so the flag is refused rather than ignored.
+    #[test]
+    fn recheck_takes_no_driver() {
+        let (_, stderr, code) = sic(&["recheck", "abcd1234", "x.sic", "--llm", "tmux:claude"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("takes no driver"), "{stderr}");
+    }
+
+    #[test]
+    fn recheck_needs_a_run_and_a_file() {
+        let (_, stderr, code) = sic(&["recheck", "abcd1234"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(
+            stderr.contains("takes a run id and a source file"),
+            "{stderr}"
+        );
+    }
+
     #[test]
     fn a_recorded_run_can_be_listed_explained_and_replayed() {
         let store = temp_store("replay");

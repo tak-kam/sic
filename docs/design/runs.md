@@ -115,7 +115,94 @@ Two ways a replay can legitimately end early:
 
 ---
 
-## 5. Picking a waiting run up again
+## 5. `recheck`: a recorded run is a test case for the program
+
+```console
+$ sic recheck 9b41d0 deploy.sic
+rechecking 9b41d0 (main) against deploy.sic
+  ✓ 11 of 12 calls matched
+  ✗ call 12: the recording answered `process.exec`, this program asks `fs.read`
+```
+
+`replay` re-runs the *stored* bytecode and establishes determinism. `recheck`
+compiles a source file and runs *that* against the same recorded answers. It is
+a different claim, so it is a different verb rather than a flag: `replay`
+failing means sic changed, `recheck` failing means the program did.
+
+### What it is actually for, which is not what it sounds like
+
+"Does my edit break the run that is waiting" is the question, and the literal
+answer is no - because of §6 and issue #11. A recorded run keeps its own
+bytecode, and `sic attach` resumes it against that rather than against whatever
+the source compiles to today. Editing the file cannot reach a recorded run that
+is already waiting.
+
+What an edit can do is make the program stop being the program those runs were
+runs of. Every recorded run is a case the program has actually been through,
+with real answers, and the useful question before shipping an edit is whether
+those answers still fit. That is Temporal's practice, arrived at from the same
+place: pull recent histories, run them against current code, fail the build if
+any of them no longer lines up. sic has the same three files sitting in the run
+directory already - `program.sicb`, `journal.jsonl`, `responses.jsonl` - and
+replaying a *different* program against the same answers is the same machinery
+with one substitution.
+
+### What counts as a difference
+
+Not the journal. The program is deliberately different, so most of the journal
+differs and almost none of it means anything: spans are renumbered, function
+digests move, an edit to a comment changes the bytecode.
+
+What is compared is the sequence of capability calls, by **name and argument
+digest**, which is the shortest statement of what a recording is worth:
+
+> Every recorded answer is still being given to the same question.
+
+If the calls line up, the recorded answers still apply and the recording is
+still a case this program passes. If call twelve asks `fs.read` where the
+recording answered `process.exec`, the twelfth answer is being handed to a
+different question, and using it would prove nothing.
+
+A digest rather than the arguments themselves, for the reason the journal
+records digests at all: a run's arguments may hold a secret, and `recheck` reads
+the journal.
+
+### Running out, and the one case where that is fine
+
+**The recording runs out.** The edited program asks for a call the recording has
+no answer for. Usually the finding - the program now does more than it did.
+Except when the recorded run was **suspended**: then the recording stops where
+the run stopped, by construction, and running out at exactly that point is the
+recording ending rather than the program diverging. `recheck` knows which,
+because the journal says so.
+
+**The program runs out.** The edited program stops before the recorded answers
+do. Always a finding: the recording went somewhere this program no longer goes.
+
+**The program fails.** A finding, and the plainest one there is.
+
+### What it must never do
+
+Call anything, and refuse `--llm`. The same rule as `replay`, for a stronger
+reason: a check that reached a live agent would be answering the question with
+a different agent's answer, which is not the question. Every call is answered
+from `responses.jsonl` or it is a difference.
+
+The compiled bytecode goes through the verifier before it runs, like every other
+path into the VM.
+
+### Exit codes
+
+`0` when every recorded answer still applies, `1` when one does not. So a
+directory of recorded runs is a test suite:
+
+```console
+$ sic runs | awk '{print $1}' | while read id; do sic recheck "$id" deploy.sic || exit 1; done
+```
+
+---
+
+## 6. Picking a waiting run up again
 
 A run that stopped is detached, in the sense a terminal multiplexer means: it
 exists, it is not attached to a process, and something can come back to it.
@@ -166,7 +253,7 @@ which is all the reader needs.
 
 ---
 
-## 6. Not here
+## 7. Not here
 
 - **No pruning, no retention, no size limit.** A run directory is a directory;
   deleting old ones is `rm`. Anything cleverer is a policy, and policies belong
@@ -178,3 +265,10 @@ which is all the reader needs.
   and takes a checkpoint.
 - **No redaction.** `responses.jsonl` holds what the capabilities returned. If
   that must not be kept, do not pass `--record`.
+- **`recheck` over every run at once.** A shell loop is one line and says what
+  it does. A built-in would have to decide which runs, in what order, and what
+  to print when half of them differ - three policies, none of which anybody has
+  wanted yet.
+- **No repair, no suggestion, no diff of the source.** `recheck` says where the
+  edited program stopped matching. What to do about it is the edit, and sic has
+  no opinion about somebody else'"'"'s program.

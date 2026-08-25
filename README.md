@@ -209,6 +209,11 @@ what; `sic attach <id>` answers it. Reading the question is a separate step from
 answering it, which is what makes it usable by something other than a person.
 `sic replay <id>` re-runs the stored bytecode against the stored answers and
 compares - which is a check on determinism, and calls nothing.
+
+**A recorded run is a test case.** `sic recheck <id> <file.sic>` runs an edited
+program against the same recorded answers and says where it stops asking what
+the recording answered. A directory of recorded runs is then a regression suite
+for the program, made of cases it has actually been through.
 → [runs.md](docs/design/runs.md)
 
 ## Commands
@@ -221,6 +226,7 @@ sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
                                    see what a waiting run needs, or answer it
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
+sic recheck <RUN-ID> <FILE.sic>     does this edit still ask what the run answered
 sic export <JOURNAL> [--traces P] [--metrics P]
 sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir
