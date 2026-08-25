@@ -91,6 +91,14 @@ invented.
 dependency between them, and the values that cross between them are already
 serializable. They still run in one process.
 
+`docs/design/processes.md` is the design, and it starts by measuring what the
+split would buy rather than assuming: "the VM cannot reach the outside world" is
+already true, enforced by the dependency graph and checked by a test. What it
+adds is a resource bound - a run that grew its arena to 230 MB takes the process
+today, and that process is also holding the run store and the terminal - and the
+possibility of giving the side that runs the bytecode fewer privileges than the
+side that performs effects, which is the one thing a crate boundary cannot do.
+
 ---
 
 ## Deliberately not built

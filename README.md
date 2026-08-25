@@ -259,6 +259,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
 | [logging.md](docs/design/logging.md) | what a program has to say about itself, and where it goes |
+| [processes.md](docs/design/processes.md) | what splitting the VM from the broker buys, and what is already true without it |
 | [plan.md](docs/design/plan.md) | `sic plan` |
 | [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |

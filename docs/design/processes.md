@@ -1,0 +1,191 @@
+# The VM and the broker as separate processes
+
+Section 9 of the specification says the VM and the broker are separate
+processes. They are separate crates that cannot see each other, sharing only
+the value types in `sic-core`, and they run in one process. Every design
+document in this repository has called that shared edge "the future IPC
+boundary" since phase 1.
+
+This is the document that decides whether to make it a present one, and it
+starts by asking what the split would buy - because most of what a reader
+assumes it buys is already true without it.
+
+---
+
+## 1. What is already true
+
+| the claim | what makes it true today |
+|---|---|
+| the VM cannot reach the outside world | `sic-vm` depends on `sic-core`, `sic-bytecode`, `sic-journal`, `sic-json` and nothing else; `tests/isolation.rs` greps its source for `std::fs`, `std::net`, `std::process`, `std::env`, `std::time`, `std::io` and the macros that read a file at compile time |
+| a bug cannot corrupt memory across the boundary | `unsafe_code = "forbid"` in `[workspace.lints.rust]`, inherited by all fourteen crates |
+| the values can cross a wire | `CapValue::write`/`read`, `CapRequest::to_bytes`, `answer_to_bytes` - all written and tested, for the agent's socket |
+| a framed protocol exists | `sic-broker::route`, length-prefixed with a maximum frame, served without a thread |
+
+So the split does not buy "the VM cannot perform an effect". That is enforced
+by the dependency graph and checked by a test, on every platform, with no
+runtime cost.
+
+A design document that claimed otherwise would be selling the process boundary
+on a property the crate boundary already has.
+
+---
+
+## 2. What it does buy, measured
+
+### The arena has no bound of its own
+
+`docs/design/v0.1.md` chose an arena per run and no GC, deliberately: a run is
+short and its memory goes back when it ends. Nothing bounds how large it gets.
+What bounds it in practice is `fuel`, and fuel counts instructions rather than
+bytes.
+
+That is not theoretical. A program that spawns tasks which recurse and allocate:
+
+```console
+$ /usr/bin/time -v sic run mem.sic
+error: ran out of fuel
+	Maximum resident set size (kbytes): 229760
+```
+
+230 MB, and what stopped it was the fuel budget rather than anything about
+memory. A bigger record or a longer budget goes further. There is no `--fuel`
+flag, so the only bound on this is a constant in the source.
+
+Today that memory is `sic run`'s, and `sic run` is also holding the run store,
+the journal sink, the tmux panes and the terminal. A run that goes too far takes
+all of it. As a child it takes the child, and the parent still has the journal
+it has written, the checkpoint it was handed, and something to say.
+
+**This is the benefit that is real today and it is about resources rather than
+about security.**
+
+### Fewer privileges for the side that runs the bytecode
+
+The one thing a crate boundary cannot do is give one side less than the other.
+The broker opens files, runs programs and drives panes; the VM needs a socket
+and nothing else. A child that has been through `seccomp`, `landlock`,
+`pledge` or `sandbox_init` before it reads its first instruction is a different
+claim from "we checked that the source does not mention `std::fs`".
+
+It is also the reason to put the *VM* in the child rather than the broker: the
+less privileged side is the one that can be given less.
+
+### Two machines
+
+Speculative, and the document should say so. Nothing in the design needs it and
+nothing has asked.
+
+---
+
+## 3. What it costs
+
+**The journal has to cross.** The VM emits events; a sink writes them. If the
+child writes the file, it needs the filesystem and §2's second benefit is gone
+before it arrives. So events cross the wire too, and the parent's sink is the
+only one - which is right, and is a second stream to design.
+
+**Checkpoints too.** The state is in the child. `Vm::checkpoint` returns bytes
+and the CLI writes them; across a boundary the child sends the bytes and the
+parent writes the file. Same shape as the journal.
+
+**Failure gets a vocabulary.** A child that dies mid-call, a child that hangs, a
+parent that dies leaving a child. Today none of these exist: a panic in the
+interpreter is a panic in `sic run`. Each needs a decision, and "the run failed"
+is not a good enough answer for all three.
+
+**Windows has no unix socket.** After #57 the tree compiles and runs there, and
+`route` and `tmux` are `#[cfg(unix)]`. A split built on a unix socket is
+unix-only, so `sic run` would be one process there and two here.
+
+That last one is the uncomfortable part, and it is worth stating rather than
+arranging around: **a security property that holds on one platform and not
+another is worse than one that holds nowhere**, because a reader learns it once.
+
+The answer is that this is not the security boundary. §1 is: the crate graph and
+the grep, everywhere. This is defence in depth and a resource bound, and defence
+in depth that exists on some platforms is ordinary. The document has to say that
+in those words, and `sic plan` has no business claiming anything about it.
+
+---
+
+## 4. What does not split
+
+**`sic replay` and `sic recheck` stay one process.** Both answer every call from
+a recorded file and reach no broker at all - that is the point of them, and
+`runs.md` §4 argues it. A boundary between a VM and a broker that is not there
+buys nothing.
+
+This is a rule rather than an exception: **the split is for runs that perform
+effects.** Three commands do - `run`, `resume`, `attach` - and three do not.
+
+---
+
+## 5. The shape
+
+The parent is `sic run`. It holds the terminal, the run store, the journal sink,
+the manifest and the broker. The child is the VM: it is handed the bytecode and
+a socket, and it has nothing else.
+
+```text
+sic run p.sic
+  ├── compiles, verifies                      (parent, pure)
+  ├── spawns `sic vm --socket <path>`         (child)
+  ├── sends the program and the entry point
+  └── loop:
+        child → parent   an event for the journal
+        child → parent   a capability request      →  the broker performs it
+        parent → child   the answer, or the error
+        child → parent   checkpoint bytes
+        child → parent   the run's status, and it exits
+```
+
+Five message kinds, four of them one way. The framing is `route`'s: a length
+prefix with a maximum, refused rather than believed.
+
+`sic vm` is `sic mcp`'s sibling - a command started by a run rather than by a
+person, and listed as such.
+
+### Why the child is the VM and not the broker
+
+Because §2 says the point is to give the side that runs the bytecode less than
+the side that performs effects, and a parent cannot be given less than its
+child. It is also the side whose memory is the problem.
+
+### What the child is not allowed to do
+
+Nothing, once the sandbox exists. Until then it is an ordinary process that
+happens not to use the filesystem, which is what §1 already guarantees - so the
+first version of this buys §2's first half and not its second, and should say
+so rather than implying a sandbox that is not there.
+
+---
+
+## 6. Not here
+
+- **The sandbox.** `seccomp`, `landlock` and their cousins are per-platform and
+  each is its own argument. The split is what makes one possible; it is not one.
+- **Two machines.** Nothing has asked, and a socket path is not a network.
+- **Splitting `replay` and `recheck`** (§4).
+- **A Windows transport.** Named pipes would work and nothing needs them yet;
+  Windows runs one process and §3 says why that is acceptable here and would
+  not be for the boundary in §1.
+- **Making the one-process path go away.** It is what Windows uses, what
+  `replay` uses, and what every test that builds a `Vm` uses. Two shapes, and
+  the second is the one with a wire in it.
+
+---
+
+## 7. Units of work
+
+1. The protocol: message kinds, framing, and a round trip over a socketpair in
+   a test. No command yet.
+2. `sic vm`: the child, reading a program and answering a socket.
+3. `sic run --isolate`: the parent, behind a flag, so that both shapes are
+   exercised while the second is new.
+4. The journal and the checkpoint across the wire.
+5. Failure: a child that dies, a child that hangs, a parent that leaves.
+6. `resume` and `attach`.
+7. The flag becomes the default on unix, and `docs/status.md` moves §9.
+
+Each is a piece of work that finishes on its own, and the first three are what
+decide whether the rest is worth having.
