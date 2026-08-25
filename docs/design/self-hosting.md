@@ -174,7 +174,10 @@ process.capture("/bin/pwd", none);
 The capability's parameter type is known - it is `List<String>` and cannot be
 anything else - so this is a place the checker has the answer and asks anyway.
 
-→ #55
+→ #55, **fixed**: an empty list literal takes the type its position already
+names - a `let` annotation, a parameter, a return type. It is still `E0342`
+where nothing says, because guessing there would move the error to wherever the
+list is used.
 
 ## What did not stop it
 

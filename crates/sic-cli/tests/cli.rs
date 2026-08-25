@@ -368,8 +368,7 @@ mod capabilities {
              }\n\
              \n\
              fn main() -> Observed<String> {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   return process.run(\"/bin/pwd\", none).output;\n\
+             \x20   return process.run(\"/bin/pwd\", []).output;\n\
              }\n",
         );
         // From two different directories, the same answer. Without `in` this
@@ -393,8 +392,7 @@ mod capabilities {
              }\n\
              \n\
              fn main() -> Observed<String> {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   return process.run(\"/usr/bin/env\", none).output;\n\
+             \x20   return process.run(\"/usr/bin/env\", []).output;\n\
              }\n",
         );
         let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
@@ -449,8 +447,7 @@ mod capabilities {
              \x20   process.exec \"/bin/true\" args [] in \"./crates\";\n\
              }\n\
              fn main() -> Int {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   return process.exec(\"/bin/true\", none);\n\
+             \x20   return process.exec(\"/bin/true\", []);\n\
              }\n",
         );
         let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
@@ -1155,6 +1152,75 @@ mod tasks {
 /// records and lists.
 mod records_and_lists {
     use super::*;
+
+    /// `[]` has no element type of its own, and `E0342` is right that guessing
+    /// one would move the error to wherever the list is used. It is not right
+    /// where the answer is written down beside it, which is three places: a
+    /// `let` annotation, a parameter, a return type.
+    #[test]
+    fn an_empty_list_takes_the_type_its_position_already_names() {
+        let cases = [
+            // A capability's parameter. This is the one #8 hit twice in an
+            // afternoon: `process.run("/bin/pwd", [])`.
+            (
+                "empty-cap.sic",
+                "allow {\n\
+                 \x20   process.run \"/bin/pwd\" args [] in \"/tmp\";\n\
+                 }\n\
+                 fn main() -> Observed<String> {\n\
+                 \x20   return process.run(\"/bin/pwd\", []).output;\n\
+                 }\n",
+                "\"/tmp\\n\"",
+            ),
+            // A function's parameter.
+            (
+                "empty-fn.sic",
+                "fn count(xs: List<String>) -> Int { return len(xs); }\n\
+                 fn main() -> Int { return count([]); }\n",
+                "0",
+            ),
+            // A return type.
+            (
+                "empty-return.sic",
+                "fn main() -> List<String> { return []; }\n",
+                "[]",
+            ),
+            // The annotation, which has always worked and is here so that all
+            // three of the places the rule applies are in one test.
+            (
+                "empty-let.sic",
+                "fn main() -> Int {\n\
+                 \x20   let xs: List<String> = [];\n\
+                 \x20   return len(xs);\n\
+                 }\n",
+                "0",
+            ),
+        ];
+        for (name, source, expected) in cases {
+            let src = write_temp(name, source);
+            let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "{name}: {stderr}");
+            assert_eq!(stdout.trim(), expected, "{name}");
+            std::fs::remove_file(src).ok();
+        }
+    }
+
+    /// And still refused where nothing says. Guessing here would put the error
+    /// wherever the list is used instead of where it was written.
+    #[test]
+    fn an_empty_list_with_nothing_to_take_a_type_from_is_still_refused() {
+        let src = write_temp(
+            "empty-nothing.sic",
+            "fn main() -> Int {\n\
+             \x20   let xs = [];\n\
+             \x20   return len(xs);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0342"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
 
     #[test]
     fn the_records_example_runs() {
@@ -1963,8 +2029,7 @@ mod recorded_runs {
                             }\n\
                             agent diagnose { input: String, output: D, budget: 2 }\n\
                             fn main() -> LLM<String> {\n\
-                            \x20   let none: List<String> = [];\n\
-                            \x20   let r = process.run(\"/bin/echo\", none);\n\
+                            \x20   let r = process.run(\"/bin/echo\", []);\n\
                             \x20   let d = diagnose(r.output);\n\
                             \x20   return d.cause;\n\
                             }\n";
@@ -3121,8 +3186,7 @@ mod reading_what_a_program_said {
              }\n\
              \n\
              fn main() -> Int {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   let r = process.run(\"/bin/echo\", none);\n\
+             \x20   let r = process.run(\"/bin/echo\", []);\n\
              \x20   return r.code;\n\
              }\n",
         );
@@ -3144,8 +3208,7 @@ mod reading_what_a_program_said {
              }\n\
              \n\
              fn main() -> Int {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   let r = process.run(\"/bin/echo\", none);\n\
+             \x20   let r = process.run(\"/bin/echo\", []);\n\
              \x20   return process.exec(r.output, none);\n\
              }\n",
         );
@@ -3167,8 +3230,7 @@ mod reading_what_a_program_said {
              }\n\
              \n\
              fn main() -> Int {\n\
-             \x20   let none: List<String> = [];\n\
-             \x20   let r = process.run(\"/bin/false\", none);\n\
+             \x20   let r = process.run(\"/bin/false\", []);\n\
              \x20   return r.code + 1;\n\
              }\n",
         );
@@ -3445,7 +3507,7 @@ mod decisions {
                 // one - which is also the only way this reaches the broker at all.
                 "allow {\n    human.choose \"nothing\";\n}\n\
              fn main() -> HumanChosen<String> {\n\
-             \x20   let none: List<String> = [];\n    return choose(\"which?\", none);\n}\n",
+             \x20   return choose(\"which?\", []);\n}\n",
             )],
         );
         let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);

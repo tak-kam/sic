@@ -111,7 +111,7 @@ reason.
 |---|---|
 | E0340 | a type that contains itself |
 | E0341 | a field that does not exist, or a value with no fields |
-| E0342 | an empty list with no annotation to take its type from |
+| E0342 | an empty list in a position that names no type for it |
 | E0344 | a type defined twice |
 | E0345 | redefining a built-in type |
 | E0346 | a field declared twice |

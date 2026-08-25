@@ -867,17 +867,11 @@ impl Checker {
                 init,
                 span,
             } => {
-                // An empty list has no element type of its own, so an
-                // annotation is the only thing that can give it one.
                 let annotated = ty.as_ref().map(|t| self.resolve_type(t));
-                let empty_list =
-                    matches!(&init.kind, ExprKind::List { elements } if elements.is_empty());
-                let init_ty = match (annotated, empty_list) {
-                    (Some(want), true) if self.types.list_element(want).is_some() => {
-                        self.node_types.insert(init.id, want);
-                        want
-                    }
-                    _ => {
+                let from_annotation = annotated.and_then(|want| self.empty_list_of(init, want));
+                let init_ty = match from_annotation {
+                    Some(want) => want,
+                    None => {
                         // The annotation is what a `from_json` in this position
                         // produces.
                         let saved = self.json_target.replace(annotated.unwrap_or(Types::ERROR));
@@ -910,7 +904,12 @@ impl Checker {
             }
             Stmt::Return { value, span, .. } => {
                 let found = match value {
-                    Some(e) => self.check_expr(e),
+                    // The function's own return type is written down, so an
+                    // empty list here has one too.
+                    Some(e) => match self.ret_ty.and_then(|want| self.empty_list_of(e, want)) {
+                        Some(want) => want,
+                        None => self.check_expr(e),
+                    },
                     None => Types::UNIT,
                 };
                 let span = value.as_ref().map(|e| e.span).unwrap_or(*span);
@@ -1213,7 +1212,10 @@ impl Checker {
         }
 
         for (arg, want) in args.iter().zip(params) {
-            let found = self.check_expr(arg);
+            let found = match self.empty_list_of(arg, want) {
+                Some(ty) => ty,
+                None => self.check_expr(arg),
+            };
             self.expect_type(want, found, arg.span, "this argument");
         }
 
@@ -1351,7 +1353,10 @@ impl Checker {
         }
         let kind = entry.kind;
         for (arg, want) in args.iter().zip(params) {
-            let found = self.check_expr(arg);
+            let found = match self.empty_list_of(arg, want) {
+                Some(ty) => ty,
+                None => self.check_expr(arg),
+            };
             match self.types.trust_of(found) {
                 // A value nobody signed off must not reach a capability that
                 // changes something. Reading or asking is fine - asking a model
@@ -1565,7 +1570,13 @@ impl Checker {
         }
         let question = self.check_expr(&args[0]);
         self.expect_type(Types::STR, question, args[0].span, "this question");
-        let options = self.check_expr(&args[1]);
+        // `choose` is the one builtin whose parameter is a concrete list type,
+        // so it is the one the rule in `empty_list_of` reaches. `len` and
+        // `approve` take a list of anything, which is nothing to take.
+        let options = match self.empty_list_of(&args[1], Types::LIST_STR) {
+            Some(ty) => ty,
+            None => self.check_expr(&args[1]),
+        };
         self.expect_type(Types::LIST_STR, options, args[1].span, "these options");
 
         // Asking a person is an effect like any other.
@@ -1716,6 +1727,25 @@ impl Checker {
                 Types::ERROR
             }
         }
+    }
+
+    /// An empty list literal in a position whose type is already written down.
+    ///
+    /// `[]` has no element type of its own, and `E0342` is right that guessing
+    /// one would move the error to wherever the list is used. It is not right
+    /// where the answer is beside it: a `let` annotation, a parameter, a
+    /// return type. Asking again there is the checker declining to read what
+    /// is in front of it.
+    ///
+    /// `Some(want)` when this took the position's type, `None` when the
+    /// expression has to be checked on its own terms.
+    fn empty_list_of(&mut self, e: &Expr, want: TypeId) -> Option<TypeId> {
+        let empty = matches!(&e.kind, ExprKind::List { elements } if elements.is_empty());
+        if empty && self.types.list_element(want).is_some() {
+            self.node_types.insert(e.id, want);
+            return Some(want);
+        }
+        None
     }
 
     fn check_list(&mut self, elements: &[Expr], span: Span) -> TypeId {
