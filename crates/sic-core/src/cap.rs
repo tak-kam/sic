@@ -53,6 +53,21 @@ pub enum CapValue {
     /// encoder and a decoder that has to refuse a hostile depth, and nothing
     /// that exists needs any of it. See `docs/design/arguments.md`.
     List(Vec<String>),
+    /// What a program did: the code it exited with, and what it printed.
+    ///
+    /// One shape, flat, not a record type. The objection the `List` above
+    /// records - nesting buys a depth limit, a recursive encoder and a decoder
+    /// that has to refuse a hostile depth - is an objection to a *general*
+    /// record and does not reach this one: two fields of known type, no
+    /// nesting, one more tag on the wire.
+    ///
+    /// It exists because `process.run` needs both facts at once, which is what
+    /// `docs/design/output.md` §2 said was out of reach until something needed
+    /// it. §9 is the day it did.
+    Exit {
+        code: i64,
+        output: String,
+    },
 }
 
 impl CapValue {
@@ -64,6 +79,7 @@ impl CapValue {
             CapValue::F64(_) => "Float",
             CapValue::Str(_) => "String",
             CapValue::List(_) => "List<String>",
+            CapValue::Exit { .. } => "Exit",
         }
     }
 
@@ -284,6 +300,14 @@ impl CapValue {
                     w.str(item);
                 }
             }
+            // Appended, so every checkpoint written before this one still
+            // reads: the tags above are unchanged and a reader that meets 6
+            // is a reader that knows what it is.
+            CapValue::Exit { code, output } => {
+                w.u8(6);
+                w.i64(*code);
+                w.str(output);
+            }
         }
     }
 
@@ -304,6 +328,10 @@ impl CapValue {
                 }
                 CapValue::List(items)
             }
+            6 => CapValue::Exit {
+                code: r.i64()?,
+                output: r.str()?,
+            },
             other => {
                 return Err(BinError::new(format!(
                     "unknown capability value tag {other}"
@@ -467,6 +495,18 @@ mod tests {
             CapValue::Str("\u{3053}\u{3093}".into()),
             CapValue::List(Vec::new()),
             CapValue::List(vec![String::new(), "two words".into()]),
+            CapValue::Exit {
+                code: 0,
+                output: String::new(),
+            },
+            CapValue::Exit {
+                code: -1,
+                output: "two findings\n".into(),
+            },
+            CapValue::Exit {
+                code: i64::MAX,
+                output: "\u{3053}\u{3093}".into(),
+            },
         ] {
             let mut w = Writer::new();
             value.write(&mut w);

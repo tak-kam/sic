@@ -1412,7 +1412,7 @@ mod the_plan_against_the_run {
     /// The verbs a plan leads a capability call with. `VERIFY`, `SPAWN` and `AWAIT`
     /// are steps too, and none of them reaches outside.
     const CAPABILITY_VERBS: &[&str] = &[
-        "READ", "WRITE", "EXEC", "INVOKE", "CAPTURE", "CHOOSE", "APPROVE",
+        "READ", "WRITE", "EXEC", "INVOKE", "CAPTURE", "RUN", "CHOOSE", "APPROVE",
     ];
 
     /// The capabilities a rendered plan names at a call site.
@@ -2869,6 +2869,188 @@ mod arguments {
 /// reading what a program said.
 mod reading_what_a_program_said {
     use super::*;
+
+    /// The case `process.exec` and `process.capture` between them could not
+    /// reach: a program that fails *and* prints why.
+    #[test]
+    fn a_failing_program_gives_up_both_its_code_and_its_output() {
+        let src = write_temp(
+            "run-both.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/sh\" args [\"-c\"];\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   let r = process.run(\"/bin/sh\", [\"-c\", \"echo two findings; exit 3\"]);\n\
+             \x20   if r.code == 3 {\n\
+             \x20       return r.output;\n\
+             \x20   }\n\
+             \x20   // Only reached if the code did not arrive, so the assertion\n\
+             \x20   // on the output below is an assertion about both.\n\
+             \x20   return process.run(\"/bin/sh\", [\"-c\", \"echo the code was not 3\"]).output;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(stdout.contains("two findings"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `process.capture` is unchanged: a program that failed did not produce an
+    /// answer worth reading, and the run stops.
+    #[test]
+    fn capture_still_fails_the_run_where_run_does_not() {
+        let src = write_temp(
+            "run-capture-still.sic",
+            "allow {\n\
+             \x20   process.capture \"/bin/sh\" args [\"-c\"];\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   return process.capture(\"/bin/sh\", [\"-c\", \"echo said; exit 3\"]);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("exited 3"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Reading what a program said is more authority than running it, so the
+    /// three are three grants and none covers another.
+    #[test]
+    fn a_grant_to_capture_is_not_a_grant_to_run() {
+        let src = write_temp(
+            "run-other-grant.sic",
+            "allow {\n\
+             \x20   process.capture \"/bin/echo\" args [];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   let r = process.run(\"/bin/echo\", none);\n\
+             \x20   return r.code;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("process.run"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The provenance is on the field that has one, and the rule it enforces is
+    /// the same rule `process.capture`'s answer is under.
+    #[test]
+    fn what_a_run_printed_still_cannot_decide_what_runs() {
+        let src = write_temp(
+            "run-injection.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [];\n\
+             \x20   process.exec \"/bin/sh\" args [];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   let r = process.run(\"/bin/echo\", none);\n\
+             \x20   return process.exec(r.output, none);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The code is an `Int` and not an `Observed<Int>`. Wrapping the record
+    /// would make `if r.code == 0` fail to compile, which is the whole reason
+    /// the type exists - so this is the assertion that keeps it unwrapped.
+    #[test]
+    fn an_exit_code_is_an_operand() {
+        let src = write_temp(
+            "run-code-int.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/false\" args [];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   let r = process.run(\"/bin/false\", none);\n\
+             \x20   return r.code + 1;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout.trim(), "2", "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A module may not redefine a type the language declares, and `Exit` is
+    /// one - the same diagnostic that refuses redefining `Int`.
+    #[test]
+    fn a_module_may_not_redefine_exit() {
+        let src = write_temp(
+            "run-redefine.sic",
+            "type Exit { code: Int }\n\
+             \n\
+             fn main() -> Int { return 1; }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0345"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// An `Exit` is a record in the arena, and a run that holds one across a
+    /// suspension has to find it there afterwards. This is also the round trip
+    /// through `responses.jsonl`, which had no object shape before.
+    #[test]
+    fn an_exit_survives_a_checkpoint_and_replays() {
+        let store = temp_store("run-checkpoint");
+        let src = write_temp(
+            "run-held.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/sh\" args [\"-c\"];\n\
+             \x20   human.approve \"the findings\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let r = process.run(\"/bin/sh\", [\"-c\", \"echo findings; exit 2\"]);\n\
+             \x20   let ok = human.approve(\"ship anyway?\");\n\
+             \x20   if ok {\n\
+             \x20       return r.code;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", "true"],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(
+            stdout.trim(),
+            "2",
+            "the code the program held across the wait"
+        );
+
+        // And the recorded answer is readable back, which is what replay needs.
+        let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+        assert_eq!(code, 0, "stderr: {stderr}\n{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
 
     #[test]
     fn a_program_can_read_what_it_ran() {

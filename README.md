@@ -157,6 +157,11 @@ standard output is everything the program can see, so the two are different
 authorities and `sic plan` prints them differently. What comes back is
 `Observed<String>`, which cannot decide what the next program runs without a
 person on the record.
+
+`process.run` returns both - `Exit { code: Int, output: Observed<String> }` -
+because a build that fails and prints why is the case neither of the other two
+could reach. It is a third grant, not a flag, because it is strictly more
+authority than either.
 → [output.md](docs/design/output.md)
 
 **Modules that cannot grant themselves anything.** `import "./lib/deploy.sic";`

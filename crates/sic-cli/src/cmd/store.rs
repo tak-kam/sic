@@ -283,6 +283,12 @@ fn answer_to_json(answer: &Answer<'_>) -> String {
             let parts: Vec<String> = items.iter().map(|i| quoted(i)).collect();
             format!("[{}]", parts.join(","))
         }
+        // The one answer with two facts in it. An object, because that is
+        // what it is, and because it is what tells the reader below apart
+        // from an argument vector without a tag.
+        CapValue::Exit { code, output } => {
+            format!("{{\"code\":{code},\"output\":{}}}", quoted(output))
+        }
     };
     let mut out = format!("{{\"value\":{rendered}");
     // An index on its own says nothing six months later. The question carries
@@ -342,6 +348,11 @@ pub fn read_answers(dir: &Path) -> Result<Vec<Recorded>, String> {
     Ok(answers)
 }
 
+/// A member of a member, for a value that is an object.
+fn json_at<'a>(json: &'a sic_json::Json, outer: &str, inner: &str) -> Option<&'a sic_json::Json> {
+    json.member(outer)?.member(inner)
+}
+
 /// One line, in the vocabulary `answer_to_json` writes.
 fn answer_from_json(json: &sic_json::Json) -> Option<Recorded> {
     use sic_core::CapValue;
@@ -366,7 +377,19 @@ fn answer_from_json(json: &sic_json::Json) -> Option<Recorded> {
             }
             CapValue::List(strings)
         }
-        Json::Object(_) => return None,
+        // The only object this writer produces. Both fields are required:
+        // half of an `Exit` is not one, and a replay fed half of one would be
+        // answering a different question.
+        Json::Object(_) => match (
+            json_at(json, "value", "code"),
+            json_at(json, "value", "output"),
+        ) {
+            (Some(Json::Int(code)), Some(Json::Str(output))) => CapValue::Exit {
+                code: *code,
+                output: output.clone(),
+            },
+            _ => return None,
+        },
     };
     let text = |name: &str| match json.member(name) {
         Some(Json::Str(s)) => Some(s.clone()),

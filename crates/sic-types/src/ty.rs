@@ -128,6 +128,18 @@ impl Types {
     pub const LIST_STR: TypeId = TypeId(6);
     /// What a program printed. Interned here for the same reason.
     pub const OBSERVED_STR: TypeId = TypeId(7);
+    /// What a program did: `{ code: Int, output: Observed<String> }`.
+    ///
+    /// The only record type the language declares for itself, and it exists
+    /// because `process.run` has two facts to return and no capability can
+    /// return two values. See `docs/design/output.md` §9.
+    ///
+    /// It is not wrapped in a provenance. Wrapping the record would make
+    /// `code` an `Observed<Int>`, and a trusted value cannot be an operand, so
+    /// `if r.code == 0` would not compile - which is the whole reason the type
+    /// exists. The provenance belongs to the field that has one: the text a
+    /// program printed, exactly as `process.capture` returns it.
+    pub const EXIT: TypeId = TypeId(8);
 
     pub fn new() -> Self {
         let mut t = Self {
@@ -148,6 +160,18 @@ impl Types {
             t.intern(Type::Trust(TrustKind::Observed, Self::STR)),
             Self::OBSERVED_STR
         );
+        // The one record the language declares. Its fields are set here rather
+        // than resolved from source, so object 0 is always this and a module's
+        // own types start at 1.
+        let exit = t.declare_object("Exit");
+        t.set_object_fields(
+            exit,
+            vec![
+                ("code".to_string(), Self::INT),
+                ("output".to_string(), Self::OBSERVED_STR),
+            ],
+        );
+        assert_eq!(t.intern(Type::Object(exit)), Self::EXIT);
         t
     }
 
@@ -274,6 +298,9 @@ impl Types {
             "Int" => Self::INT,
             "Float" => Self::FLOAT,
             "String" => Self::STR,
+            // Naming it here is also what makes `type Exit { .. }` an E0345:
+            // a module may not redefine a type the language declares.
+            "Exit" => Self::EXIT,
             _ => return None,
         })
     }

@@ -21,7 +21,7 @@ Broker: performs the effect, holds the credentials
 A capability is a named, typed operation that the VM cannot perform itself, and
 that a module must declare before it can call.
 
-v0.1 ships six, chosen because they need no credentials and no network:
+v0.1 ships seven, chosen because they need no credentials and no network:
 
 | Capability | Signature | Kind |
 |---|---|---|
@@ -29,11 +29,18 @@ v0.1 ships six, chosen because they need no credentials and no network:
 | `fs.write` | `(path: String, data: String) -> Unit` | write |
 | `process.exec` | `(path: String, args: List<String>) -> Int` | exec |
 | `process.capture` | `(path: String, args: List<String>) -> Observed<String>` | exec |
+| `process.run` | `(path: String, args: List<String>) -> Exit` | exec |
 | `human.approve` | `(question: String) -> Bool` | invoke |
 | `human.choose` | `(question: String, options: List<String>) -> Int` | invoke |
 
-`process.exec` and `process.capture` are the ones whose last parameter may be
-left off:
+The three `process` capabilities are three authorities, not one with options:
+`exec` says whether a program worked, `capture` says what it printed when it
+did, and `run` says both whether or not it did. `docs/design/output.md` §9 says
+why that is a third grant rather than a flag. `Exit` is
+`{ code: Int, output: Observed<String> }`, the one record type the language
+declares for itself.
+
+They are also the ones whose last parameter may be left off:
 `process.exec("/usr/bin/true")` passes an empty vector, so a program written
 before arguments existed still says what it said. What a grant may pin about
 those arguments is in `docs/design/arguments.md`.

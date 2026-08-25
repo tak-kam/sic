@@ -186,8 +186,8 @@ fn tool_json(tool: &Offered) -> String {
 /// What a capability's parameters are called, for whoever is filling them in.
 fn param_name(cap: &str, index: usize) -> &'static str {
     match (cap, index) {
-        ("process.exec" | "process.capture", 0) => "path",
-        ("process.exec" | "process.capture", 1) => "args",
+        ("process.exec" | "process.capture" | "process.run", 0) => "path",
+        ("process.exec" | "process.capture" | "process.run", 1) => "args",
         ("human.approve" | "human.choose", 0) => "question",
         ("human.choose", 1) => "options",
         _ => "argument",
@@ -285,6 +285,9 @@ fn for_the_agent(value: &CapValue) -> String {
         CapValue::F64(v) => format!("{v}"),
         CapValue::Str(s) => s.clone(),
         CapValue::List(items) => items.join("\n"),
+        // The agent is answering a call, so it gets both facts in the order a
+        // person would read them.
+        CapValue::Exit { code, output } => format!("exited {code}\n{output}"),
     }
 }
 

@@ -2,8 +2,9 @@
 //
 // This is issue #8: whether sic can be used to build sic. What the attempt
 // established, and the seven things that bent it, are in
-// `docs/design/self-hosting.md`. Read that before reading this - the program
-// below is the evidence, not the recommendation.
+// `docs/design/self-hosting.md`. Two of them are fixed: #50 gave the language
+// `process.run`, so this program no longer has to grant itself a shell to see
+// why a build failed, and #49 followed from that.
 //
 //     sic plan workflows/ci.sic
 //     sic run workflows/ci.sic --record
@@ -20,7 +21,7 @@ type Diagnosis {
 }
 
 allow {
-    process.capture "/bin/sh" args ["-c"];
+    process.run "/PATH/TO/cargo-bin/cargo" args ["test"];
     llm.invoke "claude-opus-4";
 }
 
@@ -30,19 +31,30 @@ agent diagnose {
     budget: 1,
 }
 
-// `process.capture` fails the run when the program exits nonzero, and a test
-// suite that fails is the entire reason to run one. So the failure has to be
-// turned into output by a shell that always succeeds, and the whole command
-// becomes one string - which is the finding rather than the workaround. See
-// `docs/design/self-hosting.md` §2.
-fn tests() -> Observed<String> {
-    // One physical line, because a string literal cannot be broken across
-    // lines and two strings cannot be joined. See §5.
-    return process.capture("/bin/sh", ["-c", "LLD=$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld; RUSTFLAGS=\"-Clinker=$LLD -Clinker-flavor=ld.lld\" /PATH/TO/cargo-bin/cargo test --workspace --target x86_64-unknown-linux-musl 2>&1 | tail -40 || true"]);
+// `process.run` answers with both facts: the code the program exited with and
+// what it printed. That is what makes this workflow writable at all - a test
+// suite that fails is the entire reason to run one, and until #50 the failure
+// took the output with it. See `docs/design/output.md` §9.
+//
+// The grant names `cargo` rather than a shell, which is the difference #49 is
+// about: `process.run "/bin/sh" args ["-c"]` is a grant to run anything, and
+// this one is a grant to run one program.
+fn tests() -> Exit {
+    return process.run("/PATH/TO/cargo-bin/cargo", ["test", "--workspace", "--target", "x86_64-unknown-linux-musl"]);
 }
 
-fn main() -> LLM<String> {
-    let out = tests();
-    let d = diagnose(out);
-    return d.cause;
+fn main() -> Observed<String> {
+    let r = tests();
+    if r.code == 0 {
+        // Nothing to diagnose. The agent is not asked and the budget is not
+        // spent, which is what `sic plan` means by "at most 1".
+        return r.output;
+    }
+    // The diagnosis goes into the run's record rather than into this value:
+    // `sic explain` shows what the agent was asked and what it answered. A
+    // program has nowhere else to put it, because a model's answer is
+    // `LLM<String>` and this function has already promised a different type -
+    // and because §26, logging, is unbuilt. See `docs/design/self-hosting.md`.
+    let d = diagnose(r.output);
+    return r.output;
 }

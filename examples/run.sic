@@ -1,0 +1,34 @@
+// A program that fails and prints why.
+//
+// `process.exec` answers "did it work" and `process.capture` answers "what did
+// it say, when it worked". Neither answers the question a build has: it failed,
+// and the reason is in what it printed.
+//
+//     sic plan examples/run.sic
+//     sic run examples/run.sic
+//
+// `process.run` is a third grant rather than a flag on either of the others,
+// because reading what a program said is more authority than running it and a
+// manifest has to keep telling those apart. See docs/design/output.md §9.
+allow {
+    process.run "/bin/sh" args ["-c"];
+}
+
+// `Exit` is the one record type the language declares for itself. The
+// provenance is on the field that has one: `output` is text a program printed,
+// exactly as `process.capture` returns it, and `code` came from the operating
+// system rather than from the program's own writing.
+fn build() -> Exit {
+    return process.run("/bin/sh", ["-c", "echo two findings; exit 1"]);
+}
+
+fn main() -> Observed<String> {
+    let r = build();
+    if r.code == 0 {
+        return r.output;
+    }
+    // The output is available on the path where it matters, which is the
+    // whole difference. It still may not decide what runs: passing it to
+    // `process.exec` is E0372, and `approve` is the way through.
+    return r.output;
+}

@@ -327,6 +327,12 @@ pub fn digest_values(values: &[CapValue]) -> Digest {
                     h.update(item.as_bytes());
                 }
             }
+            CapValue::Exit { code, output } => {
+                h.update(&[6]);
+                h.update(&code.to_le_bytes());
+                h.update(&(output.len() as u64).to_le_bytes());
+                h.update(output.as_bytes());
+            }
         }
     }
     h.finish()

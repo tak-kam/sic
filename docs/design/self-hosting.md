@@ -62,7 +62,9 @@ run anything, which is what §1 is about. The two findings are the same finding
 seen from either end: **the cheapest way around "output or exit code" is a
 grant that gives away everything.**
 
-→ #50
+→ #50, **fixed**: `process.run` returns an `Exit` of both facts, so
+`workflows/ci.sic` names `cargo` in its manifest instead of a shell. See
+`docs/design/output.md` §9.
 
 ## 3. A call gets no environment, and inherits a directory
 

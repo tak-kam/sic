@@ -80,7 +80,7 @@ pub fn offered(manifest: &[CapGrant]) -> Vec<Offered> {
 /// boundary rather than an oversight.
 fn params_of(cap: &str) -> Vec<Param> {
     match cap {
-        "process.exec" | "process.capture" => vec![Param::Str, Param::Strings],
+        "process.exec" | "process.capture" | "process.run" => vec![Param::Str, Param::Strings],
         "human.approve" => vec![Param::Str],
         "human.choose" => vec![Param::Str, Param::Strings],
         _ => Vec::new(),

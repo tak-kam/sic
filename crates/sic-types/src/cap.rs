@@ -109,6 +109,23 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         optional_tail: true,
     },
     CapSig {
+        name: "process.run",
+        // The most authority of the three, and a separate grant so that a
+        // manifest still tells the difference. `process.exec` says whether a
+        // program worked; `process.capture` says what it printed when it did;
+        // this one says both, including when it did not - which is strictly
+        // more than either. See `docs/design/output.md` §9.
+        kind: CapKind::Exec,
+        params: &[Types::STR, Types::LIST_STR],
+        // An `Exit`, whose `output` carries the provenance and whose `code`
+        // does not. A non-zero exit is an answer here rather than a failure,
+        // which is the entire difference from `process.capture`.
+        ret: Types::EXIT,
+        requires_constraint: true,
+        accepts_pin: true,
+        optional_tail: true,
+    },
+    CapSig {
         name: "process.exec",
         kind: CapKind::Exec,
         // The path, then what to pass it. The vector may be left off, and

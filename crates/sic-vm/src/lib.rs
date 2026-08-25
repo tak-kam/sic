@@ -1390,6 +1390,17 @@ impl<'a> Vm<'a> {
                     .collect();
                 Value::List(self.arena.alloc_list(values))
             }
+            // The field order is the one `Exit` is declared with in
+            // `sic-types`, because bytecode addresses a field by position and
+            // this crate cannot see that declaration. What stops the two from
+            // drifting is a test rather than this comment: `an_exit_code_is_an_operand`
+            // reads field 0 as an `Int` and adds to it, and
+            // `a_failing_program_gives_up_both_its_code_and_its_output` reads
+            // field 1 as the text. Swapping them fails both.
+            CapValue::Exit { code, output } => {
+                let text = Value::Str(self.arena.alloc_str(output));
+                Value::Object(self.arena.alloc_object(vec![Value::I64(code), text]))
+            }
         }
     }
 

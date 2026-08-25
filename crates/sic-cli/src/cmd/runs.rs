@@ -320,6 +320,7 @@ fn as_recorded(value: &CapValue) -> String {
             let parts: Vec<String> = items.iter().map(|i| format!("{i:?}")).collect();
             format!("[{}]", parts.join(", "))
         }
+        CapValue::Exit { code, output } => format!("exited {code}, printed {output:?}"),
     }
 }
 

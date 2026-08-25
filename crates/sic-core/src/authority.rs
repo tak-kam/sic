@@ -203,7 +203,7 @@ pub fn reach_of(grant: &CapGrant) -> Reach {
         // shadowed. Translating one into the other would widen the grant to
         // fit the configuration's vocabulary, which is the one thing a
         // translation must never do.
-        "process.exec" | "process.capture" => {
+        "process.exec" | "process.capture" | "process.run" => {
             Reach::Routed("a shell command is not a binary, and a digest pin has no equivalent")
         }
 

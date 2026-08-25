@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 550 tests.
+Last updated at 557 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -24,7 +24,7 @@ in the source, so it is the same on every platform - four of them are
 | 6, 7 | A register VM, 30 instructions | `sic-vm`, `sic-bytecode` |
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
-| 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix, output read back | `sic-broker`, `docs/design/arguments.md`, `docs/design/output.md` |
+| 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix, output read back - and `process.run`, which reads it whether or not the program worked | `sic-broker`, `docs/design/arguments.md`, `docs/design/output.md` |
 | 11 | `import`, local files only | `docs/design/modules.md` |
 | 12 | Bytecode verifier | `sic-verify`, `docs/design/v0.1.md` §9 |
 | 13 | Bytecode format with a capability manifest | `.sicb`, `sic verify` reports it |

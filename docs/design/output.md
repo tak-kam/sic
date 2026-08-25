@@ -32,6 +32,12 @@ The second reason is smaller: no capability returns a record today. Records are
 user-declared `type` items, so a capability returning one needs a built-in
 record type - new surface, in a change that does not need it.
 
+**§9 is what happened when something did need it.** The first reason survived
+and shaped the answer: the record is a *third* grant, `process.run`, so a
+manifest still tells running from reading. The second reason turned out to be
+the price, and it was paid: `Exit` is the one record type the language declares
+for itself.
+
 ---
 
 ## 2. A program that fails, fails the run
@@ -46,8 +52,12 @@ you want the output, a program that failed did not produce one worth reading.
 
 What this costs, plainly: a program that exits non-zero *and* prints something
 worth having - a linter reporting findings, a diff that exits 1 because there
-was a difference - is out of reach. Reaching it needs the record from §1, and
-the record can be added the day something needs it.
+was a difference - is out of reach through this capability. Reaching it needs
+the record from §1, and the record can be added the day something needs it.
+
+That day was issue #8, and the record is §9. `process.capture` is unchanged: a
+program that failed still did not produce an answer worth reading, and the type
+`Observed<String>` still means what it means.
 
 ---
 
@@ -139,15 +149,16 @@ allow {
 }
 ```
 
-A grant of `process.exec` does not cover `process.capture`. They are different
-authorities (§1), so they are different grants, and a program that wants both
-declares both.
+A grant of `process.exec` does not cover `process.capture`, and neither covers
+`process.run`. They are three different authorities (§1, §9), so they are three
+different grants, and a program that wants two declares two.
 
 ---
 
 ## 8. Not here
 
-- **The record return** (§1, §2).
+- **A record return from `process.capture`.** It has one (§9), and it is a
+  different capability.
 - **Streaming.** The value arrives when the program exits. A program that
   produces output over time, read as it comes, is a different capability with a
   different shape - and it is what driving an agent in a pane will need.
@@ -155,3 +166,111 @@ declares both.
 - **A timeout** (§6).
 - **stderr as a value.** It reaches a person through the failure, not the
   program through a return.
+
+---
+
+## 9. `process.run`: both facts, and a third grant
+
+Two capabilities each answered half of one question, and the half neither
+answered is the one this repository's own work is made of: **a program that
+fails and prints why.** Writing this repository's development loop in sic
+(#8, `docs/design/self-hosting.md`) could not be done, and the workaround -
+`sh -c '... || true'` - replaced a grant naming one binary with a grant to run
+anything.
+
+So there is a third:
+
+```sic
+allow {
+    process.run "/usr/bin/cargo" args ["test"];
+}
+
+fn tests() -> Exit {
+    return process.run("/usr/bin/cargo", ["test", "--workspace"]);
+}
+
+fn main() -> Observed<String> {
+    let r = tests();
+    if r.code == 0 {
+        return r.output;
+    }
+    return r.output;
+}
+```
+
+### Three grants, because there are three authorities
+
+§1's decisive reason was that reading a program's output is more authority than
+running it, and a manifest that cannot tell them apart hides the difference
+between checking and exfiltrating. That reason is why `process.run` is a third
+grant rather than a flag on either of the other two:
+
+| | what it answers | what it hides |
+|---|---|---|
+| `process.exec` | did it work | everything it said |
+| `process.capture` | what it said, when it worked | that it failed, and what it said then |
+| `process.run` | both, always | nothing |
+
+`process.run` is strictly more than either, so it is the one a reader should
+have to see named. `sic plan` gives it its own verb, `RUN`, and its own line in
+the capability list. A grant of one does not cover another, the way a grant of
+`process.exec` has never covered `process.capture`.
+
+### `Exit`, and why it is not wrapped
+
+```sic
+Exit { code: Int, output: Observed<String> }
+```
+
+The provenance is on the field that has one. Wrapping the record instead -
+`Observed<Exit>` - was tried on paper and does not work: a trusted value cannot
+be an operand (`E0371`), so `if r.code == 0` would not compile, and that
+comparison is the entire reason the type exists. An exit code is produced by the
+operating system rather than written by the program, so it has no provenance to
+carry in the first place.
+
+`r.output` is exactly what `process.capture` returns, and the rule that stops it
+from deciding what runs is unchanged: passing it to `process.exec` is still
+`E0372`, and `approve` is still the way through.
+
+`Exit` is the only record type the language declares for itself. A module may
+not redefine it - that is `E0345`, the same diagnostic that refuses redefining
+`Int`.
+
+### On the wire, and why it is not a general record
+
+`CapValue` grows one variant, `Exit { code, output }`, appended so that every
+checkpoint written before it still reads.
+
+The objection recorded on `CapValue::List` - that nesting buys a depth limit, a
+recursive encoder and a decoder that has to refuse a hostile depth - is an
+objection to a *general* record and does not reach this one. Two fields of known
+type, no nesting, one more tag. Nothing here can be made to recurse.
+
+The VM builds the object in the order `Exit` declares its fields, because
+bytecode addresses a field by position. That is a coupling between two crates
+and it is checked rather than commented.
+
+### What did not change
+
+`process.capture` still refuses a non-zero exit, and its type still says what it
+said. A program that wants "the output, and a failure is a failure" is asking
+for exactly that, and `retry` still counts the failures.
+
+stderr is still not a value (§3), the output is still capped and never truncated
+(§4), and a timeout is still refused (§6) - for the same reason in all three
+cases, and the reasons did not become weaker by there being a third capability.
+
+### Not here
+
+- **`process.run` returning stderr.** §3's argument is unchanged: the output is
+  going to be parsed, and interleaving is not reproducible. What a failing
+  program wrote to stderr still reaches a person through the error - and now, if
+  the program wants it, `2>&1` is something the program can ask its own shell
+  for while still naming a real binary in its manifest.
+- **A general record on the capability boundary.** `Exit` is one shape, and the
+  day a second one is wanted is the day to ask whether the boundary should carry
+  records at all.
+- **Making `process.capture` or `process.exec` do this.** Both say something
+  precise. A flag that changed what a capability returns would make a manifest
+  line mean two things.

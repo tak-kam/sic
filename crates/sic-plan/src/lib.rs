@@ -110,6 +110,9 @@ impl Action {
             // plan is read by a person deciding whether to run this - and
             // "reads what it says" is the part they need to see.
             Action::Capability { name, .. } if name == "process.capture" => "CAPTURE",
+            // Its own verb, because it is its own authority: this one reads
+            // what a program said whether or not the program worked.
+            Action::Capability { name, .. } if name == "process.run" => "RUN",
             // Asking a person is not the same act as asking a model, and a
             // plan is read by the person who will be asked.
             Action::Capability { name, .. } if name == "human.choose" => "CHOOSE",

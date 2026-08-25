@@ -152,6 +152,7 @@ pub fn perform_granted(grant: &CapGrant, request: &CapRequest) -> Result<CapOutc
         "fs.write" => fs_write(grant, request),
         "process.exec" => process_exec(grant, request),
         "process.capture" => process_capture(grant, request),
+        "process.run" => process_run(grant, request),
         "human.approve" => human_approve(grant, request),
         "human.choose" => human_choose(grant, request),
         other => Err(CapError::new(format!(
@@ -268,6 +269,56 @@ fn process_capture(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome,
 ///
 /// Shared by `process.exec` and `process.capture`: they perform different
 /// effects, and what a grant permits is the same question for both.
+/// Runs a program and answers with both facts: the code it exited with, and
+/// what it printed.
+///
+/// The difference from `process_capture` is one `match` it does not have. A
+/// non-zero exit is an answer rather than an error, because the caller asked
+/// for the code - which is what makes a linter, a diff, or a failing test
+/// suite reachable at all. See `docs/design/output.md` §9.
+///
+/// Everything else is the same and deliberately so: the environment is
+/// cleared, the output is capped before it is a value, and text that is not
+/// UTF-8 is refused rather than replaced.
+fn process_run(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    // Same reason as `process_capture`: draining a pipe and honouring a
+    // deadline at once needs a reader thread.
+    reject_timeout(request)?;
+    let (path, args) = exec_target(grant, request)?;
+
+    let out = std::process::Command::new(&path)
+        .args(&args)
+        .env_clear()
+        .output()
+        .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
+
+    if out.stdout.len() > MAX_OUTPUT {
+        return Err(CapError::new(format!(
+            "`{}` printed more than {MAX_OUTPUT} bytes",
+            path.display()
+        )));
+    }
+    // A signal is still not an exit code, and reporting one would say the
+    // program finished when it did not.
+    let Some(code) = out.status.code() else {
+        return Err(CapError::new(format!(
+            "`{}` was terminated by a signal",
+            path.display()
+        )));
+    };
+    let output = String::from_utf8(out.stdout).map_err(|e| {
+        CapError::new(format!(
+            "`{}` printed something that is not UTF-8 (at byte {})",
+            path.display(),
+            e.utf8_error().valid_up_to()
+        ))
+    })?;
+    Ok(CapOutcome::Value(CapValue::Exit {
+        code: code as i64,
+        output,
+    }))
+}
+
 fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<String>), CapError> {
     let args = exec_args(request)?;
     let path = allowed_path(grant, string_arg(request, 0, request.args.len())?)?;
