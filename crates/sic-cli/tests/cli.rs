@@ -269,6 +269,42 @@ mod isolated {
         assert!(stderr.contains("cannot reach the run"), "{stderr}");
     }
 
+    /// A parent that dies leaves a child waiting on a socket nobody will write
+    /// to. It notices, because that is the only thing it ever waits on: the
+    /// far end closing is a read that ends.
+    ///
+    /// This matters more than it looks. An interpreter left running with
+    /// nobody reading its socket is the failure the whole arrangement is meant
+    /// to bound, so it is checked rather than reasoned about.
+    #[test]
+    fn the_interpreter_leaves_when_the_run_does() {
+        use std::os::unix::net::UnixListener;
+
+        let path = std::env::temp_dir().join(format!("sic-orphan-{}.sock", std::process::id()));
+        std::fs::remove_file(&path).ok();
+        let listener = UnixListener::bind(&path).expect("a socket");
+
+        let child = Command::new(env!("CARGO_BIN_EXE_sic"))
+            .args(["vm", "--socket"])
+            .arg(&path)
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("the interpreter starts");
+
+        // It connects and waits for a program. Dropping the connection is what
+        // a parent that died looks like from over there.
+        let (stream, _) = listener.accept().expect("it connects");
+        drop(stream);
+        drop(listener);
+
+        let out = child.wait_with_output().expect("it ends");
+        assert!(!out.status.success(), "it should not report success");
+        let said = String::from_utf8_lossy(&out.stderr);
+        assert!(said.contains("the run went away"), "{said}");
+
+        std::fs::remove_file(&path).ok();
+    }
+
     #[test]
     fn the_interpreter_needs_a_socket() {
         let (_, stderr, code) = sic(&["vm"]);

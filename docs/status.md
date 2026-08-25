@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 598 tests.
+Last updated at 600 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -97,7 +97,10 @@ crosses back to the parent's broker. Under a memory limit a run that would abort
 the whole thing now aborts the child, and the parent still has the journal and
 says what happened. A run that stops to wait is saved and picked up again: the
 child produces the checkpoint and the parent writes it, and the bytes are the
-ones the one-process shape would have written.
+ones the one-process shape would have written. A child that dies is told apart
+from one that failed and from one that stopped quietly, and a child left behind
+by a parent that died notices - there is no timeout, because a sic program
+cannot run forever and the only thing left to bound would be sic's own bugs.
 
 `docs/design/processes.md` is the design, and it starts by measuring what the
 split would buy rather than assuming: "the VM cannot reach the outside world" is

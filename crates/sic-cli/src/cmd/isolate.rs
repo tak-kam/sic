@@ -50,6 +50,51 @@ impl Drop for Socket {
 /// this whole arrangement is supposed to bound, so it is not left to a signal.
 struct Interpreter(Child);
 
+/// Why the conversation ended without an ending.
+enum Stopped {
+    /// The child closed the socket. Its exit status is what is left to read.
+    Silently,
+    /// Something on this side went wrong, and it already knows what.
+    Saying(String),
+}
+
+/// What became of an interpreter that stopped without saying how the run ended.
+///
+/// Three different things, and they used to read the same. Which one it was is
+/// the difference between "the machine took the run" and "sic has a bug", and a
+/// person reading one line should not have to guess which.
+///
+/// There is no fourth case for a child that is taking too long, and no timeout
+/// waiting for one. A sic program cannot run forever: fuel is spent on every
+/// instruction, v0.1 has no loops, and recursion stops at `MAX_FRAMES`. So a
+/// child that has not answered is either waiting on this side - which is a
+/// build that takes an hour, and killing it would be the wrong answer - or it
+/// has a bug, and a timeout would be a guess about how long sic's own bugs
+/// take. See `docs/design/processes.md` §5b.
+fn how_it_went(status: std::process::ExitStatus) -> String {
+    use std::os::unix::process::ExitStatusExt;
+
+    if let Some(signal) = status.signal() {
+        // The case this whole arrangement is for: a run that grew too large is
+        // killed here rather than taking the parent with it.
+        return format!(
+            "the interpreter was killed by signal {signal}; \
+             the journal has everything it managed to say"
+        );
+    }
+    match status.code() {
+        // It ran, it stopped, and it said why on its own stderr.
+        Some(code) if code != 0 => {
+            format!("the interpreter exited {code} without saying how the run ended")
+        }
+        // Nothing produces this. A child that finished cleanly sent an ending
+        // first, so reaching here is a bug in sic rather than anything about
+        // the program.
+        _ => "the interpreter finished without saying how the run ended, which is a bug in sic"
+            .to_string(),
+    }
+}
+
 impl Drop for Interpreter {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -107,11 +152,19 @@ pub fn drive(
     )
     .map_err(|e| format!("cannot send the program: {e}"))?;
 
-    let ended = converse(&mut stream, broker, sink, record_into)?;
-    // It has said everything; wait for it rather than killing it, so that a
-    // child which is about to exit cleanly is not reported as killed.
-    let _ = child.0.wait();
-    Ok(ended)
+    let ran = converse(&mut stream, broker, sink, record_into);
+    // Waited for either way, and before anything is reported: a child that
+    // stopped without an ending is one whose exit status is the only account
+    // left of what happened to it.
+    let status = child.0.wait();
+    match (ran, status) {
+        (Ok(ran), _) => Ok(ran),
+        (Err(Stopped::Silently), Ok(status)) => Err(how_it_went(status)),
+        (Err(Stopped::Silently), Err(e)) => Err(format!(
+            "the interpreter stopped and cannot be waited for: {e}"
+        )),
+        (Err(Stopped::Saying(message)), _) => Err(message),
+    }
 }
 
 fn converse(
@@ -119,18 +172,15 @@ fn converse(
     broker: &mut Broker,
     sink: &mut dyn Sink,
     record_into: Option<&std::path::Path>,
-) -> Result<Ran, String> {
+) -> Result<Ran, Stopped> {
     let mut checkpoint = None;
     loop {
-        let Some(bytes) = recv(stream).map_err(|e| e.to_string())? else {
-            // The child closed without saying how the run ended. That is the
-            // case this arrangement exists for: it ran out of memory, or it was
-            // killed. The parent still has every event it was sent.
-            return Err("the interpreter stopped without saying how the run ended; \
-                 the journal has everything it managed to say"
-                .to_string());
+        let Some(bytes) = recv(stream).map_err(|e| Stopped::Saying(e.to_string()))? else {
+            // The child closed without saying how the run ended. Its exit
+            // status is the only account left, and the caller reads it.
+            return Err(Stopped::Silently);
         };
-        match FromVm::from_bytes(&bytes).map_err(|e| e.to_string())? {
+        match FromVm::from_bytes(&bytes).map_err(|e| Stopped::Saying(e.to_string()))? {
             FromVm::Event(event) => sink.emit(&event),
             FromVm::Request(request) => {
                 let answer = broker.call(&request);
@@ -143,7 +193,7 @@ fn converse(
                     }
                 }
                 send(stream, &ToVm::Answer(answer).to_bytes())
-                    .map_err(|e| format!("cannot answer the interpreter: {e}"))?;
+                    .map_err(|e| Stopped::Saying(format!("cannot answer the interpreter: {e}")))?;
             }
             // It arrives before the ending it belongs to, so it is held until
             // the child says what that ending was.
@@ -192,5 +242,32 @@ pub fn finish(ran: Ran, checkpoint_path: Option<&str>, resume_hint: Option<&str>
             }
             ExitCode::from(EXIT_SUSPENDED)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::ExitStatusExt;
+
+    /// The three ways an interpreter can stop without saying how the run
+    /// ended, told apart. They used to read the same, and which one it was is
+    /// the difference between the machine taking the run and sic having a bug.
+    #[test]
+    fn how_an_interpreter_stopped_is_three_different_things() {
+        // A wait status: the signal is the low seven bits, the exit code is
+        // the byte above them.
+        let killed = how_it_went(std::process::ExitStatus::from_raw(9));
+        assert!(killed.contains("killed by signal 9"), "{killed}");
+        assert!(killed.contains("the journal has everything"), "{killed}");
+
+        let failed = how_it_went(std::process::ExitStatus::from_raw(2 << 8));
+        assert!(failed.contains("exited 2"), "{failed}");
+        assert!(!failed.contains("signal"), "{failed}");
+
+        // Nothing produces this one, and saying so is the point: a reader who
+        // meets it should know it is not about their program.
+        let quiet = how_it_went(std::process::ExitStatus::from_raw(0));
+        assert!(quiet.contains("a bug in sic"), "{quiet}");
     }
 }

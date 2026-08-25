@@ -203,6 +203,62 @@ is between the parent's opinion and the checkpoint's.
 
 ---
 
+## 5b. Failure, and the case that is not one
+
+Three were expected. Two are real and the third is not.
+
+### A child that dies
+
+Its exit status is the only account left of what happened to it, so it is read
+and said, and the three cases are three sentences rather than one:
+
+| | |
+|---|---|
+| killed by a signal | `the interpreter was killed by signal 6; the journal has everything it managed to say` |
+| exited non-zero | `the interpreter exited 2 without saying how the run ended` |
+| exited zero | `... which is a bug in sic` |
+
+The first is what this whole arrangement is for. The third is unreachable - a
+child that finished cleanly sent an ending first - and it says so, because a
+person who meets it should know it is not about their program.
+
+### A parent that leaves
+
+Handled by construction, and now checked. The child waits on exactly one thing,
+the socket, so a parent that dies is a read that ends:
+
+```console
+$ sic vm --socket /tmp/x.sock          # the run is gone
+error: the run went away
+```
+
+The test opens a socket, lets the child connect, and drops it. An interpreter
+left running with nobody reading its socket is the failure this is meant to
+bound, so it is checked rather than reasoned about.
+
+### A child that hangs, which cannot happen
+
+**There is no timeout, and this is the argument for not having one.**
+
+A sic program cannot run forever. Fuel is spent at the top of every
+instruction, v0.1 has no loops, and recursion stops at `MAX_FRAMES`. So the
+child always reaches either an ending or a read.
+
+Which leaves two ways for it to be quiet for a long time:
+
+- **It is waiting for this side**, and this side is running `cargo test`. That
+  is a build that takes an hour, and killing it would be the wrong answer to a
+  run that is working.
+- **It has a bug.** A timeout there is a guess about how long sic's own bugs
+  take, and the guess would kill the first case to catch the second.
+
+`timeout` on a capability call already bounds what a program asked to bound, in
+the place that has the clock. A second bound on the interpreter would be a
+number nobody chose - which is the thing #52 was about, arriving from the other
+direction.
+
+---
+
 ## 6. Not here
 
 - **The sandbox.** `seccomp`, `landlock` and their cousins are per-platform and
@@ -240,7 +296,8 @@ is between the parent's opinion and the checkpoint's.
    filesystem. The digest a checkpoint is tied to is of the bytes that
    *arrived*, not of a re-encoding of what was decoded from them: two opinions
    about one program is what `sic resume` would then be comparing.
-5. Failure: a child that dies, a child that hangs, a parent that leaves.
+5. ~~Failure: a child that dies, a child that hangs, a parent that leaves.~~
+   **Done, and one of the three turned out not to exist** - see §5b.
 6. `resume` and `attach`.
 7. The flag becomes the default on unix, and `docs/status.md` moves §9.
 
