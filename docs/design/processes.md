@@ -259,6 +259,45 @@ direction.
 
 ---
 
+## 5c. Picking a run up again
+
+`resume --isolate` and `attach --isolate`. What made them more than a repeat of
+§5 is that the answer has to be shaped **before** the run exists.
+
+`--value true` becomes a `CapValue` of the shape the waiting call takes, and
+that shape is read from the program - but which call is waiting was read from a
+restored `Vm`. In two processes there is no restored `Vm` on this side, and
+restoring one just to ask would be restoring the run twice.
+
+The checkpoint already knows. It carries the pending call, so
+`Checkpoint::waiting_for` reads the name out of the state a run was written out
+as, and `answer_for` takes that name rather than a `&Vm`. Both shapes use it,
+which is the point: one place decides what an answer has to look like.
+
+So the order is: read the checkpoint, check its digest, shape the answer, hand
+over the state and then the answer. The child restores, resumes, and the loop is
+the one §5 already had.
+
+### What the digest check keeps
+
+`resume` checks the checkpoint's digest against the program before doing
+anything, and the comment on that check says why - it is the failure a person is
+most likely to meet, and #11 wrote it a message that says what to do rather than
+only what went wrong. That check is on this side in both shapes, so the message
+survives the split.
+
+`Vm::restore` checks it again in the child, which is where it is enforced. The
+parent's copy is for the person.
+
+### A checkpoint does not remember which shape wrote it
+
+All four combinations work and give the same answer, and there is a test that
+runs them. That is what makes `--isolate` a way of running rather than a kind of
+run: nothing about a saved run depends on it, so nobody has to remember what
+they typed yesterday.
+
+---
+
 ## 6. Not here
 
 - **The sandbox.** `seccomp`, `landlock` and their cousins are per-platform and
@@ -298,7 +337,7 @@ direction.
    about one program is what `sic resume` would then be comparing.
 5. ~~Failure: a child that dies, a child that hangs, a parent that leaves.~~
    **Done, and one of the three turned out not to exist** - see §5b.
-6. `resume` and `attach`.
+6. ~~`resume` and `attach`.~~ **Done** - see §5c.
 7. The flag becomes the default on unix, and `docs/status.md` moves §9.
 
 Each is a piece of work that finishes on its own, and the first three are what

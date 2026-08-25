@@ -28,9 +28,11 @@ Usage:
                                   pane instead of stopping to ask a person;
                                   --isolate puts the interpreter in a process of
                                   its own, which opens no file and starts no
-                                  program (unix only)
+                                  program (unix only; `resume` and `attach` take
+                                  it too, and a checkpoint does not care which
+                                  shape wrote it)
   sic runs [--waiting]            list recorded runs, or only those waiting
-  sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
+  sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--isolate]
                                   see what a waiting run needs, or answer it -
                                   `--because` records why, next to the answer,
                                   and `--llm` picks up the run's own agent panes
@@ -41,7 +43,7 @@ Usage:
                                   run FILE against those answers instead, to
                                   see whether an edit still asks what the
                                   recording answered
-  sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH] [--llm SPEC]
+  sic resume <CHECKPOINT> <FILE.sic> --value <VALUE> [--journal PATH] [--checkpoint PATH] [--llm SPEC] [--isolate]
                                   continue a run that stopped to wait
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic export <JOURNAL> [--traces PATH] [--metrics PATH]
@@ -100,12 +102,17 @@ fn main() -> ExitCode {
             [flag] if flag == "--waiting" => cmd::runs::list_waiting(),
             _ => usage_error("`runs` takes at most `--waiting`"),
         },
-        "attach" => match parse_flags(rest, &["--value", "--because", "--llm"], 1) {
+        "attach" => match parse_flags(
+            &without_isolate(rest).0,
+            &["--value", "--because", "--llm"],
+            1,
+        ) {
             Ok((files, flags)) => cmd::runs::attach(
                 &files[0],
                 flags[0].as_deref(),
                 flags[1].as_deref(),
                 flags[2].as_deref(),
+                without_isolate(rest).1,
             ),
             Err(msg) => usage_error(msg),
         },
@@ -126,7 +133,7 @@ fn main() -> ExitCode {
             _ => usage_error("`recheck` takes a run id and a source file"),
         },
         "resume" => match parse_flags(
-            rest,
+            &without_isolate(rest).0,
             &["--value", "--journal", "--checkpoint", "--because", "--llm"],
             2,
         ) {
@@ -145,6 +152,7 @@ fn main() -> ExitCode {
                     journal: flags[1].as_deref(),
                     checkpoint: flags[2].as_deref(),
                     llm: flags[4].as_deref(),
+                    isolate: without_isolate(rest).1,
                 },
             ),
             Err(msg) => usage_error(msg),
@@ -238,21 +246,33 @@ struct Run {
     isolate: bool,
 }
 
-fn parse_run(args: &[String]) -> Result<Run, String> {
-    let mut record = false;
+/// Lifts `--isolate` out, and says whether it was there.
+///
+/// Three commands take it - `run`, `resume`, `attach` - and a flag with no
+/// value does not fit `parse_flags`, which pairs each with one.
+fn without_isolate(args: &[String]) -> (Vec<String>, bool) {
     let mut isolate = false;
+    let rest = args
+        .iter()
+        .filter(|a| {
+            let found = a.as_str() == "--isolate";
+            isolate |= found;
+            !found
+        })
+        .cloned()
+        .collect();
+    (rest, isolate)
+}
+
+fn parse_run(args: &[String]) -> Result<Run, String> {
+    let (args, isolate) = without_isolate(args);
+    let mut record = false;
     let rest: Vec<String> = args
         .iter()
-        .filter(|a| match a.as_str() {
-            "--record" => {
-                record = true;
-                false
-            }
-            "--isolate" => {
-                isolate = true;
-                false
-            }
-            _ => true,
+        .filter(|a| {
+            let found = a.as_str() == "--record";
+            record |= found;
+            !found
         })
         .cloned()
         .collect();

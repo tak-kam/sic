@@ -24,6 +24,10 @@ pub struct ResumeOptions<'a> {
     pub checkpoint: Option<&'a str>,
     /// What is to answer `llm.invoke` from here on.
     pub llm: Option<&'a str>,
+    /// Pick the run up in a process of its own - see
+    /// `docs/design/processes.md`.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub isolate: bool,
 }
 
 /// A checkpoint that no longer belongs to the program it is being resumed
@@ -88,10 +92,26 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     // one failure a person is most likely to meet can say what to do instead of
     // only what went wrong. The broker re-checks what the compiler checked for
     // the same reason.
-    if let Ok(saved) = sic_vm::Checkpoint::decode(&bytes) {
+    let saved = sic_vm::Checkpoint::decode(&bytes);
+    if let Ok(saved) = &saved {
         if saved.program_digest != digest {
             return orphaned(checkpoint_path, source_path);
         }
+    }
+
+    // A checkpoint says what it is waiting for, so the answer can be shaped
+    // without restoring the run here - which is what lets the restoring happen
+    // in the other process. See `docs/design/processes.md` §5c.
+    #[cfg(unix)]
+    if options.isolate {
+        let saved = match saved {
+            Ok(saved) => saved,
+            Err(e) => {
+                eprintln!("error: cannot resume from `{checkpoint_path}`: {e}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+        };
+        return isolated(&program, &bytes, &saved, sink, &options);
     }
 
     let (mut vm, question) = match Vm::restore(&program, &bytes, digest, sink) {
@@ -102,7 +122,11 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         }
     };
 
-    let value = match answer_for(&program, &vm, options.value) {
+    let Some(cap) = vm.pending_capability().map(str::to_string) else {
+        eprintln!("internal error: the checkpoint is not waiting for anything");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+    let value = match answer_for(&program, &cap, options.value) {
         Ok(value) => value,
         Err(Needs::Reported(code)) => return code,
         Err(Needs::Answer(tag)) => {
@@ -148,4 +172,83 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     let outcome = drive(&mut vm, &mut broker, status);
     broker.finish(matches!(outcome, super::drive::Outcome::Suspended { .. }));
     finish(&mut vm, &program, outcome, options.checkpoint, None)
+}
+
+/// The same resume, with the interpreter in a process of its own.
+///
+/// This side never restores the run: it reads what the checkpoint is waiting
+/// for, shapes the answer, and hands both the state and the answer over. The
+/// digest check above is what `restore` would have done first anyway, and it is
+/// here for the reason its comment gives - so the failure a person is most
+/// likely to meet says what to do instead of only what went wrong.
+#[cfg(unix)]
+fn isolated(
+    program: &sic_bytecode::Program,
+    bytes: &[u8],
+    saved: &sic_vm::Checkpoint,
+    mut sink: Box<dyn sic_journal::Sink>,
+    options: &ResumeOptions<'_>,
+) -> ExitCode {
+    let Some(cap) = saved.waiting_for() else {
+        eprintln!("internal error: the checkpoint is not waiting for anything");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+    let value = match answer_for(program, cap, options.value) {
+        Ok(value) => value,
+        Err(Needs::Reported(code)) => return code,
+        Err(Needs::Answer(tag)) => {
+            eprintln!("waiting: {}", saved.question);
+            eprintln!(
+                "error: `resume` needs the answer: --value <{}>",
+                tag.short_name()
+            );
+            return ExitCode::from(EXIT_USAGE);
+        }
+    };
+
+    // The same refusal the shape above makes, for the same reason: a loose
+    // checkpoint does not say which run it came from.
+    if options.llm.is_some() && program.policies.iter().any(|p| p.conversation != 0) {
+        eprintln!(
+            "error: this program keeps a conversation, and a checkpoint does not say which run \
+             it belongs to"
+        );
+        eprintln!(
+            "       continue a recorded run instead: sic attach <RUN-ID> --value V --llm <SPEC>"
+        );
+        return ExitCode::from(EXIT_USAGE);
+    }
+    let session = super::driver::Session {
+        run: super::journal::new_run_id().to_string(),
+        continuing: false,
+        state: None,
+    };
+    let grants = manifest(program);
+    let mut broker = match super::driver::open(options.llm, session, &grants, None) {
+        Ok(Some(driver)) => Broker::with_driver(grants, driver),
+        Ok(None) => Broker::new(grants),
+        Err(message) => {
+            eprintln!("error: {message}");
+            return ExitCode::from(EXIT_FAILURE);
+        }
+    };
+    match super::isolate::drive(
+        program,
+        super::isolate::Begin::Resumed {
+            checkpoint: bytes,
+            answer: value,
+        },
+        &mut broker,
+        sink.as_mut(),
+        None,
+    ) {
+        Ok(ran) => {
+            broker.finish(matches!(ran.ended, crate::wire::Ended::Suspended(_)));
+            super::isolate::finish(ran, options.checkpoint, None)
+        }
+        Err(message) => {
+            eprintln!("error: {message}");
+            ExitCode::from(EXIT_FAILURE)
+        }
+    }
 }

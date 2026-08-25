@@ -305,6 +305,97 @@ mod isolated {
         std::fs::remove_file(&path).ok();
     }
 
+    /// A checkpoint does not remember which shape wrote it, so the four
+    /// combinations have to work and give the same answer. That is what makes
+    /// `--isolate` a way of running rather than a kind of run.
+    #[test]
+    fn a_checkpoint_does_not_care_which_shape_wrote_it() {
+        for (writing, reading) in [
+            ("", ""),
+            ("--isolate", ""),
+            ("", "--isolate"),
+            ("--isolate", "--isolate"),
+        ] {
+            let store = temp_store(&format!("cross{}{}", writing.len(), reading.len()));
+            let program = example("approval.sic");
+            let mut run = vec!["run", program.as_str(), "--record"];
+            if !writing.is_empty() {
+                run.push(writing);
+            }
+            let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &run);
+            assert_eq!(code, 3, "writing {writing:?}: {stderr}");
+
+            let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+            let id = stdout.split_whitespace().next().unwrap().to_string();
+            let mut attach = vec!["attach", id.as_str(), "--value", "true"];
+            if !reading.is_empty() {
+                attach.push(reading);
+            }
+            let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &attach);
+            assert_eq!(code, 0, "{writing:?} then {reading:?}: {stderr}");
+            assert_eq!(stdout.trim(), "0", "{writing:?} then {reading:?}");
+            std::fs::remove_dir_all(store).ok();
+        }
+    }
+
+    /// `resume` too, which has no run directory: the answer is shaped from the
+    /// checkpoint alone, because nothing is restored on this side.
+    #[test]
+    fn a_loose_checkpoint_resumes_in_a_process_of_its_own() {
+        let store = temp_store("isolate-resume");
+        std::fs::create_dir_all(&store).ok();
+        let saved = store.join("wait.sicc");
+        let shown = saved.to_string_lossy().into_owned();
+        let (_, stderr, code) = sic(&[
+            "run",
+            &example("approval.sic"),
+            "--checkpoint",
+            shown.as_str(),
+        ]);
+        assert_eq!(code, 3, "{stderr}");
+
+        let (stdout, stderr, code) = sic(&[
+            "resume",
+            shown.as_str(),
+            &example("approval.sic"),
+            "--value",
+            "true",
+            "--isolate",
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "0");
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The answer is shaped on this side, from the checkpoint, so a value of
+    /// the wrong shape is refused before a child is started.
+    #[test]
+    fn an_answer_the_call_cannot_take_is_refused_without_starting_anything() {
+        let store = temp_store("isolate-wrong");
+        std::fs::create_dir_all(&store).ok();
+        let saved = store.join("wait.sicc");
+        let shown = saved.to_string_lossy().into_owned();
+        let (_, _, code) = sic(&[
+            "run",
+            &example("approval.sic"),
+            "--checkpoint",
+            shown.as_str(),
+        ]);
+        assert_eq!(code, 3);
+
+        let (_, stderr, code) = sic(&[
+            "resume",
+            shown.as_str(),
+            &example("approval.sic"),
+            "--value",
+            "not a bool",
+            "--isolate",
+        ]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("human.approve"), "{stderr}");
+        std::fs::remove_dir_all(store).ok();
+    }
+
     #[test]
     fn the_interpreter_needs_a_socket() {
         let (_, stderr, code) = sic(&["vm"]);

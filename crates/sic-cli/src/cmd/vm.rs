@@ -58,6 +58,12 @@ impl Sink for Wire {
     }
 }
 
+/// The two ways a run begins here.
+enum Begin {
+    Fresh { entry: u32, fuel: u64, run: u128 },
+    Resumed { checkpoint: Vec<u8> },
+}
+
 pub fn run(socket: &str) -> ExitCode {
     let stream = match UnixStream::connect(socket) {
         Ok(stream) => stream,
@@ -78,21 +84,28 @@ pub fn run(socket: &str) -> ExitCode {
 }
 
 fn drive(wire: &Wire) -> Result<ExitCode, String> {
-    let ToVm::Start {
-        program,
-        entry,
-        fuel,
-        run,
-    } = wire.hear()?
-    else {
-        return Err("the run said something other than what to run".to_string());
+    // Two ways to begin and one way to go on. A run that is starting is told
+    // where to start; a run that already exists arrives as the state it was
+    // written out as, and the answer it was waiting for comes after.
+    //
+    // The program is kept as bytes as well as decoded: a checkpoint is tied to
+    // the digest of the bytecode it came from, and the bytes that digest is of
+    // are the ones that arrived. Re-encoding what was decoded would be a second
+    // opinion about the same program, and `sic resume` compares against the
+    // parent's.
+    let (sent, start) = match wire.hear()? {
+        ToVm::Start {
+            program,
+            entry,
+            fuel,
+            run,
+        } => (program, Begin::Fresh { entry, fuel, run }),
+        ToVm::Restore {
+            program,
+            checkpoint,
+        } => (program, Begin::Resumed { checkpoint }),
+        _ => return Err("the run said something other than what to run".to_string()),
     };
-
-    // Kept as bytes as well as decoded: a checkpoint is tied to the digest of
-    // the bytecode it came from, and the bytes that digest is of are the ones
-    // that arrived. Re-encoding what was decoded would be a second opinion
-    // about the same program, and `sic resume` compares against the parent's.
-    let sent = program;
     let program = sic_bytecode::decode(&sent)
         .map_err(|e| format!("the run sent bytecode this cannot read: {e}"))?;
     // The one door into the VM, on this side of the wire too. A program that
@@ -107,9 +120,31 @@ fn drive(wire: &Wire) -> Result<ExitCode, String> {
         ));
     }
 
-    let journal = Journal::new(RunId(run), Box::new(wire.clone()));
-    let mut vm = Vm::with_journal(&program, fuel, journal);
-    let mut status = vm.run(entry, &[]);
+    let sink = Box::new(wire.clone());
+    let (mut vm, mut status) = match start {
+        Begin::Fresh { entry, fuel, run } => {
+            let journal = Journal::new(RunId(run), sink);
+            let mut vm = Vm::with_journal(&program, fuel, journal);
+            let status = vm.run(entry, &[]);
+            (vm, status)
+        }
+        Begin::Resumed { checkpoint } => {
+            // The digest ties the state to the bytecode it came from, and the
+            // bytecode is what arrived - the same reason a checkpoint written
+            // over this wire is digested against what was sent.
+            let digest = sic_core::Digest::of(&sent);
+            let (mut vm, _question) = Vm::restore(&program, &checkpoint, digest, sink)
+                .map_err(|e| format!("cannot pick the run up again: {e}"))?;
+            // The answer the parent shaped for the call this stopped at. It is
+            // sent after the state because the parent needs the state to know
+            // what shape to give it.
+            let ToVm::Resume(value) = wire.hear()? else {
+                return Err("the run sent something other than an answer".to_string());
+            };
+            let status = vm.resume(value);
+            (vm, status)
+        }
+    };
 
     let ended = loop {
         match status {

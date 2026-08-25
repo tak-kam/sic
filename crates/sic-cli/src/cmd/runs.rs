@@ -119,6 +119,7 @@ pub fn attach(
     value: Option<&str>,
     because: Option<&str>,
     llm: Option<&str>,
+    isolate: bool,
 ) -> ExitCode {
     let dir = match store::find(prefix) {
         Ok(dir) => dir,
@@ -158,15 +159,23 @@ pub fn attach(
         return code;
     }
 
-    let (mut vm, question) = match Vm::restore(&program, &checkpoint, digest, sink) {
-        Ok(v) => v,
+    // What the run stopped at, read from the state it was written out as rather
+    // than from a restored run: when the run is picked up in another process
+    // there is nothing restored on this side, and the answer still has to be
+    // shaped here. `docs/design/processes.md` §5c.
+    let saved = match sic_vm::Checkpoint::decode(&checkpoint) {
+        Ok(saved) => saved,
         Err(e) => {
             eprintln!("error: cannot pick up `{}`: {e}", dir.display());
             return ExitCode::from(EXIT_FAILURE);
         }
     };
-
-    let answer = match super::drive::answer_for(&program, &vm, value) {
+    let question = saved.question.clone();
+    let Some(cap) = saved.waiting_for().map(str::to_string) else {
+        eprintln!("internal error: the checkpoint is not waiting for anything");
+        return ExitCode::from(EXIT_FAILURE);
+    };
+    let answer = match super::drive::answer_for(&program, &cap, value) {
         Ok(answer) => answer,
         Err(super::drive::Needs::Reported(code)) => return code,
         Err(super::drive::Needs::Answer(tag)) => {
@@ -208,24 +217,99 @@ pub fn attach(
             return ExitCode::from(EXIT_FAILURE);
         }
     };
-    let status = vm.resume(answer);
-    let outcome = super::drive::drive_recording(&mut vm, &mut broker, status, Some(&dir));
-
-    let still_waiting = matches!(outcome, super::drive::Outcome::Suspended { .. });
-    broker.finish(still_waiting);
     let hint = format!("sic attach {prefix} --value <VALUE>");
-    let code = super::run::finish(
-        &mut vm,
-        &program,
-        outcome,
-        Some(&checkpoint_path.to_string_lossy()),
-        Some(&hint),
-    );
+    let saved_path = checkpoint_path.to_string_lossy().into_owned();
+
+    let (code, still_waiting) = pick_up(PickUp {
+        program: &program,
+        checkpoint: &checkpoint,
+        digest,
+        answer,
+        sink,
+        broker: &mut broker,
+        dir: &dir,
+        saved_path: &saved_path,
+        hint: &hint,
+        isolate,
+    });
     // A finished run that kept its checkpoint would keep showing up as waiting.
     if !still_waiting {
         std::fs::remove_file(&checkpoint_path).ok();
     }
     code
+}
+
+/// What picking a run up again needs, in either shape.
+struct PickUp<'a> {
+    program: &'a sic_bytecode::Program,
+    checkpoint: &'a [u8],
+    digest: Digest,
+    answer: CapValue,
+    sink: Box<dyn sic_journal::Sink>,
+    broker: &'a mut sic_broker::Broker,
+    dir: &'a Path,
+    saved_path: &'a str,
+    hint: &'a str,
+    #[cfg_attr(not(unix), allow(dead_code))]
+    isolate: bool,
+}
+
+/// Continues the run, here or in a process of its own.
+///
+/// Returns the exit code and whether the run is waiting again, because the
+/// caller removes a checkpoint that nothing is waiting on any more.
+// `mut` only on the side that hands the sink over rather than consuming it.
+#[cfg_attr(not(unix), allow(unused_mut))]
+fn pick_up(mut it: PickUp<'_>) -> (ExitCode, bool) {
+    // Nothing is restored on this side: the state and the answer go over, and
+    // the child is the one that picks the run up.
+    #[cfg(unix)]
+    if it.isolate {
+        return match super::isolate::drive(
+            it.program,
+            super::isolate::Begin::Resumed {
+                checkpoint: it.checkpoint,
+                answer: it.answer,
+            },
+            it.broker,
+            it.sink.as_mut(),
+            Some(it.dir),
+        ) {
+            Ok(ran) => {
+                let waiting = matches!(ran.ended, crate::wire::Ended::Suspended(_));
+                it.broker.finish(waiting);
+                (
+                    super::isolate::finish(ran, Some(it.saved_path), Some(it.hint)),
+                    waiting,
+                )
+            }
+            Err(message) => {
+                eprintln!("error: {message}");
+                (ExitCode::from(EXIT_FAILURE), false)
+            }
+        };
+    }
+
+    let (mut vm, _question) = match Vm::restore(it.program, it.checkpoint, it.digest, it.sink) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("error: cannot pick up `{}`: {e}", it.dir.display());
+            return (ExitCode::from(EXIT_FAILURE), false);
+        }
+    };
+    let status = vm.resume(it.answer);
+    let outcome = super::drive::drive_recording(&mut vm, it.broker, status, Some(it.dir));
+
+    let still_waiting = matches!(outcome, super::drive::Outcome::Suspended { .. });
+    it.broker.finish(still_waiting);
+    let code = super::run::finish(
+        &mut vm,
+        it.program,
+        outcome,
+        Some(it.saved_path),
+        Some(it.hint),
+    );
+    (code, still_waiting)
 }
 
 /// `sic explain <id>`: the summary a person reads when something went wrong.

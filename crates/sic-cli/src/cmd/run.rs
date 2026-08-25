@@ -214,9 +214,11 @@ fn isolated(
 ) -> ExitCode {
     match super::isolate::drive(
         program,
-        entry,
-        run_id,
-        DEFAULT_FUEL,
+        super::isolate::Begin::Fresh {
+            entry,
+            run: run_id,
+            fuel: DEFAULT_FUEL,
+        },
         broker,
         sink,
         keeping.recording,

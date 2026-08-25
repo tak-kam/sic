@@ -37,6 +37,15 @@ pub enum ToVm {
     },
     /// What a capability call answered, or why it did not.
     Answer(std::result::Result<CapOutcome, CapError>),
+    /// A run that already exists, picked up where it stopped.
+    ///
+    /// The checkpoint carries its own fuel, run id and journal position, so
+    /// none of `Start`'s fields is repeated here. What the parent has to send
+    /// after it is the answer: `Resume`.
+    Restore {
+        program: Vec<u8>,
+        checkpoint: Vec<u8>,
+    },
     /// The value a person or an agent supplied for the call the run stopped
     /// at. Used by `resume` and `attach`; `run` never sends one.
     Resume(CapValue),
@@ -107,6 +116,16 @@ impl ToVm {
                 w.u8(4);
                 value.write(&mut w);
             }
+            ToVm::Restore {
+                program,
+                checkpoint,
+            } => {
+                w.u8(5);
+                w.u32(program.len() as u32);
+                w.bytes(program);
+                w.u32(checkpoint.len() as u32);
+                w.bytes(checkpoint);
+            }
         }
         w.finish()
     }
@@ -129,6 +148,15 @@ impl ToVm {
             2 => ToVm::Answer(Ok(CapOutcome::Deferred { question: r.str()? })),
             3 => ToVm::Answer(Err(CapError::new(r.str()?))),
             4 => ToVm::Resume(CapValue::read(&mut r)?),
+            5 => {
+                let len = r.count(1)?;
+                let program = r.take(len)?.to_vec();
+                let len = r.count(1)?;
+                ToVm::Restore {
+                    program,
+                    checkpoint: r.take(len)?.to_vec(),
+                }
+            }
             other => return Err(BinError::new(format!("unknown message tag {other}"))),
         })
     }
@@ -260,6 +288,10 @@ mod tests {
             })),
             ToVm::Answer(Err(CapError::new("`/bin/x` is not an absolute path"))),
             ToVm::Resume(CapValue::Bool(true)),
+            ToVm::Restore {
+                program: vec![7, 8, 9],
+                checkpoint: vec![1u8; 300],
+            },
         ]
     }
 

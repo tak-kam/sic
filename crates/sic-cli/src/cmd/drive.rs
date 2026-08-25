@@ -141,15 +141,16 @@ pub enum Needs<'a> {
 /// Written out twice, the sequence drifted - which is what happens when three
 /// lookups and four error paths are something every caller has to get right on
 /// its own.
+/// Turns `--value` into the answer the waiting call is shaped for.
+///
+/// The capability's name rather than the `Vm` it came from: when the run is in
+/// another process there is no `Vm` on this side, and the checkpoint says what
+/// is being waited on. One shape for both, rather than the same parsing twice.
 pub fn answer_for<'a>(
     program: &'a Program,
-    vm: &Vm,
+    cap: &str,
     value: Option<&str>,
 ) -> Result<CapValue, Needs<'a>> {
-    let Some(cap) = vm.pending_capability() else {
-        eprintln!("internal error: the checkpoint is not waiting for anything");
-        return Err(Needs::Reported(ExitCode::from(super::EXIT_FAILURE)));
-    };
     let Some(tag) = capability_return_type(program, cap) else {
         eprintln!("error: `{cap}` is not a capability this program declares");
         return Err(Needs::Reported(ExitCode::from(super::EXIT_FAILURE)));

@@ -112,20 +112,42 @@ pub struct Ran {
     pub checkpoint: Option<Vec<u8>>,
 }
 
+/// How a run begins in the child.
+///
+/// The same two the child knows about, from this side. A fresh run is told
+/// where to start; one that already exists is handed the state it was written
+/// out as, and then the answer it was waiting for.
+pub enum Begin<'a> {
+    Fresh {
+        entry: u32,
+        run: sic_journal::RunId,
+        fuel: u64,
+    },
+    Resumed {
+        checkpoint: &'a [u8],
+        answer: sic_core::CapValue,
+    },
+}
+
 /// Runs `program` in a child, answering every capability call from `broker`.
 ///
 /// The loop is `drive_recording`'s, with a wire where the `Vm` was: the child
 /// says what it did and what it needs, and this side performs and answers.
 pub fn drive(
     program: &sic_bytecode::Program,
-    entry: u32,
-    run: sic_journal::RunId,
-    fuel: u64,
+    begin: Begin<'_>,
     broker: &mut Broker,
     sink: &mut dyn Sink,
     record_into: Option<&std::path::Path>,
 ) -> Result<Ran, String> {
-    let socket = Socket::open(&run.to_string())?;
+    // Only used to name the socket, so a fresh run's id and a resumed run's
+    // process id are equally good: what matters is that two runs on one
+    // machine do not collide.
+    let named = match &begin {
+        Begin::Fresh { run, .. } => run.to_string(),
+        Begin::Resumed { .. } => format!("resumed-{}", std::process::id()),
+    };
+    let socket = Socket::open(&named)?;
     let me =
         std::env::current_exe().map_err(|e| format!("cannot tell where this binary is: {e}"))?;
     let child = Command::new(&me)
@@ -140,17 +162,30 @@ pub fn drive(
         .accept()
         .map_err(|e| format!("the interpreter did not connect: {e}"))?;
 
-    send(
-        &mut stream,
-        &ToVm::Start {
-            program: sic_bytecode::encode(program),
+    let encoded = sic_bytecode::encode(program);
+    let told = match begin {
+        Begin::Fresh { entry, run, fuel } => ToVm::Start {
+            program: encoded,
             entry,
             fuel,
             run: run.0,
-        }
-        .to_bytes(),
-    )
-    .map_err(|e| format!("cannot send the program: {e}"))?;
+        },
+        Begin::Resumed { checkpoint, .. } => ToVm::Restore {
+            program: encoded,
+            checkpoint: checkpoint.to_vec(),
+        },
+    };
+    let resuming = matches!(told, ToVm::Restore { .. });
+    send(&mut stream, &told.to_bytes()).map_err(|e| format!("cannot send the program: {e}"))?;
+    if resuming {
+        // After the state, because the parent needed the state to know what
+        // shape to give the answer.
+        let Begin::Resumed { answer, .. } = begin else {
+            unreachable!("`resuming` is only true for a resumed run");
+        };
+        send(&mut stream, &ToVm::Resume(answer).to_bytes())
+            .map_err(|e| format!("cannot send the answer: {e}"))?;
+    }
 
     let ran = converse(&mut stream, broker, sink, record_into);
     // Waited for either way, and before anything is reported: a child that

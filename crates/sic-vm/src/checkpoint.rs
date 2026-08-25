@@ -83,6 +83,21 @@ pub struct TaskSnapshot {
     pub frames: Vec<Frame>,
 }
 
+impl Checkpoint {
+    /// The capability the run stopped at.
+    ///
+    /// Whoever has to shape an answer needs to know what is being answered, and
+    /// when the run is in another process the checkpoint is the only thing this
+    /// side has. `Vm::pending_capability` is the same fact read from a restored
+    /// run; this one reads it from the state a run was written out as.
+    pub fn waiting_for(&self) -> Option<&str> {
+        match &self.tasks.get(self.answering as usize)?.state {
+            TaskStateSnapshot::WaitingCap(pending) => Some(&pending.cap),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TaskStateSnapshot {
     Ready,
