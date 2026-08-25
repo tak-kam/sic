@@ -112,6 +112,106 @@ as a fact, which is the one thing a plan must not be.
 
 ---
 
+## 3a. `--graph`: the one thing a list cannot say
+
+A program whose effect is behind an approval, planned:
+
+```text
+  deploy
+    1. EXEC     process.exec    "/usr/bin/true"
+
+  rollback
+    1. WRITE    fs.write        "./rollback.log"
+
+  main
+    1. APPROVE  human.approve   "the deploy"
+```
+
+Three blocks, and nothing connects them. From this a reader cannot tell that
+`main` calls either of the other two, which of them runs, or that they are
+alternatives. §1 opens by saying what a plan is for - the decision about
+whether to run something should be possible before running it - and the
+decision here is "if I approve, a program runs; if I refuse, a file is
+written". That sentence is not in the document.
+
+It was not a rendering oversight. The walk recorded four opcodes and
+`continue`d past the rest, and `Op::Call` was in the rest, so **an ordinary
+function call was not in the model at all**. `--graph` is one more arm in that
+match and a second output.
+
+```text
+flowchart TD
+    may["may, not will.<br/>Every edge is a path this program has, not one a
+         run will take.<br/>Which path, and how often, depends on the answers
+         it gets."]
+    f0(["deploy"])
+    f1(["rollback"])
+    f2(["main"])
+    c0["APPROVE human.approve - the deploy"]
+    c1["EXEC process.exec - /usr/bin/true"]
+    c2["WRITE fs.write - ./rollback.log"]
+    f2 --> f0
+    f2 --> f1
+    f0 --> c1
+    f1 --> c2
+    f2 --> c0
+```
+
+### Mermaid, and not the alternatives
+
+DOT needs graphviz installed before a person can look at it. SVG needs a layout
+algorithm, which this project could write and which would be its own piece of
+work with no dependency argument behind it. Mermaid is text, it is a few dozen
+lines to emit by hand, it renders in GitHub, GitLab and most editors with
+nothing installed, and where nothing renders it is still readable - which is
+the same standard the rest of this binary's output is held to.
+
+### The risk, which is the whole design problem
+
+**A diagram invites a reader to see certainty and order that the plan does not
+have.** §3 is careful about this and ends with a sentence; an arrow is much
+harder to qualify than a sentence.
+
+#24 made the plan's rule that it must not under-report what a run reaches. A
+graph needs the other half stated: **it must not over-claim either.** A reader
+who takes `main --> deploy` for "this will happen" has been misled by a
+document whose whole purpose is deciding whether to allow it.
+
+Three things follow, and each is a decision rather than a detail:
+
+| | |
+|---|---|
+| the caption is a node | not a footnote, and not a `%%` comment. It is the first thing in the flowchart, so it is in the reader's way before they have drawn any conclusions |
+| `spawn` is dotted **and** labelled | it is a call that does not wait, and a graph that drew it as an ordinary call would describe a different program. A dotted arrow on its own means whatever the reader last saw one mean |
+| a grant nothing calls is drawn | in a `granted, and never called` subgraph. It is still a grant - `sic mcp` serves it to the agent answering for the run - so a reader of only the picture is told what a reader of the list is told |
+
+And it is tested the way the under-reporting is: against a recorded run. A run
+is recorded, the capabilities it asked for are read out of its journal, and
+each one has to be reachable from `main` by following arrows. A graph that drew
+every node and lost a path would pass a test that only counted nodes, and fail
+a reader.
+
+### One node per grant, not per call site
+
+Two `fs.write` calls in different functions are two arrows into one box. A
+grant is what the manifest is about and what a reader is being asked to allow;
+a budget belongs to a site, and §3 is where a site's numbers are. Collapsing
+sites into grants is what keeps the picture readable at the size a real program
+makes it, and nothing is lost that the list does not already hold.
+
+### Branches, which are deliberately not drawn
+
+`main` calls `deploy` *or* `rollback`, and the graph shows both without saying
+they are alternatives. Drawing that needs a control-flow graph, which
+`sic-plan` does not have - `sic-verify`'s `check_data_flow` does, and moving or
+duplicating it is a piece of work with its own argument.
+
+Call edges alone fix the demonstrated gap, which was that nothing said `main`
+reached either. If the alternatives turn out to be what a reader actually
+needs, that is the next issue to write, and it has this rendering to build on.
+
+---
+
 ## 4. Not here
 
 - **No cost or token estimate.** The broker does not report either yet, so any
@@ -122,3 +222,10 @@ as a fact, which is the one thing a plan must not be.
   wiring "approve this plan" to "run exactly this" needs the plan to be
   identified by something - the bytecode digest is the obvious candidate, and it
   is already printed.
+- **No picture of a run.** `sic export --traces` produces OTLP, and every trace
+  backend draws a recorded run as a waterfall with the durations it carries. A
+  second mechanism for that would need an argument this does not have.
+- **No picture of the IR.** `sic hir` prints blocks and `sic disasm` prints
+  instructions. Both are read by whoever is working on the compiler; a plan is
+  read by whoever is deciding whether to run a program, and they are not the
+  same reader.

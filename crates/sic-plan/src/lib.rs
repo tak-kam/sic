@@ -42,6 +42,25 @@ pub struct Plan {
     /// Whether the program was built from more than one file. A position is
     /// only worth a file name when there is a choice of file.
     pub multi_file: bool,
+    /// Which functions reach which. The steps say what each function does; a
+    /// list of functions side by side cannot say that one of them is only
+    /// reached from behind an approval, and this is what says it.
+    ///
+    /// Not a `Step`, deliberately. A step is an effect, with a verb a person
+    /// deciding whether to run this can read; reaching another function is
+    /// structure. Mixing the two would change what every existing plan prints
+    /// to say something the reader of a list did not ask for.
+    pub reaches: Vec<Reaches>,
+}
+
+/// One function reaching another.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reaches {
+    pub from: String,
+    pub to: String,
+    /// `spawn` rather than a call, so the caller does not wait. A graph that
+    /// drew this as an ordinary call would be describing a different program.
+    pub spawned: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -203,6 +222,8 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
     let mut called = vec![false; program.caps.len()];
     let mut call_sites: HashMap<String, Vec<String>> = HashMap::new();
 
+    let mut reaches: Vec<Reaches> = Vec::new();
+
     for func in &program.funcs {
         let mut steps = Vec::new();
         for offset in 0..func.code_len {
@@ -213,6 +234,21 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             let Some(op) = inst.op() else {
                 continue;
             };
+            // An edge rather than a step, and drawn once however many times
+            // the call appears: how often a path is taken depends on which
+            // path is taken, which is the one thing this cannot say.
+            if matches!(op, Op::Call | Op::Spawn) {
+                if let Some(callee) = program.funcs.get(inst.b() as usize) {
+                    let edge = Reaches {
+                        from: func.name.clone(),
+                        to: callee.name.clone(),
+                        spawned: op == Op::Spawn,
+                    };
+                    if !reaches.contains(&edge) {
+                        reaches.push(edge);
+                    }
+                }
+            }
             let action = match op {
                 Op::CallCap => {
                     let Some(cap) = program.caps.get(inst.b() as usize) else {
@@ -319,6 +355,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         unbounded_sites,
         unused,
         multi_file: program.debug.sources.len() > 1,
+        reaches,
     }
 }
 
@@ -481,6 +518,181 @@ pub fn render(plan: &Plan, source: &str) -> String {
     out
 }
 
+/// The same plan as a Mermaid flowchart.
+///
+/// The list says what each function does; three functions side by side cannot
+/// say that one of them is only reached from behind an approval. That sentence
+/// is the whole reason this exists, and `docs/design/plan.md` says why the
+/// notation is Mermaid: it is text, it renders in GitHub and most editors with
+/// nothing installed, and where nothing renders it is still readable.
+///
+/// **The hard part is not drawing it, it is not over-claiming.** The list ends
+/// with "how often they run depends on the path taken", and an arrow is much
+/// harder to qualify than a sentence. So the qualification is the first node
+/// in the diagram rather than a footnote, and no edge anywhere says that a
+/// path is taken.
+pub fn graph(plan: &Plan, source: &str) -> String {
+    let mut out = String::new();
+    // For whoever reads the text rather than the picture. A diagram of a
+    // program should say which program, and the digest is what ties approving
+    // this to running that.
+    out.push_str(&format!("%% sic plan --graph {source}\n"));
+    out.push_str(&format!("%% {}\n", plan.digest));
+    out.push_str("flowchart TD\n");
+    out.push_str(&format!("    may[\"{}\"]\n", escape(CAPTION)));
+
+    // Shapes rather than colours: a stadium is a function and a box is an
+    // effect under every theme, while a `fill:` chosen against a light
+    // background is unreadable on a dark one.
+    let mut names: Vec<String> = Vec::new();
+    let mut nodes = String::new();
+    let declare = |names: &mut Vec<String>, nodes: &mut String, name: &str| {
+        let before = names.len();
+        let id = node_of(names, name);
+        if names.len() != before {
+            nodes.push_str(&format!("    {id}([\"{}\"])\n", escape(name)));
+        }
+        id
+    };
+    for function in &plan.functions {
+        declare(&mut names, &mut nodes, &function.name);
+    }
+    // A function with no effects of its own is still on the path to one, so it
+    // is drawn: leaving it out would break the chain that is the point.
+    for edge in &plan.reaches {
+        declare(&mut names, &mut nodes, &edge.from);
+        declare(&mut names, &mut nodes, &edge.to);
+    }
+    out.push_str(&nodes);
+
+    // One node per grant rather than per call site. A grant is what the
+    // manifest is about and what a reader is being asked to allow; a budget
+    // belongs to a site, and the list is where a site's numbers are.
+    let effects: Vec<(String, &Grant)> = plan
+        .capabilities
+        .iter()
+        .enumerate()
+        .map(|(i, grant)| (format!("c{i}"), grant))
+        .collect();
+    for (id, grant) in &effects {
+        let label = format!("{} {} - {}", verb_of(grant), grant.name, grant.constraint);
+        out.push_str(&format!("    {id}[\"{}\"]\n", escape(&label)));
+    }
+
+    for edge in &plan.reaches {
+        let from = node_of(&mut names, &edge.from);
+        let to = node_of(&mut names, &edge.to);
+        match edge.spawned {
+            // Dotted *and* labelled. A dotted arrow on its own means whatever
+            // the reader last saw one mean.
+            true => out.push_str(&format!("    {from} -. spawn .-> {to}\n")),
+            false => out.push_str(&format!("    {from} --> {to}\n")),
+        }
+    }
+
+    let mut called = vec![false; effects.len()];
+    let mut edges = String::new();
+    for function in &plan.functions {
+        let from = node_of(&mut names, &function.name);
+        for step in &function.steps {
+            let Action::Capability {
+                name, constraint, ..
+            } = &step.action
+            else {
+                continue;
+            };
+            let found = effects
+                .iter()
+                .enumerate()
+                .find(|(_, (_, g))| &g.name == name && &g.constraint == constraint);
+            let Some((i, (id, _))) = found else {
+                continue;
+            };
+            called[i] = true;
+            let line = format!("    {from} --> {id}\n");
+            if !edges.contains(&line) {
+                edges.push_str(&line);
+            }
+        }
+    }
+    out.push_str(&edges);
+
+    // Drawn rather than left out. #24 made the plan's rule that it must not
+    // under-report what a run reaches, and a grant nothing calls is still a
+    // grant - `sic mcp` serves it to the agent answering for this run. A
+    // reader of only the picture would otherwise be told less than a reader of
+    // the list.
+    let orphans: Vec<&(String, &Grant)> = effects
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| !called[*i])
+        .map(|(_, e)| e)
+        .collect();
+    if !orphans.is_empty() {
+        out.push_str("    subgraph granted[\"granted, and never called\"]\n");
+        for (id, _) in orphans {
+            out.push_str(&format!("        {id}\n"));
+        }
+        out.push_str("    end\n");
+    }
+
+    out
+}
+
+/// The first thing in the diagram, and the reason it is allowed to be one.
+///
+/// The list ends with "how often they run depends on the path taken", and an
+/// arrow is much harder to qualify than a sentence. So the qualification is in
+/// the reader's way, rather than a footnote under a picture they have already
+/// drawn conclusions from.
+const CAPTION: &str = "may, not will.\nEvery edge is a path this program has, \
+    not one a run will take.\nWhich path, and how often, depends on the \
+    answers it gets.";
+
+/// The id a function is drawn under, adding it if this is the first mention.
+fn node_of(names: &mut Vec<String>, name: &str) -> String {
+    if let Some(i) = names.iter().position(|n| n == name) {
+        return format!("f{i}");
+    }
+    names.push(name.to_string());
+    format!("f{}", names.len() - 1)
+}
+
+/// The verb a grant leads with, which is a step's verb without a step.
+fn verb_of(grant: &Grant) -> &'static str {
+    Action::Capability {
+        name: grant.name.clone(),
+        kind: grant.kind,
+        constraint: String::new(),
+        budget: None,
+        attempts: 1,
+        timeout_ms: 0,
+        alternatives: None,
+        remembers: false,
+        tools: None,
+        deadline_ms: None,
+    }
+    .verb()
+}
+
+/// Text that is going inside a quoted Mermaid label.
+///
+/// A constraint is a string from the source and can hold anything. Mermaid
+/// ends a quoted label at the next `"`, so one in a constraint would end the
+/// label early and leave the rest as syntax - which is a program deciding how
+/// its own plan is drawn.
+fn escape(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("#quot;"),
+            '#' => out.push_str("#35;"),
+            '\n' => out.push_str("<br/>"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
 /// What the agent answering a model call may do, read from the same manifest.
 ///
 /// Every line names **where** it is enforced, in parentheses, because a gate

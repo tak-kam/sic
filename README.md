@@ -227,6 +227,15 @@ the recording answered. A directory of recorded runs is then a regression suite
 for the program, made of cases it has actually been through.
 → [runs.md](docs/design/runs.md)
 
+**What a program may do, drawn.** `sic plan --graph` writes the same plan as a
+Mermaid flowchart, which says the one thing a list of functions side by side
+cannot: which of them reach which, and so which effect is only reachable from
+behind an approval. It renders in GitHub and most editors with nothing
+installed, and where nothing renders it is still readable. The first node in
+the diagram says "may, not will" - an arrow is much harder to qualify than a
+sentence, and a plan that over-claims is as useless as one that under-reports.
+→ [plan.md](docs/design/plan.md)
+
 **And a person who is present can just answer.** `sic run p.sic --record
 --interactive` asks this terminal when the run stops, and keeps asking for as
 long as it keeps stopping. The checkpoint is written before the question
@@ -241,7 +250,9 @@ run is a non-interactive one. Answer a workflow's questions once this way and
 ```text
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--no-isolate]
                                    [--interactive]  ask this terminal, and keep asking
-sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
+sic plan <FILE.sic|FILE.sicb> [--graph]
+                                   what a program may do, running nothing;
+                                   --graph draws which functions reach which
 sic runs [--waiting]               what has been recorded, or what is waiting
 sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--interactive]
                                    see what a waiting run needs, or answer it
@@ -272,7 +283,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [interactive.md](docs/design/interactive.md) | answering a run from the terminal it is running in |
 | [logging.md](docs/design/logging.md) | what a program has to say about itself, and where it goes |
 | [processes.md](docs/design/processes.md) | what splitting the VM from the broker buys, and what is already true without it |
-| [plan.md](docs/design/plan.md) | `sic plan` |
+| [plan.md](docs/design/plan.md) | `sic plan`, and `--graph` |
 | [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |

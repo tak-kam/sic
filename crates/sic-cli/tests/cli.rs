@@ -2520,6 +2520,253 @@ mod the_plan_against_the_run {
 
         std::fs::remove_dir_all(store).ok();
     }
+
+    /// The graph, read back: node ids to labels, and the edges between them.
+    ///
+    /// Parsed rather than matched against a fixed string. A test that asserted
+    /// on the whole document would fail whenever a label was reworded, and
+    /// what is under test is the shape, not the wording.
+    fn graph_of(
+        stdout: &str,
+    ) -> (
+        std::collections::HashMap<String, String>,
+        Vec<(String, String)>,
+    ) {
+        let mut labels = std::collections::HashMap::new();
+        let mut edges = Vec::new();
+        for line in stdout.lines().map(str::trim) {
+            if let Some((from, rest)) = line.split_once(" --> ") {
+                edges.push((from.to_string(), rest.to_string()));
+                continue;
+            }
+            if let Some((from, rest)) = line.split_once(" -. spawn .-> ") {
+                edges.push((from.to_string(), rest.to_string()));
+                continue;
+            }
+            // `f0(["main"])` and `c0["EXEC process.exec - /usr/bin/true"]`.
+            let Some(open) = line.find('[') else { continue };
+            let Some(close) = line.rfind(']') else {
+                continue;
+            };
+            let id = line[..open].trim_end_matches('(').to_string();
+            let label = line[open..close]
+                .trim_start_matches(['[', '(', '"'])
+                .trim_end_matches(['"', ')'])
+                .to_string();
+            labels.insert(id, label);
+        }
+        (labels, edges)
+    }
+
+    /// The program the issue was written about: three blocks in the list, and
+    /// nothing in it says `main` reaches either of the other two.
+    fn shape(named: &str) -> std::path::PathBuf {
+        write_temp(
+            named,
+            "allow {\n\
+         \x20   human.approve \"the deploy\";\n\
+         \x20   process.exec \"/usr/bin/true\";\n\
+         \x20   fs.read \"./examples/greeting.txt\";\n\
+         }\n\
+         \n\
+         fn deploy() -> Int {\n\
+         \x20   return process.exec(\"/usr/bin/true\");\n\
+         }\n\
+         \n\
+         fn rollback() -> String {\n\
+         \x20   return fs.read(\"./examples/greeting.txt\");\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   let approved = human.approve(\"the deploy\");\n\
+         \x20   if approved {\n\
+         \x20       return deploy();\n\
+         \x20   }\n\
+         \x20   return len(rollback());\n\
+         }\n",
+        )
+    }
+
+    /// The gap the issue demonstrated, closed. The list prints `main`,
+    /// `deploy` and `rollback` side by side with nothing between them; the
+    /// graph says which reaches which.
+    #[test]
+    fn a_graph_says_which_functions_reach_which() {
+        let src = shape("plan-shape-edges.sic");
+        let path = src.to_str().unwrap().to_string();
+
+        let (list, stderr, code) = sic(&["plan", &path]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(list.contains("deploy"), "{list}");
+        assert!(!list.contains("-->"), "the list has no edges to lose");
+
+        let (drawn, stderr, code) = sic(&["plan", &path, "--graph"]);
+        assert_eq!(code, 0, "{stderr}");
+        let (labels, edges) = graph_of(&drawn);
+        let id_of = |name: &str| -> String {
+            labels
+                .iter()
+                .find(|(_, label)| label.as_str() == name)
+                .map(|(id, _)| id.clone())
+                .unwrap_or_else(|| panic!("no node for {name} in\n{drawn}"))
+        };
+        let main = id_of("main");
+        for reached in ["deploy", "rollback"] {
+            let to = id_of(reached);
+            assert!(
+                edges.contains(&(main.clone(), to.clone())),
+                "nothing says main reaches {reached}:\n{drawn}"
+            );
+        }
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And it says so without saying it will happen. An arrow is much harder
+    /// to qualify than a sentence, so the qualification is a node rather than
+    /// a footnote under a picture the reader has already drawn conclusions
+    /// from.
+    #[test]
+    fn a_graph_says_may_rather_than_will() {
+        let src = shape("plan-shape-caption.sic");
+        let (drawn, _, code) = sic(&["plan", src.to_str().unwrap(), "--graph"]);
+        assert_eq!(code, 0);
+        assert!(drawn.contains("may, not will"), "{drawn}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Every capability the run actually reached is reachable in the graph by
+    /// following edges from `main`. This is `the_plan_does_not_under_report`
+    /// again, over arrows instead of over lines: a graph that drew the nodes
+    /// and lost the path would pass the first test and fail a reader.
+    #[test]
+    fn a_graph_reaches_every_capability_a_run_reaches() {
+        let store = temp_store("plan-graph-run");
+        let src = shape("plan-shape-run.sic");
+        let path = src.to_str().unwrap().to_string();
+
+        let (drawn, stderr, code) = sic(&["plan", &path, "--graph"]);
+        assert_eq!(code, 0, "{stderr}");
+
+        // Answering `true` takes the branch through `deploy`.
+        let (_, stderr, code) =
+            sic_with_store(repo_root(), Some(&store), &["run", &path, "--record"]);
+        assert_eq!(code, 3, "{stderr}");
+        let dir = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let id = dir.file_name().unwrap().to_string_lossy()[..8].to_string();
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", "true"],
+        );
+        assert_eq!(code, 0, "{stderr}");
+        let requested = capabilities_a_run_requested(&store);
+        assert_eq!(
+            requested,
+            ["human.approve".to_string(), "process.exec".to_string()].into(),
+            "the run did not reach what this program was written to reach"
+        );
+
+        let (labels, edges) = graph_of(&drawn);
+        let main = labels
+            .iter()
+            .find(|(_, l)| l.as_str() == "main")
+            .map(|(id, _)| id.clone())
+            .expect("a node for main");
+        // Everything an arrow leads to from `main`, transitively.
+        let mut seen = vec![main];
+        let mut i = 0;
+        while i < seen.len() {
+            let from = seen[i].clone();
+            for (a, b) in &edges {
+                if *a == from && !seen.contains(b) {
+                    seen.push(b.clone());
+                }
+            }
+            i += 1;
+        }
+        let reachable: Vec<&String> = seen.iter().filter_map(|id| labels.get(id)).collect();
+        for cap in &requested {
+            assert!(
+                reachable.iter().any(|label| label.contains(cap.as_str())),
+                "the run called {cap}, and no path from main in the graph reaches it. \
+                 A graph is read for the same decision the list is, and may \
+                 over-report but never under-report.\nReachable: {reachable:?}\n{drawn}"
+            );
+        }
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// `spawn` is a call that does not wait, and a graph that drew it as an
+    /// ordinary call would be describing a different program.
+    #[test]
+    fn a_spawn_is_not_drawn_as_a_call() {
+        let (drawn, stderr, code) = sic(&["plan", &example("tasks.sic"), "--graph"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(drawn.contains("-. spawn .->"), "{drawn}");
+    }
+
+    /// A grant nothing calls is still a grant - `sic mcp` serves it to the
+    /// agent answering for the run - so a reader of the picture is told what a
+    /// reader of the list is told.
+    #[test]
+    fn a_grant_nothing_calls_is_drawn_as_one() {
+        let src = write_temp(
+            "plan-graph-unused.sic",
+            "allow {\n\
+         \x20   fs.read \"./examples/greeting.txt\";\n\
+         \x20   fs.write \"./never.txt\";\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   return len(fs.read(\"./examples/greeting.txt\"));\n\
+         }\n",
+        );
+        let (drawn, _, code) = sic(&["plan", src.to_str().unwrap(), "--graph"]);
+        assert_eq!(code, 0);
+        assert!(drawn.contains("granted, and never called"), "{drawn}");
+        assert!(drawn.contains("./never.txt"), "{drawn}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A constraint is a string from the source and can hold anything. Mermaid
+    /// ends a quoted label at the next `"`, so a program could otherwise
+    /// decide how its own plan is drawn.
+    #[test]
+    fn a_constraint_cannot_end_its_own_label() {
+        let src = write_temp(
+            "plan-graph-quote.sic",
+            "allow {\n\
+         \x20   process.exec \"/usr/bin/true\\\"] evil[\\\"\";\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   return 0;\n\
+         }\n",
+        );
+        let (drawn, stderr, code) = sic(&["plan", src.to_str().unwrap(), "--graph"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            drawn.contains("#quot;"),
+            "the quote was not escaped:\n{drawn}"
+        );
+        // A label opens at the first quote and closes at the last, so a third
+        // one anywhere on the line is a label that ended where the program
+        // said rather than where the renderer did.
+        for line in drawn.lines() {
+            assert!(
+                line.matches('"').count() % 2 == 0 && line.matches('"').count() <= 2,
+                "a label ended early: {line}\n{drawn}"
+            );
+        }
+        std::fs::remove_file(src).ok();
+    }
 }
 
 /// trust and provenance.
