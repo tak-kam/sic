@@ -338,9 +338,16 @@ Capabilities:
     the agent's Read   "./docs"                 (its own permissions)
     the agent may use  "/usr/bin/cargo"         (through the broker)
     the agent may not  reach the network        (no tool it has can)
-    the agent may not  run a shell              (refused by the hook)
+    the agent may not  run a shell of its own   (refused by the hook)
     the agent may not  use any other tool       (refused by the hook)
 ```
+
+The `cargo` line is there because that grant says `delegable`. Without the word
+it reads `the agent may not use "/usr/bin/cargo"`, and the reason is
+`authority.md` §4a: for the `process` family the constraint does not bound the
+authority, so the manifest has to say whether the agent gets it. "of its own" on
+the shell line is the same change - a delegated shell is one the agent reaches
+through the broker rather than one it runs itself.
 
 Every line names where it is enforced, because a gate and a boundary are
 different things - and `authority.md` §6 states plainly which of the two this

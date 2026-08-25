@@ -100,6 +100,133 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// what the documents show against what the binary prints.
+///
+/// `docs/diagnostics.md` and `docs/status.md` are already checked against the
+/// source. A sample output is the third kind of claim a document makes that can
+/// drift, and it had no check: four documents went stale, two of them within a
+/// week of the change that did it.
+mod documentation {
+    use super::*;
+
+    /// The commands whose samples can be checked, which is the commands that
+    /// change nothing.
+    ///
+    /// Not a convenience: a test that ran `sic run app.sic --record` would be
+    /// a test with side effects, and the `sic run` samples in these documents
+    /// name programs nobody wrote. Those are illustrations and stay
+    /// illustrations - inventing example programs so that a test becomes
+    /// possible is the test wagging the documentation.
+    const READS_ONLY: &[&str] = &["plan", "verify", "disasm", "parse", "hir"];
+
+    /// Every `.md` under the repository root, entered depth first.
+    fn markdown(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                if path
+                    .file_name()
+                    .is_some_and(|n| n == "target" || n == ".git")
+                {
+                    continue;
+                }
+                markdown(&path, out);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                out.push(path);
+            }
+        }
+    }
+
+    /// Whether one line of a sample matches one line of output.
+    ///
+    /// A sample line ending in `...` matches any output line starting with what
+    /// comes before it. That is the whole of the matching language, and it is
+    /// there for one thing: `bytecode sha256:...` changes whenever the compiler
+    /// emits a byte differently, and a reader learns nothing from which bytes.
+    fn line_matches(sample: &str, printed: &str) -> bool {
+        match sample.strip_suffix("...") {
+            Some(prefix) => printed.starts_with(prefix),
+            None => sample == printed,
+        }
+    }
+
+    #[test]
+    fn every_sample_the_docs_show_is_what_the_binary_prints() {
+        let root = repo_root();
+        let mut files = Vec::new();
+        markdown(&root, &mut files);
+        files.sort();
+
+        let mut checked = 0;
+        for file in &files {
+            let text = std::fs::read_to_string(file).expect("a readable document");
+            let shown = file.strip_prefix(&root).unwrap_or(file).display();
+            let mut lines = text.lines();
+            while let Some(line) = lines.next() {
+                if !line.starts_with("```") {
+                    continue;
+                }
+                let mut block: Vec<&str> = Vec::new();
+                for inner in lines.by_ref() {
+                    if inner.starts_with("```") {
+                        break;
+                    }
+                    block.push(inner);
+                }
+                let Some(command) = block.first().and_then(|l| l.strip_prefix("$ sic ")) else {
+                    continue;
+                };
+                let args: Vec<&str> = command.split_whitespace().collect();
+                if args.first().is_none_or(|verb| !READS_ONLY.contains(verb)) {
+                    continue;
+                }
+                // A sample naming a file that is not here is an illustration.
+                if !args[1..].iter().any(|a| root.join(a).exists()) {
+                    continue;
+                }
+                let (stdout, stderr, code) = sic(&args);
+                assert_eq!(code, 0, "{shown}: `sic {command}` failed: {stderr}");
+
+                let expected: Vec<&str> = block[1..]
+                    .iter()
+                    .copied()
+                    .rev()
+                    .skip_while(|l| l.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect();
+                let printed: Vec<&str> = stdout.lines().collect();
+                assert_eq!(
+                    expected.len(),
+                    printed.len(),
+                    "{shown} shows {} lines for `sic {command}` and it printed {}:\n{stdout}",
+                    expected.len(),
+                    printed.len()
+                );
+                for (i, (sample, out)) in expected.iter().zip(&printed).enumerate() {
+                    assert!(
+                        line_matches(sample, out),
+                        "{shown}, line {} of `sic {command}`:\n  shows    {sample:?}\n  \
+                         it prints {out:?}",
+                        i + 1
+                    );
+                }
+                checked += 1;
+            }
+        }
+        // A check that covers nothing reports the same green as one that
+        // covers everything, which is what #45 was about.
+        assert!(
+            checked > 0,
+            "no document showed a sample of a command that changes nothing"
+        );
+    }
+}
+
 /// the command line, and reading the file it names.
 mod the_command_line {
     use super::*;

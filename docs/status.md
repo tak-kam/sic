@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 574 tests.
+Last updated at 575 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -55,12 +55,19 @@ in the source, so it is the same on every platform - four of them are
 conversation holds it, the pane holds the conversation, and sic stores nothing -
 which is also its cost, and why the choice is written in the declaration.
 
-Tools are what is left, and they are where the rest of the section starts to
+Tools are what is left, and they were where the rest of the section started to
 cost something: an agent with tools runs its own loop inside one call, so the
-driver counts 1 where the machine did 200, and the grant that let the program
-ask says nothing about what the agent did while answering. `sic plan` prints
-that as a warning rather than leaving it out, and `docs/design/authority.md` is
-the design that makes the warning untrue.
+driver counted 1 where the machine did 200, and the grant that let the program
+ask said nothing about what the agent did while answering. `sic plan` printed
+that as a warning.
+
+`docs/design/authority.md` removed the warning by making it untrue. The agent's
+authority is the manifest - translated, routed or withheld - the hook puts every
+tool use in the journal, and `tools` bounds the count that `budget` cannot. What
+is actually left of §17 is smaller than it was: the agent's own loop is still
+one capability call in the journal, so a run's *shape* is the program's calls
+rather than the agent's steps, and that is a deliberate line rather than a gap -
+see `authority.md` §7.
 
 **§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
 `HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because

@@ -5,19 +5,34 @@ What a program may do, said before it does any of it.
 ```console
 $ sic plan examples/agent.sic
 Execution plan for examples/agent.sic
-bytecode sha256:a99e44d39ed16d77f1ca5a048b4b2258b37a1be3148091a303a16ad46eb9842d
+bytecode sha256:...
 
   main
-    1. INVOKE   llm.invoke      "claude-opus-4"  at most 2 in a run   ; 36:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  at most 2 in a run  any number of tool uses  no deadline of its own   ; 36:13
     2. VERIFY   Diagnosis   ; 36:13
 
 Capabilities:
   llm.invoke      [invoke]  "claude-opus-4"  (not pinned)
-    warning: this grant says what the program may ask for, not
-             what the agent may do while answering
+    the agent may not  reach the network        (no tool it has can)
+    the agent may not  run a shell of its own   (refused by the hook)
+    the agent may not  use any other tool       (refused by the hook)
 
 At most 2 capability call(s).
 ```
+
+This block is checked. `every_sample_the_docs_show_is_what_the_binary_prints`
+runs the command and compares, so a change to the renderer reaches this file in
+the same commit rather than a week later - which is what happened twice before
+the check existed. A line ending in `...` matches any line starting with what
+comes before it, which is how the digest stays out of the way: it changes
+whenever the compiler emits a byte differently, and a reader learns nothing from
+which bytes.
+
+The rule the check follows decides which samples can ever be covered: **a sample
+is checked when the command that produced it changes nothing.** `plan`, `verify`,
+`disasm`, `parse` and `hir` qualify. The `sic run` blocks elsewhere in these
+documents do not, and not because it would be hard - a test that ran them would
+be a test with side effects, and most of them name a program nobody wrote.
 
 The point is the same as `terraform plan`: the decision about whether to run
 something should be possible **before** running it, from what the program is

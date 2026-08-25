@@ -144,7 +144,7 @@ it is in the manifest - so it can be printed:
 
 ```text
 Capabilities:
-  process.exec  [exec]  "/usr/bin/tmux"  args ["send-keys", "-t", "sic:0"]
+  process.exec  [exec]  "/usr/bin/tmux"  args ["send-keys", "-t", "sic:0"]  ...
 ```
 
 Which is the second argument for §3 on its own: without the pin, adding

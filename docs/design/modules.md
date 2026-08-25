@@ -165,7 +165,7 @@ an array by one, so a file starting at a large number costs nothing.
 
 ```text
 Capabilities:
-  process.exec  [exec]  "/usr/bin/deploy"  (not pinned)
+  process.exec  [exec]  "/usr/bin/deploy"  (not pinned)  ...
     called from lib/deploy.sic
 ```
 
