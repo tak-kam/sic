@@ -278,6 +278,9 @@ pub struct CapDecl {
     /// reads bytecode, and whoever reads a plan is the person who should be
     /// deciding whether re-running this is safe.
     pub repeatable: bool,
+    /// Whether the grant says an agent answering this program's model calls
+    /// may use it too, from `delegable` on the grant.
+    pub delegable: bool,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

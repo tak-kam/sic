@@ -36,9 +36,11 @@ agent diagnose {
 // suite that fails is the entire reason to run one, and until #50 the failure
 // took the output with it. See `docs/design/output.md` §9.
 //
-// The grant names `cargo` rather than a shell, which is the difference #49 is
-// about: `process.run "/bin/sh" args ["-c"]` is a grant to run anything, and
-// this one is a grant to run one program.
+// The grant names `cargo` rather than a shell, which is what #50 bought. And it
+// does not say `delegable`, so the agent answering the model call below is not
+// offered it: the agent's job here is to read test output, not to run the
+// tests again. `sic plan` says so on its own line. See #49 and
+// `docs/design/authority.md` §4a.
 fn tests() -> Exit {
     return process.run("/PATH/TO/cargo-bin/cargo", ["test", "--workspace", "--target", "x86_64-unknown-linux-musl"]);
 }

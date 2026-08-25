@@ -664,13 +664,29 @@ impl Parser {
         // performing it once. Without it, `retry` on a call to this capability
         // does not compile: what retrying an effect means is a claim about the
         // effect, and the manifest is where claims about effects live.
-        let repeatable = match self.peek().clone() {
-            TokenKind::Ident(name) if name == "repeatable" => {
-                self.bump();
-                true
+        // `delegable` says the agent answering this program's model calls may
+        // use this capability too. Without it the grant is the program's
+        // alone, which is the safe direction: what a program does with a
+        // capability is written in the program, and what an agent would do
+        // with one is written at run time by the agent.
+        //
+        // Both are claims the manifest makes and the language cannot check, so
+        // both are words on the grant, and either may come first.
+        let mut repeatable = false;
+        let mut delegable = false;
+        loop {
+            match self.peek().clone() {
+                TokenKind::Ident(name) if name == "repeatable" && !repeatable => {
+                    self.bump();
+                    repeatable = true;
+                }
+                TokenKind::Ident(name) if name == "delegable" && !delegable => {
+                    self.bump();
+                    delegable = true;
+                }
+                _ => break,
             }
-            _ => false,
-        };
+        }
         if !self.expect(&TokenKind::Semi, "after a capability grant") {
             self.recover_to_grant_end();
         }
@@ -681,6 +697,7 @@ impl Parser {
             sha256,
             args,
             repeatable,
+            delegable,
             span: Span::new(start, self.prev_end()),
         }
     }

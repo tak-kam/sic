@@ -33,6 +33,12 @@ v0.1 ships seven, chosen because they need no credentials and no network:
 | `human.approve` | `(question: String) -> Bool` | invoke |
 | `human.choose` | `(question: String, options: List<String>) -> Int` | invoke |
 
+A `process` grant may also say `delegable`, which hands it to an agent
+answering the program's model calls as well. Without it the capability is the
+program's alone: for that family the constraint does not bound the authority,
+because one argument can be an entire program. See
+`docs/design/authority.md` §4a.
+
 The three `process` capabilities are three authorities, not one with options:
 `exec` says whether a program worked, `capture` says what it printed when it
 did, and `run` says both whether or not it did. `docs/design/output.md` §9 says

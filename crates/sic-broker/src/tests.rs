@@ -9,7 +9,16 @@ fn grant(name: &str, kind: CapKind, constraint: &str) -> CapGrant {
         constraint: constraint.into(),
         pin: String::new(),
         args: Vec::new(),
+        // The default, and the safe one: a `process` grant is the program's
+        // until the manifest says otherwise. The routing tests below say so.
+        delegable: false,
     }
+}
+
+/// The same grant, with the word that hands it to the agent as well.
+fn delegable(mut grant: CapGrant) -> CapGrant {
+    grant.delegable = true;
+    grant
 }
 
 fn pinned(name: &str, kind: CapKind, constraint: &str, pin: &str) -> CapGrant {
@@ -1011,16 +1020,20 @@ fn the_grant_that_summons_the_agent_is_not_the_agents() {
 #[test]
 fn running_a_binary_is_not_running_a_shell_command() {
     assert!(matches!(
-        reach_of(&pinned(
+        reach_of(&delegable(pinned(
             "process.exec",
             CapKind::Exec,
             "/usr/bin/cargo",
             "abc"
-        )),
+        ))),
         Reach::Routed(_)
     ));
     assert!(matches!(
-        reach_of(&grant("process.capture", CapKind::Exec, "/usr/bin/git")),
+        reach_of(&delegable(grant(
+            "process.capture",
+            CapKind::Exec,
+            "/usr/bin/git"
+        ))),
         Reach::Routed(_)
     ));
     // Asking a person is not a tool the agent has, and it suspends the run.
@@ -1038,12 +1051,52 @@ fn what_cannot_be_translated_is_offered_through_the_broker() {
     let manifest = vec![
         grant("llm.invoke", CapKind::Invoke, "claude"),
         grant("fs.read", CapKind::Read, "./docs"),
-        pinned("process.exec", CapKind::Exec, "/usr/bin/cargo", "abc"),
+        delegable(pinned(
+            "process.exec",
+            CapKind::Exec,
+            "/usr/bin/cargo",
+            "abc",
+        )),
     ];
     let authority = authority_of(&manifest).expect("all of it reaches the agent somehow");
     let rules: Vec<String> = authority.allowed.iter().map(Rule::to_string).collect();
     assert_eq!(rules, ["Read(./docs)", "mcp__sic__process_exec"]);
     assert_eq!(authority.routed, ["process.exec"]);
+}
+
+/// The same manifest without the word. The program keeps the capability and the
+/// agent is not offered it, which is what `delegable` is for: for the `process`
+/// family the constraint does not bound the authority, because one argument can
+/// be an entire program.
+#[test]
+fn a_process_grant_is_the_programs_until_the_manifest_delegates_it() {
+    let manifest = vec![
+        grant("llm.invoke", CapKind::Invoke, "claude"),
+        grant("fs.read", CapKind::Read, "./docs"),
+        pinned("process.exec", CapKind::Exec, "/usr/bin/cargo", "abc"),
+    ];
+    let authority = authority_of(&manifest).expect("withholding is not a refusal");
+    let rules: Vec<String> = authority.allowed.iter().map(Rule::to_string).collect();
+    assert_eq!(rules, ["Read(./docs)"], "no tool names the withheld grant");
+    assert!(authority.routed.is_empty());
+    assert!(
+        crate::route::offered(&manifest).is_empty(),
+        "and nothing is offered over the socket either"
+    );
+}
+
+/// A path scope bounds what it allows, so it needs no word. This is the line
+/// between the two: `fs.read "./docs"` is one directory whatever the agent
+/// does with it; `process.exec "/bin/sh" args ["-c"]` is anything at all.
+#[test]
+fn a_grant_that_bounds_itself_reaches_the_agent_without_the_word() {
+    let manifest = vec![
+        grant("llm.invoke", CapKind::Invoke, "claude"),
+        grant("fs.read", CapKind::Read, "./docs"),
+    ];
+    let authority = authority_of(&manifest).expect("a path scope is enforceable");
+    let rules: Vec<String> = authority.allowed.iter().map(Rule::to_string).collect();
+    assert_eq!(rules, ["Read(./docs)"]);
 }
 
 /// A manifest that cannot be enforced is worse than none once `sic plan` has
@@ -1215,7 +1268,12 @@ fn an_agent_may_not_summon_another_agent() {
 }
 
 fn route_manifest(path: &str, digest: &str) -> Vec<CapGrant> {
-    vec![pinned("process.exec", CapKind::Exec, path, digest)]
+    vec![delegable(pinned(
+        "process.exec",
+        CapKind::Exec,
+        path,
+        digest,
+    ))]
 }
 
 /// An agent that joins the marker imperfectly still gets its answer read.

@@ -147,6 +147,10 @@ pub struct CapGrant {
     /// it once, from `repeatable`. Without it, `retry` on a call to this
     /// capability does not compile.
     pub repeatable: bool,
+    /// Whether the grant says an agent answering this program's model calls
+    /// may use it too, from `delegable`. Without it the capability is the
+    /// program's and not the agent's. See `docs/design/authority.md`.
+    pub delegable: bool,
     pub span: Span,
 }
 

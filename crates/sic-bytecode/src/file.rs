@@ -25,7 +25,10 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 5 for `repeatable`: a manifest entry now says whether the effect
 /// may be performed twice, and a reader that did not know would take the flag
 /// for the start of the parameter list.
-pub const VERSION_MINOR: u16 = 6;
+/// Bumped from 6 for `delegable`, for exactly the same reason: a second flag in
+/// the same place, and a reader that stopped after the first would take it for
+/// the parameter count.
+pub const VERSION_MINOR: u16 = 7;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -110,6 +113,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.str(&c.constraints);
         w.str(&c.pin);
         w.bool(c.repeatable);
+        w.bool(c.delegable);
         w.u8(c.args.len() as u8);
         for a in &c.args {
             w.str(a);
@@ -382,6 +386,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
         let constraints = r.str()?;
         let pin = r.str()?;
         let repeatable = r.bool()?;
+        let delegable = r.bool()?;
         let arg_count = r.u8()? as usize;
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
@@ -398,6 +403,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             constraints,
             pin,
             repeatable,
+            delegable,
             args,
             params,
             ret_type: r.u32()?,
@@ -485,6 +491,7 @@ mod tests {
                 constraints: "/usr/bin/true".into(),
                 pin: "a".repeat(64),
                 repeatable: false,
+                delegable: false,
                 args: Vec::new(),
                 params: vec![4],
                 ret_type: 2,
@@ -582,6 +589,7 @@ mod tests {
                     constraints: "/usr/bin/git".into(),
                     pin: "b".repeat(64),
                     repeatable: false,
+                    delegable: false,
                     args: vec!["status".into(), "--porcelain".into()],
                     params: vec![4],
                     ret_type: 2,
@@ -592,6 +600,7 @@ mod tests {
                     constraints: "./data.txt".into(),
                     pin: String::new(),
                     repeatable: false,
+                    delegable: false,
                     args: Vec::new(),
                     params: Vec::new(),
                     ret_type: 4,

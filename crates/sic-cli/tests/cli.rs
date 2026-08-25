@@ -3428,7 +3428,7 @@ mod driving {
         assert_eq!(code, 0, "{stderr}");
         for line in [
             "the agent may not  reach the network        (no tool it has can)",
-            "the agent may not  run a shell              (refused by the hook)",
+            "the agent may not  run a shell of its own   (refused by the hook)",
             "the agent may not  use any other tool       (refused by the hook)",
         ] {
             assert!(stdout.contains(line), "{stdout}");
@@ -3442,6 +3442,87 @@ mod driving {
         // And nothing at all on a grant answered by a person: there is no agent.
         let (stdout, _, _) = sic(&["plan", &example("decision.sic")]);
         assert!(!stdout.contains("the agent"), "{stdout}");
+    }
+
+    /// The plan said, three lines apart, that the agent may use `/bin/sh`
+    /// through the broker and may not run a shell because the hook refuses it.
+    /// Both were true about their own mechanism, which is what made it a plan
+    /// nobody could approve.
+    ///
+    /// A `process` grant is the program's until the manifest says `delegable`,
+    /// because for that family the constraint does not bound the authority: a
+    /// pinned prefix of `["-c"]` scopes nothing, since everything after it is a
+    /// command. So the default says so, and the word is what changes it.
+    #[test]
+    fn a_shell_the_program_may_run_is_not_a_shell_the_agent_may_run() {
+        let withheld = write_temp(
+            "delegable-off.sic",
+            "type D { cause: String }\n\
+             allow {\n\
+             \x20   process.capture \"/bin/sh\" args [\"-c\"];\n\
+             \x20   llm.invoke \"claude-opus-4\";\n\
+             }\n\
+             agent diagnose { input: String, output: D, budget: 1 }\n\
+             fn main() -> LLM<String> {\n\
+             \x20   let out = process.capture(\"/bin/sh\", [\"-c\", \"echo x\"]);\n\
+             \x20   let d = diagnose(out);\n\
+             \x20   return d.cause;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", withheld.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains(
+                "the agent may not  use \"/bin/sh\"            (the grant does not say `delegable`)"
+            ),
+            "{stdout}"
+        );
+        assert!(
+            !stdout.contains("the agent may use"),
+            "nothing is offered: {stdout}"
+        );
+
+        // With the word, the grant reaches the agent - and the two lines are
+        // about two different mechanisms rather than contradicting.
+        let shared = write_temp(
+            "delegable-on.sic",
+            &std::fs::read_to_string(&withheld)
+                .unwrap()
+                .replace("args [\"-c\"];", "args [\"-c\"] delegable;"),
+        );
+        let (stdout, stderr, code) = sic(&["plan", shared.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains("the agent may use  \"/bin/sh\"                (through the broker)"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("delegable"),
+            "the grant line says so: {stdout}"
+        );
+
+        std::fs::remove_file(withheld).ok();
+        std::fs::remove_file(shared).ok();
+    }
+
+    /// A path scope bounds what it allows however it is used, so it reaches the
+    /// agent without a word. `delegable` on one is a word that would mean
+    /// nothing, and accepting it would be worse than refusing it.
+    #[test]
+    fn only_a_process_capability_takes_delegable() {
+        let src = write_temp(
+            "delegable-wrong.sic",
+            "allow {\n\
+             \x20   fs.read \"./examples/greeting.txt\" delegable;\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   return fs.read(\"./examples/greeting.txt\");\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0329"), "{stderr}");
+        std::fs::remove_file(src).ok();
     }
 
     /// A call that continues a conversation is not the same act as one that starts

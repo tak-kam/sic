@@ -375,6 +375,7 @@ fn exec_program() -> Program {
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
         repeatable: false,
+        delegable: false,
         args: Vec::new(),
         params: vec![4],
         ret_type: 2,

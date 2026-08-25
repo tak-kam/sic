@@ -163,6 +163,9 @@ pub struct CapEntry {
     /// performing it once, from `repeatable`. Without it, `retry` on a call to
     /// this capability does not compile.
     pub repeatable: bool,
+    /// Whether the grant says the agent answering this program's model calls
+    /// may use it too, from `delegable`.
+    pub delegable: bool,
     pub params: Vec<TypeId>,
     /// From the signature: whether the last parameter may be left off.
     pub optional_tail: bool,

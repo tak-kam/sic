@@ -145,6 +145,11 @@ pub struct Grant {
     /// it once. Whoever reads a plan is the person who should be deciding that,
     /// which is why it is printed rather than only checked.
     pub repeatable: bool,
+    /// Whether the grant says the agent answering this program's model calls
+    /// may use it too. Printed for the same reason `repeatable` is: it is a
+    /// claim the manifest makes that the language cannot check, so the person
+    /// reading the plan is the one who has to decide it.
+    pub delegable: bool,
     /// The files whose code calls it. Derived from the call sites rather than
     /// from a declaration, so it says where a grant is really used.
     pub called_from: Vec<String>,
@@ -286,6 +291,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             pin: c.pin.clone(),
             args: c.args.clone(),
             repeatable: c.repeatable,
+            delegable: c.delegable,
             called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
@@ -393,6 +399,9 @@ pub fn render(plan: &Plan, source: &str) -> String {
         } else {
             out.push_str(&format!("  sha256:{}", grant.pin));
         }
+        if grant.delegable {
+            out.push_str("  delegable");
+        }
         if grant.repeatable {
             out.push_str("  repeatable");
         }
@@ -452,6 +461,7 @@ fn agent_authority(manifest: &[Grant]) -> String {
             constraint: g.constraint.clone(),
             pin: g.pin.clone(),
             args: g.args.clone(),
+            delegable: g.delegable,
         })
         .collect();
 
@@ -490,6 +500,16 @@ fn agent_authority(manifest: &[Grant]) -> String {
                     &how,
                 ));
             }
+            // Said rather than left out. A reader deciding whether to run this
+            // needs to know that the program may run something the agent may
+            // not, which is the whole of what `delegable` is for.
+            sic_core::Reach::Withheld(why) => {
+                out.push_str(&line(
+                    "the agent may not",
+                    &format!("use {:?}", grant.constraint),
+                    why,
+                ));
+            }
             sic_core::Reach::Summons | sic_core::Reach::Unenforceable(_) => {}
         }
     }
@@ -501,9 +521,14 @@ fn agent_authority(manifest: &[Grant]) -> String {
         "reach the network",
         "no tool it has can",
     ));
+    // "a shell of its own", because a `delegable` grant of one is a shell the
+    // agent may use - through the broker, against this manifest, into this
+    // journal. Both lines are about the hook's boundary, and saying only "run
+    // a shell" made them read as a contradiction when a manifest had granted
+    // one on purpose.
     out.push_str(&line(
         "the agent may not",
-        "run a shell",
+        "run a shell of its own",
         "refused by the hook",
     ));
     out.push_str(&line(

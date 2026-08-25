@@ -90,6 +90,7 @@ reason.
 | E0326 | a pin that is not a sha256 digest |
 | E0327 | pinning a capability that cannot be pinned |
 | E0328 | pinning arguments on a capability that takes none |
+| E0329 | `delegable` on a capability that does not need it |
 
 ### Tasks and policies
 

@@ -33,6 +33,22 @@ pub enum Reach {
     /// offered back through the broker instead - where it is performed by the
     /// same code, against the same constraint, into the same journal.
     Routed(&'static str),
+    /// The program has it and the agent does not.
+    ///
+    /// A `process` grant is not offered unless the grant says `delegable`,
+    /// because for that family the manifest does not bound what the authority
+    /// is. `process.exec "/bin/sh" args ["-c"]` pins a prefix that scopes
+    /// nothing: everything after `-c` is a command. `fs.read "./secret.txt"`
+    /// genuinely bounds, which is why nothing else needs the word.
+    ///
+    /// The asymmetry the word exists for: what a program does with `sh -c` is
+    /// written in the program, where a reader and `sic plan` can both see it.
+    /// What an agent would do with it is written at run time by the agent.
+    /// Those are not the same authority even when they are the same grant.
+    ///
+    /// Withholding is always safe - the agent gets less - so unlike
+    /// `Unenforceable` it does not stop the run.
+    Withheld(&'static str),
     /// Neither, so nothing can enforce it and the run does not start.
     Unenforceable(&'static str),
 }
@@ -160,6 +176,9 @@ pub fn authority_of(manifest: &[CapGrant]) -> Result<Authority, Refused> {
             // The agent's own tool stays denied; the capability arrives at
             // the broker instead, where it is authorized against this same
             // manifest and performed by the same code.
+            // The program keeps it; the agent is not offered it, and no rule
+            // in the agent's own permissions names it either.
+            Reach::Withheld(_) => {}
             Reach::Unenforceable(why) => {
                 return Err(Refused {
                     grant: describe(grant),
@@ -204,7 +223,11 @@ pub fn reach_of(grant: &CapGrant) -> Reach {
         // fit the configuration's vocabulary, which is the one thing a
         // translation must never do.
         "process.exec" | "process.capture" | "process.run" => {
-            Reach::Routed("a shell command is not a binary, and a digest pin has no equivalent")
+            if grant.delegable {
+                Reach::Routed("a shell command is not a binary, and a digest pin has no equivalent")
+            } else {
+                Reach::Withheld("the grant does not say `delegable`")
+            }
         }
 
         // Asking a person is not a tool the agent has, and it suspends the run

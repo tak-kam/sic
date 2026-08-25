@@ -23,9 +23,12 @@ and does what it likes.
 
 ## 1. The rule
 
-**The agent's authority is the program's manifest. Nothing more.**
+**The agent's authority is the program's manifest. Nothing more, and for one
+family of grants deliberately less.**
 
-One sentence, and everything below is how it is enforced and what it costs.
+One sentence, and everything below is how it is enforced and what it costs. The
+second half of it is §4a, and it was not in this document until a plan printed
+two lines that contradicted each other.
 
 The alternative was a second manifest - grants written about the agent, nested
 inside the grant that summons it. It reads well and it is wrong for now, because
@@ -40,6 +43,7 @@ What it costs is real and is stated here rather than discovered later:
 | the program is granted | so the agent may | and if that is wrong |
 |---|---|---|
 | `fs.read "./docs"` | read `./docs` | the program is granted more than it needs, or the agent less |
+| `process.exec "/bin/sh" args ["-c"]` | nothing, unless the grant says `delegable` (§4a) | the program has to say so, in a word a plan prints |
 | nothing about the network | reach no network | the agent cannot fetch a dependency, and for some workflows that is the point of running one |
 
 The second row is §6, and it is the row this whole document turns on.
@@ -192,6 +196,75 @@ one.
 A connection carries one question and one answer. The socket is removed when the
 run ends: one outliving its run would be a door into a manifest nobody is
 enforcing any more.
+
+---
+
+## 4a. A `process` grant is the program's until it says `delegable`
+
+The rule in §1 assumes something the `process` family does not satisfy: that a
+grant's constraint bounds the authority it names.
+
+`fs.read "./secret.txt"` bounds. Whoever holds it can read one file, and it does
+not matter whether the reader is the program or the agent. A permission rule can
+hold that, which is why §3 translates it.
+
+`process.exec "/bin/sh" args ["-c"]` does not bound anything. The pinned prefix
+scopes which *flag*, and everything after `-c` is a command - so the grant is a
+grant to run anything on the machine. `docs/design/arguments.md` §3 saw this and
+said the right thing about it:
+
+> There is deliberately no way to write "any arguments": a program that needs a
+> variable argument is naming the prefix it varies from, and one that truly
+> needs anything is asking for `sh -c`, which it can write in the open and be
+> read doing.
+
+**"Be read doing" is the part that does not survive routing.** What a program
+does with `sh -c` is written in the program: a reader sees the command, and
+`sic plan` prints the call site. What an agent does with the same grant is
+written at run time, by the agent, and no plan can print it. The same manifest
+entry is two different authorities depending on who holds it, and §1 had no way
+to say so.
+
+So the manifest says it:
+
+```sic
+allow {
+    process.run "/usr/bin/cargo" args ["test"] delegable;
+}
+```
+
+Without the word, the program keeps the capability and the agent is not offered
+it - not as an MCP tool, not as a permission rule, not at all. `Reach::Withheld`
+rather than `Reach::Unenforceable`: withholding is always safe, so unlike §5 it
+does not stop the run.
+
+### Why the word, rather than sic working it out
+
+Because sic cannot. What makes `sh -c` unbounded is that one of its arguments is
+an entire program, and there is no way to know which binaries do that: `sh -c`,
+`python -c`, `perl -e`, `awk`, `find -exec`, `env`, `make -f`. A list would be a
+lie by omission, and a lie in exactly the place a reader is trusting most.
+
+`repeatable` is the same shape and settled the same way (#10): retrying performs
+the effect again, whether that is safe is a claim about *this binary* rather
+than about `process.exec`, and the manifest is where claims about effects live.
+`delegable` is a claim about this binary too - that handing it to something
+writing its own arguments is a thing the program's author meant.
+
+### Why only `process`
+
+Every other grant already bounds itself. `fs.read` and `fs.write` name a path,
+`human.approve` and `human.choose` ask a person, and `llm.invoke` is the summons
+being answered. None of them becomes a different authority in the agent's hands,
+so none of them takes the word - and `delegable` on one is `E0329` rather than a
+word that means nothing.
+
+### What it costs
+
+A program that wants its agent to run something has to say so. That is one word
+and it is the point: the plan now names, per grant, what the agent was handed,
+and a reader who does not want to hand over a shell does not have to notice that
+routing would have done it for them.
 
 ---
 
@@ -418,10 +491,20 @@ Capabilities:
     the agent's Write  "./out.txt"              (its own permissions)
     the agent's Edit   "./out.txt"              (its own permissions)
     the agent may use  "/usr/bin/cargo"         (through the broker)
+    the agent may not  use "/bin/sh"            (the grant does not say `delegable`)
     the agent may not  reach the network        (no tool it has can)
-    the agent may not  run a shell              (refused by the hook)
+    the agent may not  run a shell of its own   (refused by the hook)
     the agent may not  use any other tool       (refused by the hook)
 ```
+
+The fourth and sixth lines are the ones §4a is about. This printed
+"the agent may use `/bin/sh` (through the broker)" three lines above
+"the agent may not run a shell (refused by the hook)", and both were true - the
+hook denies the agent's own `Bash` tool, and the broker was offering it a shell.
+A reader was being told, in adjacent lines, that the agent may and may not have
+one. Now a withheld grant says so on its own line, and the hook's line says
+"of its own", because a `delegable` shell is one the agent may use *through the
+broker* rather than one it runs itself.
 
 The three bounds of §8 are not repeated here: they belong to a call site rather
 than to a grant, and the plan prints them on the line of the call they bound.

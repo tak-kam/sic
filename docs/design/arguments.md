@@ -118,6 +118,11 @@ is deliberately no way to write "any arguments": a program that needs a variable
 argument is naming the prefix it varies from, and one that truly needs anything
 is asking for `sh -c`, which it can write in the open and be read doing.
 
+"Be read doing" holds for the program and not for an agent answering its model
+calls, which writes its own arguments at run time where no plan can print them.
+That is why a `process` grant does not reach the agent unless it says
+`delegable`: see `docs/design/authority.md` §4a.
+
 What a prefix does **not** do is bound what is said. `send-keys -t sic:0
 <anything>` still types anything into that pane. It bounds *which* pane, which
 subcommand, which target - the deputy is scoped, not disarmed. Saying so here is

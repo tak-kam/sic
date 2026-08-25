@@ -38,7 +38,9 @@ is the program's manifest, and the manifest did grant `sh -c`. What does not
 survive is the plan being a document somebody can approve. A reader is told, in
 adjacent lines, that the agent may and may not have a shell.
 
-→ #49
+→ #49, **fixed**: a `process` grant is the program's until it says
+`delegable`, so the default plan no longer offers the agent a shell it was never
+asked to hand over. See `docs/design/authority.md` §4a.
 
 ## 2. Output or exit code, never both, measured
 

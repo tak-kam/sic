@@ -117,6 +117,12 @@ pub struct CapGrant {
     /// pass no arguments at all, which is what every grant meant before
     /// arguments existed.
     pub args: Vec<String>,
+    /// Whether the grant says an agent answering this program's model calls may
+    /// use it too.
+    ///
+    /// The broker needs it because it decides what is offered to the agent, and
+    /// nothing else here does. See `docs/design/authority.md` §4.
+    pub delegable: bool,
 }
 
 /// What the VM asks the broker to do.

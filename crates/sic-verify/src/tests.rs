@@ -406,6 +406,7 @@ fn with_exec_capability(reg_count: u8, consts: Vec<Const>, code: Vec<Inst>) -> P
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
         repeatable: false,
+        delegable: false,
         args: Vec::new(),
         params: vec![4],
         ret_type: 2,

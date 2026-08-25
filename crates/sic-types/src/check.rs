@@ -412,6 +412,26 @@ impl Checker {
                         break;
                     }
                 }
+                // `delegable` says the agent answering this program's model
+                // calls may use this capability too. It means something only
+                // where the manifest does not already bound the authority,
+                // which is the `process` family: one argument there can be an
+                // entire program. A path scope bounds; `sh -c` does not.
+                let delegable = if grant.delegable && !full.starts_with("process.") {
+                    self.error(
+                        "E0329",
+                        format!("`{full}` cannot be delegated"),
+                        grant.span,
+                        "only a `process` capability takes `delegable`",
+                    );
+                    self.note(
+                        "every other grant already bounds what it allows, so the agent is given \
+                         it without the word - see docs/design/authority.md",
+                    );
+                    false
+                } else {
+                    grant.delegable
+                };
                 let id = CapId(self.caps.len() as u32);
                 self.cap_ids.insert(full.clone(), id);
                 self.caps.push(CapEntry {
@@ -421,6 +441,7 @@ impl Checker {
                     pin,
                     args,
                     repeatable: grant.repeatable,
+                    delegable,
                     params: sig.params.to_vec(),
                     optional_tail: sig.optional_tail,
                     ret: sig.ret,

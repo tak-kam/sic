@@ -27,6 +27,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
             constraints: "./a.txt".into(),
             pin: String::new(),
             repeatable: false,
+            delegable: false,
             args: Vec::new(),
             params: vec![4],
             ret_type: 4,
@@ -188,6 +189,7 @@ fn a_granted_but_uncalled_capability_is_named() {
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
         repeatable: false,
+        delegable: false,
         args: Vec::new(),
         params: vec![4],
         ret_type: 2,
@@ -269,6 +271,10 @@ fn the_plan_tells_a_translated_grant_from_a_routed_one() {
             pin: String::new(),
             args: Vec::new(),
             repeatable: false,
+            // The `process` grant is delegated here, because what this test is
+            // about is the difference between a translated grant and a routed
+            // one. The difference a withheld grant makes is its own test.
+            delegable: *name == "process.exec",
             called_from: Vec::new(),
         })
         .collect();
@@ -283,6 +289,45 @@ fn the_plan_tells_a_translated_grant_from_a_routed_one() {
     assert!(text.contains("(through the broker)"), "{text}");
     // Every line says where, and the three that are true of every agent are
     // always there.
+    for rendered in text.lines() {
+        assert!(rendered.ends_with(')'), "{rendered}");
+    }
+}
+
+/// The same manifest without the word: the program keeps `cargo` and the agent
+/// is told, on its own line, that it does not get it. Saying so is the point -
+/// a reader deciding whether to run this needs to know the two are different.
+#[test]
+fn a_withheld_grant_is_a_line_rather_than_an_absence() {
+    let grants = vec![
+        Grant {
+            name: "llm.invoke".to_string(),
+            kind: CapKind::Invoke,
+            constraint: "claude".to_string(),
+            pin: String::new(),
+            args: Vec::new(),
+            repeatable: false,
+            delegable: false,
+            called_from: Vec::new(),
+        },
+        Grant {
+            name: "process.exec".to_string(),
+            kind: CapKind::Exec,
+            constraint: "/usr/bin/cargo".to_string(),
+            pin: String::new(),
+            args: Vec::new(),
+            repeatable: false,
+            delegable: false,
+            called_from: Vec::new(),
+        },
+    ];
+    let text = super::agent_authority(&grants);
+    assert!(
+        text.contains("the agent may not  use \"/usr/bin/cargo\""),
+        "{text}"
+    );
+    assert!(text.contains("does not say `delegable`"), "{text}");
+    assert!(!text.contains("the agent may use"), "{text}");
     for rendered in text.lines() {
         assert!(rendered.ends_with(')'), "{rendered}");
     }
