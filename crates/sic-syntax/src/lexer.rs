@@ -293,12 +293,31 @@ impl<'a> Lexer<'a> {
             b'r' => out.push('\r'),
             b'0' => out.push('\0'),
             b'u' => self.unicode_escape(start, out),
+            // A backslash at the end of a line joins it to the next one, and
+            // eats the whitespace that indents it. Nothing else in this
+            // language lets a long string be written down: two strings cannot
+            // be joined, so without this a command or a prompt is one physical
+            // line however long it is - `workflows/ci.sic` had one of 286
+            // characters in a repository that wraps its own Rust at 80.
+            //
+            // Whitespace *including* further newlines, which is what makes a
+            // blank line inside a continued string mean nothing. A leading
+            // space that has to survive is `\u{20}`.
+            b'\r' | b'\n' => {
+                if b == b'\r' && self.peek() == Some(b'\n') {
+                    self.pos += 1;
+                }
+                while matches!(self.peek(), Some(b' ' | b'\t' | b'\r' | b'\n')) {
+                    self.pos += 1;
+                }
+            }
             _ => {
                 self.error(
                     "E0105",
                     "unknown escape sequence",
                     self.span(start, self.pos),
-                    "the escapes are \\\" \\\\ \\n \\t \\r \\0 \\u{...}",
+                    "the escapes are \\\" \\\\ \\n \\t \\r \\0 \\u{...}, \
+                     and a backslash at the end of a line",
                 );
             }
         }
@@ -498,6 +517,41 @@ mod tests {
         assert_eq!(d[0].code, Some("E0103"));
         let (_, d) = tokenize(r#""bad \q escape""#);
         assert_eq!(d[0].code, Some("E0105"));
+    }
+
+    /// A backslash at the end of a line joins it to the next and eats the
+    /// whitespace that indents it, so a long literal can be written down.
+    #[test]
+    fn a_backslash_at_the_end_of_a_line_joins_it_to_the_next() {
+        assert_eq!(
+            kinds("\"one \\\n            two\"")[0],
+            TokenKind::Str("one two".into())
+        );
+        // The space before the backslash is part of the string; the
+        // indentation after it is not.
+        assert_eq!(
+            kinds("\"one\\\n            two\"")[0],
+            TokenKind::Str("onetwo".into())
+        );
+        // Whitespace including further newlines, so a blank line inside a
+        // continued string means nothing.
+        assert_eq!(
+            kinds("\"one \\\n\n     two\"")[0],
+            TokenKind::Str("one two".into())
+        );
+        // A leading space that has to survive is written as an escape.
+        assert_eq!(
+            kinds("\"one\\\n     \\u{20}two\"")[0],
+            TokenKind::Str("one two".into())
+        );
+        // A file written with CRLF joins the same way.
+        assert_eq!(
+            kinds("\"one \\\r\n            two\"")[0],
+            TokenKind::Str("one two".into())
+        );
+        // And a string still cannot simply run past the end of its line.
+        let (_, d) = tokenize("\"one\n            two\"");
+        assert_eq!(d[0].code, Some("E0103"));
     }
 
     #[test]

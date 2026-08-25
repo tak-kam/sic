@@ -32,7 +32,12 @@ allow {
         env {
             PATH: "/PATH/TO/cargo-bin:/usr/bin:/bin",
             HOME: "/PATH/TO/home",
-            RUSTFLAGS: "-Clinker=/PATH/TO/rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld -Clinker-flavor=ld.lld",
+            // A backslash at the end of a line joins it to the next and eats
+            // the indentation, which is #53. This line was 171 characters.
+            RUSTFLAGS: "-Clinker=/PATH/TO/rustup/toolchains/\
+                        stable-x86_64-unknown-linux-gnu/lib/rustlib/\
+                        x86_64-unknown-linux-gnu/bin/rust-lld \
+                        -Clinker-flavor=ld.lld",
         };
     llm.invoke "claude-opus-4";
 }
@@ -54,7 +59,10 @@ agent diagnose {
 // tests again. `sic plan` says so on its own line. See #49 and
 // `docs/design/authority.md` §4a.
 fn tests() -> Exit {
-    return process.run("/PATH/TO/cargo-bin/cargo", ["test", "--workspace", "--target", "x86_64-unknown-linux-musl"]);
+    return process.run(
+        "/PATH/TO/cargo-bin/cargo",
+        ["test", "--workspace", "--target", "x86_64-unknown-linux-musl"],
+    );
 }
 
 fn main() -> Observed<String> {

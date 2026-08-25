@@ -128,7 +128,10 @@ write it otherwise.
 bite when a program built a prompt from parts. It bit somewhere else and harder:
 the problem is not composing a value at runtime, it is writing a literal down.
 
-→ #53
+→ #53, **fixed**: a backslash at the end of a line joins it to the next and
+eats the indentation, so `workflows/ci.sic` no longer has a 171-character line.
+Joining two strings at run time is the other half and is still not here; §5
+argues that the literal was the half that mattered.
 
 ## 6. `sic explain` puts a budget charge above the call that spent it
 
