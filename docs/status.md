@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 605 tests.
+Last updated at 619 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -43,6 +43,7 @@ in the source, so it is the same on every platform - four of them are
 | - | The agent's authority is the program's manifest, and for the `process` family deliberately less: translated into its own permissions where those can hold a constraint, routed back through the broker where they cannot but only when the grant says `delegable`, and a hook that fails closed refuses every tool the manifest does not account for, which is what denies the agent the network, and puts every tool use in the journal; `budget`, `tools` and `deadline` bound it, each where it can be enforced; `sic plan` prints all of it, naming where each line is enforced | `docs/design/authority.md` |
 | - | This repository's own development loop, written in sic: it plans, runs, checkpoints at the model call, and reads back with `sic explain`. Seven things bent it on the way, each now an issue | `workflows/ci.sic`, `docs/design/self-hosting.md` |
 | 26 | `log <level> <expr>;` - the journal keeps the level and the digest, the run's values file keeps the text, and stderr shows it as it happens | `docs/design/logging.md` |
+| - | `--interactive`: a run that stops for an answer asks the terminal instead of leaving it for whoever comes along later, and keeps asking for as long as it keeps stopping - the checkpoint is written first either way, so the worst case of an interactive run is a non-interactive one | `docs/design/interactive.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 

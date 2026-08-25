@@ -29,9 +29,11 @@ present can be asked.
 
 ## 1. What this is
 
-`--interactive`, on `run`, `resume` and `attach`: when the run stops for an
-answer, print the question on the terminal, read the answer from it, and carry
-on. A run that stops again asks again.
+`--interactive`, on `run` and `attach`: when the run stops for an answer, print
+the question on the terminal, read the answer from it, and carry on. A run that
+stops again asks again.
+
+Not on `resume`, and §4 says why.
 
 Nothing about what an answer *is* changes. The question is the text the broker
 already produced, character for character - the same text `sic attach` prints,
@@ -131,12 +133,10 @@ error: the run is waiting for `...` and has nowhere to be saved
 ```
 
 `--interactive` cannot make that case work, because the thing it would have to
-give up is the safety net that justifies it. So it refuses, and names both ways
-out rather than silently choosing one:
+give up is the safety net that justifies it. So it refuses:
 
 ```text
-error: `--interactive` needs somewhere to save the run it is going to ask
-       about; add --record, or --checkpoint <PATH>
+error: `--interactive` keeps the run it is asking about, so it needs --record
 ```
 
 Implying `--record` would be the friendlier design and the wrong one. `sic`
@@ -144,6 +144,25 @@ does not turn flags on for people - a manifest names an absolute path, a grant
 writes out an environment, and `workflows/ci.sic` has no way to read a path out
 of the environment. A command line that quietly started keeping a run in a
 store the person did not mention would be the same kind of surprise.
+
+### And that `resume` is not one of the commands that take it
+
+`--record` rather than "either `--record` or `--checkpoint`", because a loose
+checkpoint is the wrong thing to answer a person's questions from. It has no
+run behind it, and three things follow from that, none of them fixable here:
+
+| | a recorded run | a loose checkpoint |
+|---|---|---|
+| a reason for the answer | recorded beside it | nowhere to put it; `resume` refuses `--because` for exactly this reason |
+| a conversation with an agent | found by the run's id | a checkpoint does not say which run it came from, and `resume` already refuses `--llm` when a program keeps one |
+| where the next stop is written | the store, by construction | wherever `--checkpoint` says, which has to be typed again |
+
+An interactive `resume` would ask a question it could not record the answer
+to, offer a reason it would throw away, and need its own next destination
+named on the command line - three special cases, to reach the same place
+`--record` reaches with none. So `sic run --record --interactive` is the
+interactive path, and `sic resume` stays what it is: the way to pick up a
+checkpoint from wherever it ended up, with the answer supplied.
 
 ---
 
@@ -268,13 +287,31 @@ worth more than the keystrokes it costs, and this makes it cost none.
 
 ---
 
-## 10. Units of work
+## 10. What is tested, and the one thing that is not
 
-1. Reading an answer from a terminal: the prompt, the type, the re-ask, and
-   Ctrl-D. A function with no run behind it, and its own tests.
-2. `--interactive` on `attach`, which is where the loop already ends. One
-   waiting run, answered from the terminal, continuing until it stops again.
-3. `--interactive` on `run` and `resume`: the same loop, entered from a run
-   that suspends rather than from one that already has.
-4. The refusals - no terminal, nowhere to save - and the tests that a CI job
-   fails in a second rather than hanging.
+1. ~~Reading an answer from a terminal: the prompt, the type, the re-ask, and
+   Ctrl-D.~~ **Done**, in `cmd::ask`, against a slice rather than a terminal -
+   which is the point: what counts as an answer is a decision, and what a tty
+   is is not.
+2. ~~`--interactive` on `attach`.~~ **Done.** `attach` became one round plus a
+   loop, and the round is `sic attach` unchanged.
+3. ~~`--interactive` on `run`.~~ **Done**, and it is four lines: the run
+   returns the id of a recorded run that stopped, and `attach`'s loop takes it
+   from there. Both shapes had to learn to say whether the run was waiting,
+   which is the same `(code, waiting)` pair `pick_up` already returned.
+4. ~~The refusals.~~ **Done**, and the order between them turned out to matter:
+   `--record` is checked before the terminal is. What was typed is wrong or
+   right on its own; whether there is a terminal is a fact about the machine.
+   Being told to add `--record` only after settling the terminal question would
+   be two round trips for one command line - and, not by accident, it is also
+   what makes the `--record` refusal testable on a machine with no terminal.
+
+**The loop itself has no end-to-end test.** Driving it needs a pseudoterminal,
+and allocating one needs `ioctl`, which needs a dependency. So the reading is
+unit-tested against a slice, the refusals are tested end to end, and the loop
+is covered only by the two of those meeting in the middle.
+
+That is the same trade the `--llm tmux:` tests make - they check every refusal
+and never drive an agent - and it is worth naming rather than leaving as a gap
+somebody finds later. What would close it is a dependency, and
+`docs/design/` is where that argument would have to be made first.

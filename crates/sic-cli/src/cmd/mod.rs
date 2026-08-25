@@ -1,3 +1,4 @@
+pub mod ask;
 pub mod compile;
 pub mod disasm;
 pub mod drive;

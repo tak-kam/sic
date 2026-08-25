@@ -19,7 +19,7 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record] [--llm SPEC] [--no-isolate]
+  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record] [--llm SPEC] [--no-isolate] [--interactive]
                                   compile, verify and run a source file,
                                   optionally recording its execution journal,
                                   saving its state if it has to wait, or
@@ -32,12 +32,17 @@ Usage:
                                   program - --no-isolate runs it here instead
                                   (`resume` and `attach` take the same flag, and
                                   a checkpoint does not care which shape wrote
-                                  it)
+                                  it);
+                                  --interactive asks this terminal when the run
+                                  stops for an answer, instead of leaving it
+                                  waiting - it needs --record and a terminal
   sic runs [--waiting]            list recorded runs, or only those waiting
-  sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--no-isolate]
+  sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--no-isolate] [--interactive]
                                   see what a waiting run needs, or answer it -
                                   `--because` records why, next to the answer,
-                                  and `--llm` picks up the run's own agent panes
+                                  `--llm` picks up the run's own agent panes,
+                                  and `--interactive` keeps answering from this
+                                  terminal for as long as the run keeps asking
   sic explain <RUN-ID>            summarize a recorded run
   sic inspect-run <RUN-ID>        print every event of a recorded run
   sic replay <RUN-ID>             re-run it against its recorded answers
@@ -95,6 +100,7 @@ fn main() -> ExitCode {
                     record: asked.record,
                     llm: asked.flags[2].as_deref(),
                     isolation: asked.isolation,
+                    interactive: asked.interactive,
                 },
             ),
             Err(msg) => usage_error(msg),
@@ -104,13 +110,14 @@ fn main() -> ExitCode {
             [flag] if flag == "--waiting" => cmd::runs::list_waiting(),
             _ => usage_error("`runs` takes at most `--waiting`"),
         },
-        "attach" => match parse_flags(&isolation(rest).0, &["--value", "--because", "--llm"], 1) {
-            Ok((files, flags)) => cmd::runs::attach(
+        "attach" => match attaching(rest) {
+            Ok((files, flags, how, interactive)) => cmd::runs::attach(
                 &files[0],
                 flags[0].as_deref(),
                 flags[1].as_deref(),
                 flags[2].as_deref(),
-                isolation(rest).1,
+                how,
+                interactive,
             ),
             Err(msg) => usage_error(msg),
         },
@@ -130,6 +137,17 @@ fn main() -> ExitCode {
             [run, source] => cmd::runs::recheck(run, source),
             _ => usage_error("`recheck` takes a run id and a source file"),
         },
+        // A loose checkpoint has nowhere to record why an answer was given,
+        // does not say which run's conversation it belongs to, and would need
+        // its next destination named on the command line again. Three special
+        // cases to reach where `--record` reaches with none, so this is a
+        // refusal with a reason rather than an unknown option.
+        // `docs/design/interactive.md` §4.
+        "resume" if rest.iter().any(|a| a == "--interactive") => usage_error(
+            "`resume` cannot ask: a checkpoint holds a run's state, not its record, so there \
+             would be nowhere to keep the answer's reason. `sic run --record --interactive`, \
+             or `sic attach <RUN-ID> --interactive`, ask and keep both",
+        ),
         "resume" => match parse_flags(
             &isolation(rest).0,
             &["--value", "--journal", "--checkpoint", "--because", "--llm"],
@@ -242,6 +260,7 @@ struct Run {
     flags: Vec<Option<String>>,
     record: bool,
     isolation: Isolation,
+    interactive: bool,
 }
 
 /// Lifts `--isolate` and `--no-isolate` out, and says which was there.
@@ -252,6 +271,42 @@ struct Run {
 /// Both are accepted because `--isolate` asked for what is now the default and
 /// there is no reason for a script that says so to stop working. If both
 /// appear, the refusal wins: it is the one that can always be honoured.
+/// Lifts a flag that carries no value out, and says whether it was there.
+///
+/// `parse_flags` pairs each flag with one value, so a flag with none does not
+/// fit it. Three commands take `--interactive` on those terms.
+fn without_flag(args: &[String], flag: &str) -> (Vec<String>, bool) {
+    let mut found = false;
+    let rest = args
+        .iter()
+        .filter(|a| {
+            let is_it = a.as_str() == flag;
+            found |= is_it;
+            !is_it
+        })
+        .cloned()
+        .collect();
+    (rest, found)
+}
+
+/// Whether `--interactive` can be honoured here.
+///
+/// Looked for before the program runs rather than at the first question: a run
+/// that performed three effects and then found nobody to ask is a run that has
+/// to be picked up by hand, which is what the flag was for.
+/// `docs/design/interactive.md` §6.
+///
+/// After whatever the command line itself has to say, though. What was typed
+/// is wrong or right on its own; whether there is a terminal is a fact about
+/// the machine, and being told to add `--record` only once the terminal
+/// question is settled would be two round trips for one command line.
+fn a_terminal_is_there() -> Result<(), String> {
+    if cmd::ask::a_terminal_is_there() {
+        return Ok(());
+    }
+    Err("`--interactive` needs a terminal, and stdin is not one".to_string())
+}
+
 fn isolation(args: &[String]) -> (Vec<String>, Isolation) {
     let mut how = Isolation::Unsaid;
     let rest = args
@@ -274,8 +329,23 @@ fn isolation(args: &[String]) -> (Vec<String>, Isolation) {
     (rest, how)
 }
 
+type Attaching = (Vec<String>, Vec<Option<String>>, Isolation, bool);
+
+/// `attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--no-isolate]
+/// [--interactive]`.
+fn attaching(args: &[String]) -> Result<Attaching, String> {
+    let (args, how) = isolation(args);
+    let (args, interactive) = without_flag(&args, "--interactive");
+    let (files, flags) = parse_flags(&args, &["--value", "--because", "--llm"], 1)?;
+    if interactive {
+        a_terminal_is_there()?;
+    }
+    Ok((files, flags, how, interactive))
+}
+
 fn parse_run(args: &[String]) -> Result<Run, String> {
     let (args, isolation) = isolation(args);
+    let (args, interactive) = without_flag(&args, "--interactive");
     let mut record = false;
     let rest: Vec<String> = args
         .iter()
@@ -287,11 +357,23 @@ fn parse_run(args: &[String]) -> Result<Run, String> {
         .cloned()
         .collect();
     let (files, flags) = parse_flags(&rest, &["--journal", "--checkpoint", "--llm"], 1)?;
+    // A question on the screen is only free because the run is already on
+    // disk, and the store is where the answer's reason goes.
+    // `docs/design/interactive.md` §4.
+    if interactive {
+        if !record {
+            return Err(
+                "`--interactive` keeps the run it is asking about, so it needs --record".into(),
+            );
+        }
+        a_terminal_is_there()?;
+    }
     Ok(Run {
         file: files[0].clone(),
         flags,
         record,
         isolation,
+        interactive,
     })
 }
 

@@ -17,7 +17,7 @@ use sic_journal::Sink;
 
 use crate::wire::{Ended, FromVm, ToVm, recv, send};
 
-use super::{EXIT_FAILURE, EXIT_SUSPENDED};
+use super::EXIT_FAILURE;
 
 /// The socket a run listens on, removed when the run ends.
 ///
@@ -254,7 +254,7 @@ fn converse(
 ///
 /// The same words `run::finish` uses, because a person should not be able to
 /// tell which shape ran their program from what it printed.
-pub fn finish(ran: Ran, checkpoint_path: Option<&str>, resume_hint: Option<&str>) -> ExitCode {
+pub fn finish(ran: Ran, checkpoint_path: Option<&str>, how: super::run::Stopping<'_>) -> ExitCode {
     match ran.ended {
         Ended::Finished(text) if text.is_empty() => ExitCode::SUCCESS,
         Ended::Finished(text) => {
@@ -277,17 +277,7 @@ pub fn finish(ran: Ran, checkpoint_path: Option<&str>, resume_hint: Option<&str>
                 eprintln!("internal error: the run is waiting but sent no state to save");
                 return ExitCode::from(EXIT_FAILURE);
             };
-            if let Err(e) = std::fs::write(path, &bytes) {
-                eprintln!("error: cannot write `{path}`: {e}");
-                return ExitCode::from(EXIT_FAILURE);
-            }
-            eprintln!("waiting: {question}");
-            eprintln!("saved {} bytes to {path}", bytes.len());
-            match resume_hint {
-                Some(hint) => eprintln!("answer with:  {hint}"),
-                None => eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>"),
-            }
-            ExitCode::from(EXIT_SUSPENDED)
+            super::run::saved(&bytes, path, &question, how)
         }
     }
 }

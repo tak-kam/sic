@@ -32,25 +32,49 @@ pub struct RunOptions<'a> {
     /// `docs/design/processes.md`. On unix it does unless `--no-isolate`
     /// says otherwise; there is no socket anywhere else.
     pub isolation: super::Isolation,
+    /// Ask the terminal when the run stops for an answer, instead of leaving
+    /// it waiting - see `docs/design/interactive.md`.
+    pub interactive: bool,
 }
 
+/// Runs the program, and keeps asking while somebody is there to be asked.
+///
+/// The loop is `attach`'s, because `attach` is already the operation "answer
+/// one question and continue" and nothing says it can only be reached from a
+/// second command line. By the time it is called the run has suspended, which
+/// is what wrote the checkpoint - so the question on the screen is one the run
+/// has already survived. `docs/design/interactive.md` §2.
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
+    let interactive = options.interactive;
+    let llm = options.llm;
+    let isolation = options.isolation;
+    let (code, waiting) = start(path, options);
+    match waiting {
+        Some(run) if interactive => {
+            super::runs::attach(&run[..8], None, None, llm, isolation, true)
+        }
+        _ => code,
+    }
+}
+
+/// The run itself, and the id of a recorded run that stopped to wait.
+fn start(path: &str, options: RunOptions<'_>) -> (ExitCode, Option<String>) {
     let program = match compile_source(path) {
         Ok(v) => v,
-        Err(code) => return code,
+        Err(code) => return (code, None),
     };
 
     if let Err(code) = super::verified(&program, super::From::Compiler(path)) {
-        return code;
+        return (code, None);
     }
 
     let Some(entry) = program.func_by_name("main") else {
         eprintln!("error: `{path}` has no `main` function");
-        return ExitCode::from(EXIT_FAILURE);
+        return (ExitCode::from(EXIT_FAILURE), None);
     };
     if !program.funcs[entry as usize].params.is_empty() {
         eprintln!("error: `main` must take no arguments");
-        return ExitCode::from(EXIT_FAILURE);
+        return (ExitCode::from(EXIT_FAILURE), None);
     }
 
     let run_id = new_run_id();
@@ -63,14 +87,14 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
                 let bytes = sic_bytecode::encode(&program);
                 if let Err(e) = std::fs::write(dir.join(store::PROGRAM), &bytes) {
                     eprintln!("error: cannot write the recorded program: {e}");
-                    return ExitCode::from(EXIT_FAILURE);
+                    return (ExitCode::from(EXIT_FAILURE), None);
                 }
                 eprintln!("run {run_id}  recorded in {}", dir.display());
                 Some(dir)
             }
             Err(msg) => {
                 eprintln!("error: {msg}");
-                return ExitCode::from(EXIT_FAILURE);
+                return (ExitCode::from(EXIT_FAILURE), None);
             }
         }
     } else {
@@ -94,7 +118,7 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             }
             Err(msg) => {
                 eprintln!("error: {msg}");
-                return ExitCode::from(EXIT_FAILURE);
+                return (ExitCode::from(EXIT_FAILURE), None);
             }
         },
         None => Box::new(sic_journal::NullSink),
@@ -121,7 +145,7 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             Ok(None) => Broker::new(manifest),
             Err(message) => {
                 eprintln!("error: {message}");
-                return ExitCode::from(EXIT_FAILURE);
+                return (ExitCode::from(EXIT_FAILURE), None);
             }
         };
 
@@ -137,12 +161,17 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     let hint = recording
         .as_ref()
         .map(|_| format!("sic attach {} --value <VALUE>", &run_id.to_string()[..8]));
+    let stopping = if options.interactive {
+        Stopping::Asking
+    } else {
+        Stopping::Waiting(hint.as_deref())
+    };
 
     #[cfg(not(unix))]
     super::no_socket_here(options.isolation);
     #[cfg(unix)]
     if options.isolation.separate() {
-        return isolated(
+        let (code, waiting) = isolated(
             &program,
             entry,
             run_id,
@@ -151,9 +180,10 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             Keeping {
                 recording: recording.as_deref(),
                 checkpoint: checkpoint.as_deref(),
-                hint: hint.as_deref(),
+                stopping,
             },
         );
+        return (code, kept(&recording, run_id, waiting));
     }
 
     let journal = Journal::new(run_id, sink);
@@ -162,17 +192,28 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
     let outcome = drive_recording(&mut vm, &mut broker, status, recording.as_deref());
     // A run that stopped to be continued keeps whatever conversation it was
     // holding; one that is over keeps nothing.
-    broker.finish(matches!(outcome, Outcome::Suspended { .. }));
+    let waiting = matches!(outcome, Outcome::Suspended { .. });
+    broker.finish(waiting);
 
     // A recorded run that has to wait keeps its checkpoint too, so `sic resume`
     // can find it beside everything else.
-    finish(
-        &mut vm,
-        &program,
-        outcome,
-        checkpoint.as_deref(),
-        hint.as_deref(),
-    )
+    let code = finish(&mut vm, &program, outcome, checkpoint.as_deref(), stopping);
+    (code, kept(&recording, run_id, waiting))
+}
+
+/// The id of a run that stopped to wait and is being kept, which is the only
+/// case `attach` can pick up again.
+///
+/// A run that waits without `--record` has a checkpoint and no store, and
+/// `docs/design/interactive.md` §4 says why that is not the interactive path:
+/// there would be nowhere to record the reason for the answer it is about to
+/// ask for.
+fn kept(
+    recording: &Option<std::path::PathBuf>,
+    run: sic_journal::RunId,
+    waiting: bool,
+) -> Option<String> {
+    (waiting && recording.is_some()).then(|| run.to_string())
 }
 
 /// The same run, with the interpreter in a process of its own.
@@ -190,7 +231,7 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 pub struct Keeping<'a> {
     pub recording: Option<&'a std::path::Path>,
     pub checkpoint: Option<&'a str>,
-    pub hint: Option<&'a str>,
+    pub stopping: Stopping<'a>,
 }
 
 #[cfg(unix)]
@@ -201,7 +242,7 @@ fn isolated(
     sink: &mut dyn sic_journal::Sink,
     broker: &mut sic_broker::Broker,
     keeping: Keeping<'_>,
-) -> ExitCode {
+) -> (ExitCode, bool) {
     match super::isolate::drive(
         program,
         super::isolate::Begin::Fresh {
@@ -217,14 +258,52 @@ fn isolated(
             // A run that is still waiting keeps whatever the driver is
             // holding; one that is over keeps nothing. Same as the shape
             // above, and for the same reason.
-            broker.finish(matches!(ran.ended, crate::wire::Ended::Suspended(_)));
-            super::isolate::finish(ran, keeping.checkpoint, keeping.hint)
+            let waiting = matches!(ran.ended, crate::wire::Ended::Suspended(_));
+            broker.finish(waiting);
+            (
+                super::isolate::finish(ran, keeping.checkpoint, keeping.stopping),
+                waiting,
+            )
         }
         Err(message) => {
             eprintln!("error: {message}");
-            ExitCode::from(EXIT_FAILURE)
+            (ExitCode::from(EXIT_FAILURE), false)
         }
     }
+}
+
+/// How a run that stopped to wait is reported.
+///
+/// Both shapes wrote this out for themselves until interactive mode gave them
+/// a third thing to agree about, which is what makes it one type rather than a
+/// flag each.
+#[derive(Clone, Copy)]
+pub enum Stopping<'a> {
+    /// Nobody is here. Say what the run is waiting for, and what to type.
+    Waiting(Option<&'a str>),
+    /// The terminal is about to be asked. The question is the prompt's job,
+    /// and a command line nobody is going to type reads as something they were
+    /// supposed to do. `docs/design/interactive.md` §7.
+    Asking,
+}
+
+/// Writes a run's state out, and says what it is waiting for.
+pub fn saved(bytes: &[u8], path: &str, question: &str, how: Stopping<'_>) -> ExitCode {
+    if let Err(e) = std::fs::write(path, bytes) {
+        eprintln!("error: cannot write `{path}`: {e}");
+        return ExitCode::from(EXIT_FAILURE);
+    }
+    // Said either way: that the run is on disk before anybody is asked
+    // anything is the whole of why asking is free.
+    eprintln!("saved {} bytes to {path}", bytes.len());
+    if let Stopping::Waiting(hint) = how {
+        eprintln!("waiting: {question}");
+        match hint {
+            Some(hint) => eprintln!("answer with:  {hint}"),
+            None => eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>"),
+        }
+    }
+    ExitCode::from(EXIT_SUSPENDED)
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.
@@ -233,7 +312,7 @@ pub fn finish(
     program: &Program,
     outcome: Outcome,
     checkpoint_path: Option<&str>,
-    resume_hint: Option<&str>,
+    how: Stopping<'_>,
 ) -> ExitCode {
     match outcome {
         Outcome::Finished(Value::Unit) => ExitCode::SUCCESS,
@@ -253,7 +332,7 @@ pub fn finish(
                 eprintln!("       pass --checkpoint PATH to write its state out");
                 return ExitCode::from(EXIT_FAILURE);
             };
-            write_checkpoint(vm, program, path, &question, resume_hint)
+            write_checkpoint(vm, program, path, &question, how)
         }
     }
 }
@@ -263,7 +342,7 @@ fn write_checkpoint(
     program: &Program,
     path: &str,
     question: &str,
-    resume_hint: Option<&str>,
+    how: Stopping<'_>,
 ) -> ExitCode {
     // The digest ties the checkpoint to this exact bytecode, so it cannot be
     // resumed against a program that has changed underneath it.
@@ -272,17 +351,7 @@ fn write_checkpoint(
         eprintln!("internal error: the run is waiting but has no state to save");
         return ExitCode::from(EXIT_FAILURE);
     };
-    if let Err(e) = std::fs::write(path, &bytes) {
-        eprintln!("error: cannot write `{path}`: {e}");
-        return ExitCode::from(EXIT_FAILURE);
-    }
-    eprintln!("waiting: {question}");
-    eprintln!("saved {} bytes to {path}", bytes.len());
-    match resume_hint {
-        Some(hint) => eprintln!("answer with:  {hint}"),
-        None => eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>"),
-    }
-    ExitCode::from(EXIT_SUSPENDED)
+    saved(&bytes, path, question, how)
 }
 
 /// Reports a runtime failure, naming the source line through the debug section.

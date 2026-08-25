@@ -120,24 +120,65 @@ pub fn attach(
     because: Option<&str>,
     llm: Option<&str>,
     isolation: super::Isolation,
+    interactive: bool,
 ) -> ExitCode {
+    // One round is `sic attach` as it has always been. Interactive mode is
+    // that round again while the run keeps stopping - the whole of
+    // `docs/design/interactive.md` §2. `--value` belongs to the first round
+    // only: it answered one question, and the next one is a different
+    // question.
+    let mut value = value;
+    loop {
+        let (code, another) = answer_once(Round {
+            prefix,
+            value,
+            because,
+            llm,
+            isolation,
+            interactive,
+        });
+        if !another {
+            return code;
+        }
+        value = None;
+    }
+}
+
+/// What answering one waiting question needs.
+struct Round<'a> {
+    prefix: &'a str,
+    value: Option<&'a str>,
+    because: Option<&'a str>,
+    llm: Option<&'a str>,
+    isolation: super::Isolation,
+    interactive: bool,
+}
+
+/// Answers the question a run is waiting on, and says whether there is another
+/// one to ask.
+///
+/// Everything is read from the store again each time round, because a run that
+/// went on is waiting on something else now: a different question, a different
+/// capability, and a checkpoint that is not the one that was just read.
+fn answer_once(it: Round<'_>) -> (ExitCode, bool) {
+    let prefix = it.prefix;
     let dir = match store::find(prefix) {
         Ok(dir) => dir,
         Err(msg) => {
             eprintln!("error: {msg}");
-            return ExitCode::from(EXIT_USAGE);
+            return (ExitCode::from(EXIT_USAGE), false);
         }
     };
     let checkpoint_path = dir.join(store::CHECKPOINT);
     let Ok(checkpoint) = std::fs::read(&checkpoint_path) else {
         eprintln!("error: run `{}` is not waiting for anything", prefix);
-        return ExitCode::from(EXIT_USAGE);
+        return (ExitCode::from(EXIT_USAGE), false);
     };
 
     let program_path = dir.join(store::PROGRAM).to_string_lossy().into_owned();
     let program = match super::load_bytecode(&program_path) {
         Ok(program) => program,
-        Err(code) => return code,
+        Err(code) => return (code, false),
     };
     // The bytecode is the one the run started with, so the digest matches by
     // construction - which is the point of storing it beside the checkpoint.
@@ -148,7 +189,7 @@ pub fn attach(
             Ok(sink) => Box::new(super::journal::LogSink::around(Box::new(sink), Some(&dir))),
             Err(msg) => {
                 eprintln!("error: {msg}");
-                return ExitCode::from(EXIT_FAILURE);
+                return (ExitCode::from(EXIT_FAILURE), false);
             }
         };
 
@@ -156,7 +197,7 @@ pub fn attach(
     // before it is picked up again - the run that wrote it proves nothing about
     // what is in it now.
     if let Err(code) = super::verified(&program, super::From::File(&program_path)) {
-        return code;
+        return (code, false);
     }
 
     // What the run stopped at, read from the state it was written out as rather
@@ -167,26 +208,47 @@ pub fn attach(
         Ok(saved) => saved,
         Err(e) => {
             eprintln!("error: cannot pick up `{}`: {e}", dir.display());
-            return ExitCode::from(EXIT_FAILURE);
+            return (ExitCode::from(EXIT_FAILURE), false);
         }
     };
     let question = saved.question.clone();
     let Some(cap) = saved.waiting_for().map(str::to_string) else {
         eprintln!("internal error: the checkpoint is not waiting for anything");
-        return ExitCode::from(EXIT_FAILURE);
+        return (ExitCode::from(EXIT_FAILURE), false);
     };
-    let answer = match super::drive::answer_for(&program, &cap, value) {
+    let mut because = it.because.map(str::to_string);
+    let answer = match super::drive::answer_for(&program, &cap, it.value) {
         Ok(answer) => answer,
-        Err(super::drive::Needs::Reported(code)) => return code,
+        Err(super::drive::Needs::Reported(code)) => return (code, false),
+        Err(super::drive::Needs::Answer(tag)) if it.interactive => {
+            // The run is already saved - that is what makes asking free rather
+            // than something to get right. `docs/design/interactive.md` §4.
+            match super::ask::ask(&question, tag) {
+                Ok(super::ask::Answered::With {
+                    value,
+                    because: why,
+                }) => {
+                    if why.is_some() {
+                        because = why;
+                    }
+                    value
+                }
+                // End of input is not an answer, so the run is left exactly
+                // where a non-interactive one would have left it, and this
+                // says the same thing.
+                Ok(super::ask::Answered::Nothing) => {
+                    return (waiting_on(&question, prefix, tag), false);
+                }
+                Err(e) => {
+                    eprintln!("error: cannot read an answer: {e}");
+                    return (ExitCode::from(EXIT_FAILURE), false);
+                }
+            }
+        }
         Err(super::drive::Needs::Answer(tag)) => {
             // Reading the question is a step of its own, so this is an answer
             // that has not arrived yet rather than a command used wrongly.
-            println!("waiting: {question}");
-            println!(
-                "answer:  sic attach {prefix} --value <{}>",
-                tag.short_name()
-            );
-            return ExitCode::from(super::EXIT_SUSPENDED);
+            return (waiting_on(&question, prefix, tag), false);
         }
     };
     // Recorded so that replaying the run answers it the same way - and, since
@@ -194,7 +256,7 @@ pub fn attach(
     let recorded = store::Answer {
         value: &answer,
         asked: Some(&question),
-        because,
+        because: because.as_deref(),
     };
     if let Err(msg) = store::record_answer(&dir, &recorded) {
         eprintln!("warning: {msg}");
@@ -209,15 +271,20 @@ pub fn attach(
         state: Some(dir.join(store::CONVERSATIONS)),
     };
     let grants = super::drive::manifest(&program);
-    let mut broker = match super::driver::open(llm, session, &grants, None) {
+    let mut broker = match super::driver::open(it.llm, session, &grants, None) {
         Ok(Some(driver)) => sic_broker::Broker::with_driver(grants, driver),
         Ok(None) => sic_broker::Broker::new(grants),
         Err(message) => {
             eprintln!("error: {message}");
-            return ExitCode::from(EXIT_FAILURE);
+            return (ExitCode::from(EXIT_FAILURE), false);
         }
     };
     let hint = format!("sic attach {prefix} --value <VALUE>");
+    let stopping = if it.interactive {
+        super::run::Stopping::Asking
+    } else {
+        super::run::Stopping::Waiting(Some(&hint))
+    };
     let saved_path = checkpoint_path.to_string_lossy().into_owned();
 
     let (code, still_waiting) = pick_up(PickUp {
@@ -229,14 +296,26 @@ pub fn attach(
         broker: &mut broker,
         dir: &dir,
         saved_path: &saved_path,
-        hint: &hint,
-        isolation,
+        stopping,
+        isolation: it.isolation,
     });
     // A finished run that kept its checkpoint would keep showing up as waiting.
     if !still_waiting {
         std::fs::remove_file(&checkpoint_path).ok();
     }
-    code
+    (code, still_waiting && it.interactive)
+}
+
+/// What a run that is still waiting says, on the two paths that reach it: no
+/// `--value`, and an interactive answer that never came. One place, because
+/// the second is the first with a person who changed their mind.
+fn waiting_on(question: &str, prefix: &str, tag: &sic_bytecode::TypeDesc) -> ExitCode {
+    println!("waiting: {question}");
+    println!(
+        "answer:  sic attach {prefix} --value <{}>",
+        tag.short_name()
+    );
+    ExitCode::from(super::EXIT_SUSPENDED)
 }
 
 /// What picking a run up again needs, in either shape.
@@ -249,7 +328,7 @@ struct PickUp<'a> {
     broker: &'a mut sic_broker::Broker,
     dir: &'a Path,
     saved_path: &'a str,
-    hint: &'a str,
+    stopping: super::run::Stopping<'a>,
     isolation: super::Isolation,
 }
 
@@ -280,7 +359,7 @@ fn pick_up(mut it: PickUp<'_>) -> (ExitCode, bool) {
                 let waiting = matches!(ran.ended, crate::wire::Ended::Suspended(_));
                 it.broker.finish(waiting);
                 (
-                    super::isolate::finish(ran, Some(it.saved_path), Some(it.hint)),
+                    super::isolate::finish(ran, Some(it.saved_path), it.stopping),
                     waiting,
                 )
             }
@@ -308,7 +387,7 @@ fn pick_up(mut it: PickUp<'_>) -> (ExitCode, bool) {
         it.program,
         outcome,
         Some(it.saved_path),
-        Some(it.hint),
+        it.stopping,
     );
     (code, still_waiting)
 }

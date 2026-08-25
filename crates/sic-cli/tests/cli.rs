@@ -102,6 +102,101 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 
 /// the interpreter in a process of its own.
 ///
+/// Asking the person who is sitting in front of the run, instead of leaving it
+/// for whoever comes along later. `docs/design/interactive.md`.
+///
+/// What is *not* here is the loop itself. Reading an answer needs a terminal,
+/// and a terminal cannot be made without `ioctl`, which cannot be reached
+/// without a dependency - the same reason the `--llm tmux:` tests check the
+/// refusals rather than driving an agent. So the reading is unit-tested in
+/// `cmd::ask` against a slice, and what is checked here is that a machine with
+/// nobody in front of it finds out at once.
+mod interactive {
+    use super::*;
+
+    /// The whole of §6 in one behaviour: a CI job that inherited the flag has
+    /// to fail in a second rather than hang until somebody notices a queue.
+    #[test]
+    fn a_run_with_nobody_in_front_of_it_says_so_rather_than_waiting() {
+        let store = temp_store("interactive-no-tty");
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", &example("approval.sic"), "--record", "--interactive"],
+        );
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("needs a terminal"), "{stderr}");
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// And before the program runs, not at the first question: a run that
+    /// performed three effects and then found nobody to ask is a run that has
+    /// to be picked up by hand, which is what the flag was for.
+    #[test]
+    fn nothing_runs_before_the_terminal_is_looked_for() {
+        let store = temp_store("interactive-nothing-ran");
+        let (_, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", &example("approval.sic"), "--record", "--interactive"],
+        );
+        assert_eq!(code, 2);
+        // A recorded run creates its directory before the first instruction,
+        // so an empty store is proof that nothing started.
+        let started = std::fs::read_dir(&store).map(|d| d.count()).unwrap_or(0);
+        assert_eq!(started, 0, "the run was created anyway");
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A question on the screen is only free because the run is already on
+    /// disk, and the store is where the answer's reason goes. Without
+    /// `--record` there is neither, so the flag is refused rather than made to
+    /// half-work.
+    ///
+    /// Checked before the terminal is, because what was typed is wrong or
+    /// right on its own and being told to add `--record` only after the
+    /// terminal question is settled would be two round trips for one command
+    /// line - which is also what makes this testable without a terminal.
+    #[test]
+    fn a_run_that_is_not_kept_has_nowhere_to_be_asked_about() {
+        let (_, stderr, code) = sic(&["run", &example("approval.sic"), "--interactive"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("needs --record"), "{stderr}");
+        assert!(!stderr.contains("needs a terminal"), "{stderr}");
+    }
+
+    /// `attach` takes it on the same terms, and finds out at the same point.
+    #[test]
+    fn picking_a_run_up_interactively_needs_a_terminal_too() {
+        let (_, stderr, code) = sic(&["attach", "00000000", "--interactive"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("needs a terminal"), "{stderr}");
+    }
+
+    /// `resume` deliberately does not take it: a loose checkpoint has nowhere
+    /// to record a reason, does not say which run's conversation it belongs
+    /// to, and would need its next destination named again.
+    /// `docs/design/interactive.md` §4.
+    #[test]
+    fn a_loose_checkpoint_is_not_answered_from_a_terminal() {
+        let (_, stderr, code) = sic(&[
+            "resume",
+            "nothing.sicc",
+            &example("approval.sic"),
+            "--value",
+            "true",
+            "--interactive",
+        ]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(
+            stderr.contains("nowhere to keep the answer's reason"),
+            "{stderr}"
+        );
+        // A refusal with a reason, not an option nobody has heard of.
+        assert!(!stderr.contains("unknown option"), "{stderr}");
+    }
+}
+
 /// `docs/design/processes.md`. What the split buys today is a resource bound;
 /// what it makes possible later is a child with fewer privileges than the
 /// parent, which is the one thing a crate boundary cannot do.

@@ -173,7 +173,13 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     let status = vm.resume(value);
     let outcome = drive(&mut vm, &mut broker, status);
     broker.finish(matches!(outcome, super::drive::Outcome::Suspended { .. }));
-    finish(&mut vm, &program, outcome, options.checkpoint, None)
+    finish(
+        &mut vm,
+        &program,
+        outcome,
+        options.checkpoint,
+        super::run::Stopping::Waiting(None),
+    )
 }
 
 /// The same resume, with the interpreter in a process of its own.
@@ -246,7 +252,7 @@ fn isolated(
     ) {
         Ok(ran) => {
             broker.finish(matches!(ran.ended, crate::wire::Ended::Suspended(_)));
-            super::isolate::finish(ran, options.checkpoint, None)
+            super::isolate::finish(ran, options.checkpoint, super::run::Stopping::Waiting(None))
         }
         Err(message) => {
             eprintln!("error: {message}");

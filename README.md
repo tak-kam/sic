@@ -227,13 +227,23 @@ the recording answered. A directory of recorded runs is then a regression suite
 for the program, made of cases it has actually been through.
 → [runs.md](docs/design/runs.md)
 
+**And a person who is present can just answer.** `sic run p.sic --record
+--interactive` asks this terminal when the run stops, and keeps asking for as
+long as it keeps stopping. The checkpoint is written before the question
+appears, so Ctrl-C, a dropped connection or a laptop that sleeps leaves exactly
+what a non-interactive run would have left - the worst case of an interactive
+run is a non-interactive one. Answer a workflow's questions once this way and
+`sic recheck` has a regression test that cost nothing to make.
+→ [interactive.md](docs/design/interactive.md)
+
 ## Commands
 
 ```text
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--no-isolate]
+                                   [--interactive]  ask this terminal, and keep asking
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
-sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
+sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC] [--interactive]
                                    see what a waiting run needs, or answer it
 sic resume <CHECKPOINT> <FILE.sic> --value <V> [--no-isolate]
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
@@ -259,6 +269,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [trust.md](docs/design/trust.md) | provenance in the type system |
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
+| [interactive.md](docs/design/interactive.md) | answering a run from the terminal it is running in |
 | [logging.md](docs/design/logging.md) | what a program has to say about itself, and where it goes |
 | [processes.md](docs/design/processes.md) | what splitting the VM from the broker buys, and what is already true without it |
 | [plan.md](docs/design/plan.md) | `sic plan` |
