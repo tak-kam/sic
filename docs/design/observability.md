@@ -98,6 +98,14 @@ recorded before the request - a call the budget refuses must not leave a request
 behind it - so the exporter holds the attribute until the span it belongs to
 opens, and drops it if the call never left the VM.
 
+`sic explain` does the same and did not until #54: printed in journal order the
+charge landed above its call, indented under the previous one, so a run appeared
+to have spent budget on a call that has none. It prints
+`call llm.invoke  (budget: 1 left)` now. Where the exporter drops a charge whose
+span never opens, `explain` says so instead - an exporter is producing a
+document about spans that exist, and `explain` is what a person reads when
+something has already gone wrong.
+
 **There is no `sic.checkpoint.digest`.** This list used to name one, and nothing
 carried it. It is gone rather than implemented, and the reason is the one the
 exporter already applies to `RunSuspended` and `RunResumed`: a checkpoint is how

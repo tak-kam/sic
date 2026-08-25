@@ -265,12 +265,38 @@ pub fn explain(prefix: &str) -> ExitCode {
     }
 
     println!();
+    // A budget charge is emitted before the call it pays for, because a call
+    // the budget refuses must not leave a request behind - that is the order
+    // #32 established and the reason is recorded on it. So the charge is held
+    // until its call arrives and printed with it; printed in order, it landed
+    // above the call and indented under the previous one.
+    //
+    // The same shape as the OTLP exporter's fix in #28. This is the reader
+    // that was not part of it.
+    let mut charged: Vec<(sic_journal::SpanId, u64)> = Vec::new();
     for timed in &events {
-        let Some(line) = explain_event(timed) else {
+        if let EventKind::BudgetConsumed { remaining, .. } = &timed.event.kind {
+            charged.push((timed.event.span, *remaining));
+            continue;
+        }
+        let Some(mut line) = explain_event(timed) else {
             continue;
         };
+        if matches!(timed.event.kind, EventKind::CapabilityRequested { .. }) {
+            if let Some(at) = charged.iter().position(|(s, _)| *s == timed.event.span) {
+                let (_, remaining) = charged.remove(at);
+                line.push_str(&format!("  (budget: {remaining} left)"));
+            }
+        }
         let indent = "  ".repeat(store::depth_of(&timed.event, &events) + 1);
         println!("{indent}{line}");
+    }
+    // A charge whose call never arrived. Nothing in the VM produces one - the
+    // budget refuses before it charges - so this is a journal that was cut
+    // between the two, and dropping it would be this reader deciding a run
+    // spent nothing because it could not see what it spent.
+    for (_, remaining) in &charged {
+        println!("  budget: {remaining} left, for a call this journal does not have");
     }
 
     // The journal records digests, so the one thing it cannot show is what a
@@ -361,9 +387,6 @@ fn explain_event(timed: &TimedEvent) -> Option<String> {
             true => format!("the agent used {tool}"),
             false => format!("the agent was refused {tool}: {reason}"),
         },
-        EventKind::BudgetConsumed { remaining, .. } => {
-            format!("  budget: {remaining} left")
-        }
         EventKind::RunFailed { error } => format!("failed: {error}"),
         // Function entries and exits are the shape, not the story; they are in
         // `inspect-run`.

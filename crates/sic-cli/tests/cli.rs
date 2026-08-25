@@ -1954,6 +1954,97 @@ mod recorded_runs {
         std::fs::remove_dir_all(store).ok();
     }
 
+    /// A program with one budgeted site, so that the charge has an obvious
+    /// call to belong to.
+    const BUDGETED: &str = "type D { cause: String }\n\
+                            allow {\n\
+                            \x20   process.run \"/bin/echo\" args [];\n\
+                            \x20   llm.invoke \"claude-opus-4\";\n\
+                            }\n\
+                            agent diagnose { input: String, output: D, budget: 2 }\n\
+                            fn main() -> LLM<String> {\n\
+                            \x20   let none: List<String> = [];\n\
+                            \x20   let r = process.run(\"/bin/echo\", none);\n\
+                            \x20   let d = diagnose(r.output);\n\
+                            \x20   return d.cause;\n\
+                            }\n";
+
+    /// The charge is emitted before the call it pays for, because a call the
+    /// budget refuses must not leave a request behind (#32). Printed in
+    /// order it landed above the call, indented under the previous one, so
+    /// the run appeared to have spent budget on `process.run` - which has
+    /// none.
+    #[test]
+    fn a_budget_charge_is_printed_with_the_call_that_spent_it() {
+        let store = temp_store("budget-line");
+        let src = write_temp("budget-line.sic", BUDGETED);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(
+            stdout.contains("call llm.invoke  (budget: 1 left)"),
+            "{stdout}"
+        );
+        // And nowhere else: `process.run` has no budget, and a line of its own
+        // between the two calls is what this used to print.
+        assert!(!stdout.contains("\n  budget:"), "{stdout}");
+        assert_eq!(stdout.matches("budget:").count(), 1, "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// Nothing in the VM emits a charge whose call never arrives - the budget
+    /// refuses before it charges - so a leftover is a journal cut between the
+    /// two. Dropping it would be this reader deciding a run spent nothing
+    /// because it could not see what it spent.
+    #[test]
+    fn a_charge_whose_call_is_missing_is_still_said() {
+        let store = temp_store("budget-cut");
+        let src = write_temp("budget-cut.sic", BUDGETED);
+        let (_, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3);
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        // Cut the journal directly after the charge, leaving whole lines: the
+        // run's own record now ends between a charge and the call it pays for.
+        let dir = std::fs::read_dir(&store).unwrap().flatten().next().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let kept: Vec<&str> = text
+            .lines()
+            .take_while(|l| !l.contains("\"capability_requested\",\"cap\":\"llm.invoke\""))
+            .collect();
+        assert!(
+            kept.iter().any(|l| l.contains("budget_consumed")),
+            "the cut has to keep the charge: {text}"
+        );
+        std::fs::write(&path, format!("{}\n", kept.join("\n"))).unwrap();
+
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("budget: 1 left, for a call this journal does not have"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
     /// A waiting run's recording stops where the run stopped, so running out of
     /// answers there is the recording ending rather than the program diverging.
     /// This is the case a comparison that only counted calls would get wrong.

@@ -152,7 +152,10 @@ rendering is not, because the charge is emitted before the call it pays for and
 This is the same ordering #28 dealt with in the OTLP exporter, where the fix was
 to hold the charge until its span opens. `explain` was not part of that change.
 
-→ #54
+→ #54, **fixed**: `explain` holds a charge until its call arrives and prints
+the two together, the same way the OTLP exporter does since #28. A charge whose
+call never arrives - a journal cut between the two - is said rather than
+dropped.
 
 ## 7. Passing no arguments needs a type annotation
 
