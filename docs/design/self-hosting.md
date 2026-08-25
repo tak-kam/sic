@@ -4,6 +4,13 @@ Issue #8 asked whether this repository's own development loop can be written as
 a sic program, on the grounds that a program that cannot be written says
 something no amount of design prose does.
 
+The file in the repository is a template: every path in its `allow` block is a
+placeholder, because a manifest names files on one machine and those are not
+anybody else's. A copy with real paths belongs beside it and out of git -
+`.gitignore` has `workflows/*.local.sic`. There is deliberately no way to write
+"read this from the environment": a manifest that deferred to a variable would
+hand back the decision `in` and `env` were added to take.
+
 It can. `workflows/ci.sic` runs this repository's test suite, hands the output
 to an agent, and requires the answer to fit a record type before the program can
 read a field of it. It plans, it runs, it checkpoints at the model call, and

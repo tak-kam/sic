@@ -1,2 +1,6 @@
 /target
 /.sic
+
+# A workflow with this machine's paths in it. `workflows/ci.sic` is the
+# template; a copy with real paths is yours and stays here.
+workflows/*.local.sic

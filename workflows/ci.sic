@@ -11,12 +11,21 @@
 //     sic plan workflows/ci.sic
 //     sic run workflows/ci.sic --record
 //
-// Every path here is one machine's, and that is the shape rather than a
-// shortcut. `sic` searches no `PATH` by design, so a grant names a file rather
-// than a command; `in` and `env` name the rest of what a child depends on for
-// the same reason (#51). The result is a manifest a reader can check against
-// the machine in front of them, and a workflow that does not move between
-// machines unedited.
+// **Every path in the `allow` block below is a placeholder.** Copy this file,
+// put your own in, and keep the copy out of the repository - `.gitignore` has
+// `workflows/*.local.sic` for exactly that.
+//
+// That is the shape rather than a shortcut. `sic` searches no `PATH` by design,
+// so a grant names a file rather than a command; `in` and `env` name the rest
+// of what a child depends on for the same reason (#51). The result is a
+// manifest a reader can check against the machine in front of them, and a
+// workflow that does not move between machines unedited.
+//
+// There is deliberately no way to write "read this from the environment". A
+// manifest that deferred to a variable would be handing back the decision `sic`
+// spent `in` and `env` taking: what runs would again be decided by whatever the
+// shell had set, which is the thing `env_clear` is there to stop. So the paths
+// are in the open, and the copy with your machine's in it is yours.
 //
 // The `RUSTFLAGS` line is this repository's own documented workaround for a
 // machine with no C linker (`CLAUDE.md`, "Building"). Before #51 it could not
@@ -29,13 +38,14 @@ type Diagnosis {
 }
 
 allow {
-    process.run "/PATH/TO/cargo-bin/cargo" args ["test"]
+    process.run "/PATH/TO/cargo" args ["test"]
         in "/PATH/TO/sic"
         env {
             PATH: "/PATH/TO/cargo-bin:/usr/bin:/bin",
             HOME: "/PATH/TO/home",
             // A backslash at the end of a line joins it to the next and eats
-            // the indentation, which is #53. This line was 171 characters.
+            // the indentation, which is #53. With a real toolchain path this
+            // line is 171 characters.
             RUSTFLAGS: "-Clinker=/PATH/TO/rustup/toolchains/\
                         stable-x86_64-unknown-linux-gnu/lib/rustlib/\
                         x86_64-unknown-linux-gnu/bin/rust-lld \
@@ -62,7 +72,7 @@ agent diagnose {
 // `docs/design/authority.md` §4a.
 fn tests() -> Exit {
     return process.run(
-        "/PATH/TO/cargo-bin/cargo",
+        "/PATH/TO/cargo",
         ["test", "--workspace", "--target", "x86_64-unknown-linux-musl"],
     );
 }
