@@ -255,6 +255,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [extraction.md](docs/design/extraction.md) | why the longest functions are the right length |
+| [self-hosting.md](docs/design/self-hosting.md) | writing this repository's own development loop in sic, and the seven things that bent it |
 | [diagnostics.md](docs/diagnostics.md) | every diagnostic code |
 
 Each design document records what was deliberately left out, and why. That is

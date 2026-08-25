@@ -2160,23 +2160,28 @@ mod recorded_runs {
         // `plan` runs the whole front end and the verifier and executes nothing, so
         // it is the cheapest way to say that every example in the repository still
         // means something.
-        let dir = repo_root().join("examples");
+        // `workflows/` too: `workflows/ci.sic` is the evidence
+        // `docs/design/self-hosting.md` argues from, and a document arguing
+        // from a program that no longer compiles is arguing from nothing.
         let mut checked = 0;
-        for entry in std::fs::read_dir(&dir)
-            .expect("examples/ should exist")
-            .flatten()
-        {
-            let path = entry.path();
-            if path.extension().is_none_or(|e| e != "sic") {
-                continue;
+        for dir in ["examples", "workflows"] {
+            let dir = repo_root().join(dir);
+            for entry in std::fs::read_dir(&dir)
+                .expect("the directory should exist")
+                .flatten()
+            {
+                let path = entry.path();
+                if path.extension().is_none_or(|e| e != "sic") {
+                    continue;
+                }
+                let name = path.to_string_lossy().into_owned();
+                let (stdout, stderr, code) = sic(&["plan", &name]);
+                assert_eq!(code, 0, "{name} does not plan: {stderr}");
+                assert!(stdout.contains("Execution plan for"), "{name}: {stdout}");
+                checked += 1;
             }
-            let name = path.to_string_lossy().into_owned();
-            let (stdout, stderr, code) = sic(&["plan", &name]);
-            assert_eq!(code, 0, "{name} does not plan: {stderr}");
-            assert!(stdout.contains("Execution plan for"), "{name}: {stdout}");
-            checked += 1;
         }
-        assert!(checked >= 8, "only {checked} examples were checked");
+        assert!(checked >= 9, "only {checked} programs were checked");
     }
 
     #[test]

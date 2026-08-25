@@ -1,0 +1,48 @@
+// The development loop of this repository, as a sic program.
+//
+// This is issue #8: whether sic can be used to build sic. What the attempt
+// established, and the seven things that bent it, are in
+// `docs/design/self-hosting.md`. Read that before reading this - the program
+// below is the evidence, not the recommendation.
+//
+//     sic plan workflows/ci.sic
+//     sic run workflows/ci.sic --record
+//
+// The cargo path is one machine's. `sic` searches no `PATH` by design
+// (`docs/design/capabilities.md`), so a grant names a file rather than a
+// command, and a workflow does not move between machines unedited. That is a
+// consequence of a security property rather than a defect, and it is written
+// down rather than worked around.
+type Diagnosis {
+    cause: String,
+    file: String,
+    confidence: Float,
+}
+
+allow {
+    process.capture "/bin/sh" args ["-c"];
+    llm.invoke "claude-opus-4";
+}
+
+agent diagnose {
+    input: String,
+    output: Diagnosis,
+    budget: 1,
+}
+
+// `process.capture` fails the run when the program exits nonzero, and a test
+// suite that fails is the entire reason to run one. So the failure has to be
+// turned into output by a shell that always succeeds, and the whole command
+// becomes one string - which is the finding rather than the workaround. See
+// `docs/design/self-hosting.md` §2.
+fn tests() -> Observed<String> {
+    // One physical line, because a string literal cannot be broken across
+    // lines and two strings cannot be joined. See §5.
+    return process.capture("/bin/sh", ["-c", "LLD=$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld; RUSTFLAGS=\"-Clinker=$LLD -Clinker-flavor=ld.lld\" /PATH/TO/cargo-bin/cargo test --workspace --target x86_64-unknown-linux-musl 2>&1 | tail -40 || true"]);
+}
+
+fn main() -> LLM<String> {
+    let out = tests();
+    let d = diagnose(out);
+    return d.cause;
+}
