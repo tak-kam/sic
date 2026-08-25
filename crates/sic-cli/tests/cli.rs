@@ -109,12 +109,73 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
 mod isolated {
     use super::*;
 
+    /// Runs the binary with somewhere else to put its socket, which is the
+    /// only part of a run that has a temporary directory in it.
+    fn sic_with_tmpdir(tmp: &std::path::Path, args: &[&str]) -> (String, String, i32) {
+        let out = Command::new(env!("CARGO_BIN_EXE_sic"))
+            .args(args)
+            .current_dir(repo_root())
+            .env("TMPDIR", tmp)
+            .output()
+            .expect("failed to run sic");
+        (
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code().unwrap_or(-1),
+        )
+    }
+
+    /// The default is a process of its own, and nothing about a run that
+    /// succeeds can say so: the whole design is that a checkpoint, a journal
+    /// and an answer are the same either way. What differs is what a run
+    /// *needs*, and only the split needs a socket. So point the socket
+    /// somewhere that does not exist and see which shape notices.
+    #[test]
+    fn the_interpreter_gets_its_own_process_without_being_asked() {
+        let nowhere = repo_root().join("no-such-directory-for-a-socket");
+        let (_, stderr, code) = sic_with_tmpdir(&nowhere, &["run", &example("milestone.sic")]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("cannot listen at"), "{stderr}");
+
+        // And the refusal names the way out, which is the only reason it is
+        // allowed to refuse rather than fall back. `docs/design/processes.md`
+        // §7.
+        assert!(stderr.contains("--no-isolate"), "{stderr}");
+        let (stdout, stderr, code) = sic_with_tmpdir(
+            &nowhere,
+            &["run", &example("milestone.sic"), "--no-isolate"],
+        );
+        assert_eq!(code, 0, "{stderr}");
+        assert!(!stdout.is_empty(), "it ran");
+    }
+
+    /// `--isolate` asked for what now happens anyway, so it still works; and
+    /// when both are on one command line the refusal wins, because it is the
+    /// one that can always be honoured.
+    #[test]
+    fn the_old_flag_still_asks_for_what_is_now_the_default() {
+        let nowhere = repo_root().join("no-such-directory-for-a-socket");
+        let (_, stderr, code) =
+            sic_with_tmpdir(&nowhere, &["run", &example("milestone.sic"), "--isolate"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("cannot listen at"), "{stderr}");
+
+        for both in [["--isolate", "--no-isolate"], ["--no-isolate", "--isolate"]] {
+            let (stdout, stderr, code) = sic_with_tmpdir(
+                &nowhere,
+                &["run", &example("milestone.sic"), both[0], both[1]],
+            );
+            assert_eq!(code, 0, "{both:?}: {stderr}");
+            assert!(!stdout.is_empty(), "{both:?}: it ran");
+        }
+    }
+
     /// The same answer either way, which is the first thing to be sure of: a
     /// second shape that computes something else is not a second shape.
     #[test]
     fn a_run_gives_the_same_answer_in_one_process_or_two() {
         for name in ["milestone.sic", "records.sic", "branching.sic"] {
-            let (one, stderr, code) = sic(&["run", &example(name)]);
+            let (one, stderr, code) = sic(&["run", &example(name), "--no-isolate"]);
             assert_eq!(code, 0, "{name}: {stderr}");
             let (two, stderr, code) = sic(&["run", &example(name), "--isolate"]);
             assert_eq!(code, 0, "{name}: {stderr}");
@@ -183,7 +244,7 @@ mod isolated {
     #[test]
     fn a_failure_reads_the_same_from_either_side_of_the_wire() {
         let src = write_temp("isolate-fail.sic", "fn main() -> Int { return 1 / 0; }\n");
-        let (_, one, code) = sic(&["run", src.to_str().unwrap()]);
+        let (_, one, code) = sic(&["run", src.to_str().unwrap(), "--no-isolate"]);
         assert_eq!(code, 1);
         let (_, two, code) = sic(&["run", src.to_str().unwrap(), "--isolate"]);
         assert_eq!(code, 1);
@@ -226,7 +287,7 @@ mod isolated {
         let (_, stderr, code) = sic(&["run", &example("approval.sic"), "--isolate"]);
         assert_eq!(code, 1, "{stderr}");
         assert!(stderr.contains("has nowhere to be saved"), "{stderr}");
-        let (_, one, _) = sic(&["run", &example("approval.sic")]);
+        let (_, one, _) = sic(&["run", &example("approval.sic"), "--no-isolate"]);
         assert_eq!(one, stderr, "the two shapes say the same thing");
     }
 
@@ -240,12 +301,9 @@ mod isolated {
         let one = store.join("one.sicc");
         let two = store.join("two.sicc");
         let program = example("approval.sic");
-        for (path, isolate) in [(&one, false), (&two, true)] {
+        for (path, how) in [(&one, "--no-isolate"), (&two, "--isolate")] {
             let shown = path.to_string_lossy().into_owned();
-            let mut args = vec!["run", program.as_str(), "--checkpoint", shown.as_str()];
-            if isolate {
-                args.push("--isolate");
-            }
+            let args = vec!["run", program.as_str(), "--checkpoint", shown.as_str(), how];
             let (_, stderr, code) = sic(&args);
             assert_eq!(code, 3, "{stderr}");
         }
@@ -310,27 +368,24 @@ mod isolated {
     /// `--isolate` a way of running rather than a kind of run.
     #[test]
     fn a_checkpoint_does_not_care_which_shape_wrote_it() {
-        for (writing, reading) in [
-            ("", ""),
-            ("--isolate", ""),
-            ("", "--isolate"),
+        for (n, (writing, reading)) in [
+            ("--no-isolate", "--no-isolate"),
+            ("--isolate", "--no-isolate"),
+            ("--no-isolate", "--isolate"),
             ("--isolate", "--isolate"),
-        ] {
-            let store = temp_store(&format!("cross{}{}", writing.len(), reading.len()));
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let store = temp_store(&format!("cross{n}"));
             let program = example("approval.sic");
-            let mut run = vec!["run", program.as_str(), "--record"];
-            if !writing.is_empty() {
-                run.push(writing);
-            }
+            let run = vec!["run", program.as_str(), "--record", writing];
             let (_, stderr, code) = sic_with_store(repo_root(), Some(&store), &run);
             assert_eq!(code, 3, "writing {writing:?}: {stderr}");
 
             let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
             let id = stdout.split_whitespace().next().unwrap().to_string();
-            let mut attach = vec!["attach", id.as_str(), "--value", "true"];
-            if !reading.is_empty() {
-                attach.push(reading);
-            }
+            let attach = vec!["attach", id.as_str(), "--value", "true", reading];
             let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &attach);
             assert_eq!(code, 0, "{writing:?} then {reading:?}: {stderr}");
             assert_eq!(stdout.trim(), "0", "{writing:?} then {reading:?}");

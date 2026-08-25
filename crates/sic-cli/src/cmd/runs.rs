@@ -119,7 +119,7 @@ pub fn attach(
     value: Option<&str>,
     because: Option<&str>,
     llm: Option<&str>,
-    isolate: bool,
+    isolation: super::Isolation,
 ) -> ExitCode {
     let dir = match store::find(prefix) {
         Ok(dir) => dir,
@@ -230,7 +230,7 @@ pub fn attach(
         dir: &dir,
         saved_path: &saved_path,
         hint: &hint,
-        isolate,
+        isolation,
     });
     // A finished run that kept its checkpoint would keep showing up as waiting.
     if !still_waiting {
@@ -250,8 +250,7 @@ struct PickUp<'a> {
     dir: &'a Path,
     saved_path: &'a str,
     hint: &'a str,
-    #[cfg_attr(not(unix), allow(dead_code))]
-    isolate: bool,
+    isolation: super::Isolation,
 }
 
 /// Continues the run, here or in a process of its own.
@@ -263,8 +262,10 @@ struct PickUp<'a> {
 fn pick_up(mut it: PickUp<'_>) -> (ExitCode, bool) {
     // Nothing is restored on this side: the state and the answer go over, and
     // the child is the one that picks the run up.
+    #[cfg(not(unix))]
+    super::no_socket_here(it.isolation);
     #[cfg(unix)]
-    if it.isolate {
+    if it.isolation.separate() {
         return match super::isolate::drive(
             it.program,
             super::isolate::Begin::Resumed {

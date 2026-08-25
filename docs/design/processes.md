@@ -338,7 +338,35 @@ they typed yesterday.
 5. ~~Failure: a child that dies, a child that hangs, a parent that leaves.~~
    **Done, and one of the three turned out not to exist** - see §5b.
 6. ~~`resume` and `attach`.~~ **Done** - see §5c.
-7. The flag becomes the default on unix, and `docs/status.md` moves §9.
+7. ~~The flag becomes the default on unix, and `docs/status.md` moves §9.~~
+   **Done**, and the flag it becomes is `--no-isolate`.
+
+   Two decisions were left to this unit. The first: `--isolate` is still
+   accepted, because it asks for what now happens anyway and a command line
+   that says so has no reason to stop working. It is not a synonym, though -
+   it is the difference between a request and a default, and that difference
+   is worth exactly one thing. On Windows, where §3 says there is no socket,
+   a `--isolate` somebody typed has not been honoured and is told so; a
+   default that was never asked for says nothing, because there is nothing to
+   tell a person who did not ask. That is three states - asked, unsaid,
+   refused - and it is the whole of what `Isolation` is for.
+
+   The second: **there is no fallback.** A child that will not start - no
+   `/proc` to read `current_exe` from, no memory to `spawn` with - is an error
+   that names `--no-isolate`, not a run that quietly continues in one process.
+   The temptation is real, since flipping a default should not take a working
+   `sic run` away from anybody. But §3 defends the Windows inconsistency on
+   the grounds that *a reader learns it once*, and a shape that depends on
+   whether a `spawn` succeeded on this machine this morning is precisely the
+   thing that cannot be learned once. A flag that has to be typed can be; a
+   silent fallback cannot. So the refusal says which way is out, and the way
+   out is on the command line where it can be seen.
+
+   What this unit also does, without adding a test for it, is put the whole of
+   `crates/sic-cli/tests/cli.rs` behind the wire: those tests run the real
+   binary, so on unix they now exercise two processes. The one-process shape
+   keeps its own coverage from `replay`, `recheck`, Windows, and every test
+   that builds a `Vm` directly - which is §6's reason for keeping it.
 
 Each is a piece of work that finishes on its own, and the first three are what
-decide whether the rest is worth having.
+decided whether the rest was worth having. All seven are done.

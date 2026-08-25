@@ -170,3 +170,53 @@ pub fn load_bytecode(path: &str) -> Result<Program, ExitCode> {
         ExitCode::from(EXIT_FAILURE)
     })
 }
+
+/// Whether the interpreter gets a process of its own.
+///
+/// On unix it does, and `--no-isolate` is how a run says otherwise. Three
+/// states rather than a bool because the reason is worth exactly one thing:
+/// on Windows there is no unix socket, so a `--isolate` somebody typed has
+/// not been honoured and deserves to be told, while a default that was never
+/// asked for deserves silence. `docs/design/processes.md` §7.
+///
+/// There is deliberately no fallback. A child that will not start is an error
+/// naming `--no-isolate`, not a run that quietly changes shape: §3 defends the
+/// one-process shape on Windows on the grounds that a reader learns it once,
+/// and a shape that depends on whether a `spawn` succeeded is the one thing
+/// that cannot be learned once.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Isolation {
+    /// `--isolate`.
+    Asked,
+    /// Neither flag. The default, which is a process of its own on unix.
+    Unsaid,
+    /// `--no-isolate`.
+    Refused,
+}
+
+impl Isolation {
+    /// Whether the interpreter runs in a child.
+    ///
+    /// Unix only, because it is the only place with a socket to answer it -
+    /// the question does not arise elsewhere, and a method that answered it
+    /// anyway would be one more thing claiming to be true on Windows.
+    #[cfg(unix)]
+    pub fn separate(self) -> bool {
+        self != Isolation::Refused
+    }
+}
+
+/// Says that `--isolate` did nothing, on a build with no unix socket.
+///
+/// Nothing is refused. A command line that fails to parse for a reason about
+/// this machine is worse than one that says what it did not do - and on unix
+/// the flag now asks for what would have happened anyway, so the only person
+/// this sentence is for is the one who moved a command line to Windows.
+#[cfg(not(unix))]
+pub fn no_socket_here(how: Isolation) {
+    if how == Isolation::Asked {
+        eprintln!(
+            "warning: `--isolate` needs a unix socket, and this build has none; running here"
+        );
+    }
+}

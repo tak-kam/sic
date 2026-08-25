@@ -28,16 +28,10 @@ pub struct RunOptions<'a> {
     /// What is to answer `llm.invoke`, as `<multiplexer>:<agent>`. Without one
     /// a model call defers, which is what it has always done.
     pub llm: Option<&'a str>,
-    /// Run the interpreter in a process of its own - see
-    /// `docs/design/processes.md`. Unix only, and a flag rather than the
-    /// default while the second shape is new.
-    ///
-    /// Accepted everywhere and acted on where there is a socket: a person who
-    /// types it on Windows is told by `sic run` that it did nothing, which is
-    /// better than a command line that fails to parse for a reason about this
-    /// machine.
-    #[cfg_attr(not(unix), allow(dead_code))]
-    pub isolate: bool,
+    /// Whether the interpreter runs in a process of its own - see
+    /// `docs/design/processes.md`. On unix it does unless `--no-isolate`
+    /// says otherwise; there is no socket anywhere else.
+    pub isolation: super::Isolation,
 }
 
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
@@ -145,13 +139,9 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         .map(|_| format!("sic attach {} --value <VALUE>", &run_id.to_string()[..8]));
 
     #[cfg(not(unix))]
-    if options.isolate {
-        eprintln!(
-            "warning: `--isolate` needs a unix socket, and this build has none; running here"
-        );
-    }
+    super::no_socket_here(options.isolation);
     #[cfg(unix)]
-    if options.isolate {
+    if options.isolation.separate() {
         return isolated(
             &program,
             entry,

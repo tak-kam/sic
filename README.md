@@ -230,12 +230,12 @@ for the program, made of cases it has actually been through.
 ## Commands
 
 ```text
-sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--isolate]
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--no-isolate]
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
 sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
                                    see what a waiting run needs, or answer it
-sic resume <CHECKPOINT> <FILE.sic> --value <V> [--isolate]
+sic resume <CHECKPOINT> <FILE.sic> --value <V> [--no-isolate]
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
 sic recheck <RUN-ID> <FILE.sic>     does this edit still ask what the run answered
 sic vm --socket P                  the interpreter, started by a run rather than a person

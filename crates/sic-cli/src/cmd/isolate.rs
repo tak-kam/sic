@@ -32,8 +32,12 @@ impl Socket {
     fn open(run: &str) -> Result<Socket, String> {
         let path = std::env::temp_dir().join(format!("sic-vm-{}-{run}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let listener = UnixListener::bind(&path)
-            .map_err(|e| format!("cannot listen at `{}`: {e}", path.display()))?;
+        let listener = UnixListener::bind(&path).map_err(|e| {
+            format!(
+                "cannot listen at `{}`: {e}; `--no-isolate` runs the interpreter here",
+                path.display()
+            )
+        })?;
         Ok(Socket { path, listener })
     }
 }
@@ -148,13 +152,21 @@ pub fn drive(
         Begin::Resumed { .. } => format!("resumed-{}", std::process::id()),
     };
     let socket = Socket::open(&named)?;
-    let me =
-        std::env::current_exe().map_err(|e| format!("cannot tell where this binary is: {e}"))?;
+    // Both of these fail before any bytecode has run, and both name the way
+    // out: the interpreter in a process of its own is the default here, so a
+    // machine that cannot start one has to be able to say so on the command
+    // line rather than be stuck. There is no silent fallback - see
+    // `docs/design/processes.md` §7.
+    let me = std::env::current_exe().map_err(|e| {
+        format!("cannot tell where this binary is: {e}; `--no-isolate` runs the interpreter here")
+    })?;
     let child = Command::new(&me)
         .args(["vm", "--socket"])
         .arg(&socket.path)
         .spawn()
-        .map_err(|e| format!("cannot start the interpreter: {e}"))?;
+        .map_err(|e| {
+            format!("cannot start the interpreter: {e}; `--no-isolate` runs it here instead")
+        })?;
     let mut child = Interpreter(child);
 
     let (mut stream, _) = socket

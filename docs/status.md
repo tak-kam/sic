@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 603 tests.
+Last updated at 605 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -46,6 +46,32 @@ in the source, so it is the same on every platform - four of them are
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 
+**§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and
+that child is the interpreter: it opens no file and starts no program, and every
+effect crosses back to the parent's broker. Under a memory limit a run that
+would have aborted the whole thing aborts the child, and the parent still has
+the journal and says what happened. A run that stops to wait is saved and picked
+up again - the child produces the checkpoint and the parent writes it, and the
+bytes are the ones one process would have written. A child that dies is told
+apart from one that failed and from one that stopped quietly, and a child left
+behind by a parent that died notices; there is no timeout, because a sic program
+cannot run forever and the only thing left to bound would be sic's own bugs.
+`resume` and `attach` split the same way, a checkpoint does not remember which
+shape wrote it, and `--no-isolate` is how a run says one process instead.
+
+Windows has no unix socket and runs one process. That is stated rather than
+arranged around: this is defence in depth and a resource bound, not the
+capability boundary. The boundary is the crate graph, it holds everywhere, and
+`crates/sic-vm/tests/isolation.rs` is what checks it.
+
+`docs/design/processes.md` is the design, and it starts by measuring what the
+split buys rather than assuming: "the VM cannot reach the outside world" was
+already true. What the split adds is the resource bound - a run that grew its
+arena to 230 MB took the process that was also holding the run store and the
+terminal - and the possibility of giving the side that runs the bytecode fewer
+privileges than the side that performs effects, which is the one thing a crate
+boundary cannot do.
+
 ---
 
 ## Partly built
@@ -87,30 +113,8 @@ invented.
 
 ## Not built
 
-**§9, as separate processes.** The VM and the broker are separate crates with no
-dependency between them, and the values that cross between them are already
-serializable. They still run in one process.
-
-`sic run --isolate` does it, on unix: the
-child is `sic vm`, it opens no file and starts no program, and every effect
-crosses back to the parent's broker. Under a memory limit a run that would abort
-the whole thing now aborts the child, and the parent still has the journal and
-says what happened. A run that stops to wait is saved and picked up again: the
-child produces the checkpoint and the parent writes it, and the bytes are the
-ones the one-process shape would have written. A child that dies is told apart
-from one that failed and from one that stopped quietly, and a child left behind
-by a parent that died notices - there is no timeout, because a sic program
-cannot run forever and the only thing left to bound would be sic's own bugs.
-`resume` and `attach` take the flag too, and a checkpoint does not remember
-which shape wrote it: all four combinations of writing and reading one work.
-
-`docs/design/processes.md` is the design, and it starts by measuring what the
-split would buy rather than assuming: "the VM cannot reach the outside world" is
-already true, enforced by the dependency graph and checked by a test. What it
-adds is a resource bound - a run that grew its arena to 230 MB takes the process
-today, and that process is also holding the run store and the terminal - and the
-possibility of giving the side that runs the bytecode fewer privileges than the
-side that performs effects, which is the one thing a crate boundary cannot do.
+Nothing from the specification is outstanding. What is left is in
+`Deliberately not built`, or in an issue.
 
 ---
 

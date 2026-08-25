@@ -24,10 +24,10 @@ pub struct ResumeOptions<'a> {
     pub checkpoint: Option<&'a str>,
     /// What is to answer `llm.invoke` from here on.
     pub llm: Option<&'a str>,
-    /// Pick the run up in a process of its own - see
-    /// `docs/design/processes.md`.
-    #[cfg_attr(not(unix), allow(dead_code))]
-    pub isolate: bool,
+    /// Whether the run is picked up in a process of its own - see
+    /// `docs/design/processes.md`. On unix it is unless `--no-isolate` says
+    /// otherwise.
+    pub isolation: super::Isolation,
 }
 
 /// A checkpoint that no longer belongs to the program it is being resumed
@@ -102,8 +102,10 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
     // A checkpoint says what it is waiting for, so the answer can be shaped
     // without restoring the run here - which is what lets the restoring happen
     // in the other process. See `docs/design/processes.md` §5c.
+    #[cfg(not(unix))]
+    super::no_socket_here(options.isolation);
     #[cfg(unix)]
-    if options.isolate {
+    if options.isolation.separate() {
         let saved = match saved {
             Ok(saved) => saved,
             Err(e) => {
