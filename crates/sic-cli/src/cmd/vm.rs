@@ -88,7 +88,12 @@ fn drive(wire: &Wire) -> Result<ExitCode, String> {
         return Err("the run said something other than what to run".to_string());
     };
 
-    let program = sic_bytecode::decode(&program)
+    // Kept as bytes as well as decoded: a checkpoint is tied to the digest of
+    // the bytecode it came from, and the bytes that digest is of are the ones
+    // that arrived. Re-encoding what was decoded would be a second opinion
+    // about the same program, and `sic resume` compares against the parent's.
+    let sent = program;
+    let program = sic_bytecode::decode(&sent)
         .map_err(|e| format!("the run sent bytecode this cannot read: {e}"))?;
     // The one door into the VM, on this side of the wire too. A program that
     // arrived over a socket has exactly as much claim to be verified as one
@@ -115,10 +120,13 @@ fn drive(wire: &Wire) -> Result<ExitCode, String> {
                         status = vm.resume(value);
                     }
                     ToVm::Answer(Ok(sic_core::CapOutcome::Deferred { question })) => {
-                        // Unit 4 of `docs/design/processes.md` is where the
-                        // checkpoint crosses. Until it does, the parent refuses
-                        // a `--isolate` run that would have to wait, so this is
-                        // a thing the run has already declined to ask for.
+                        // The state is here and the filesystem is not, so this
+                        // side produces the bytes and the parent writes them.
+                        let digest = sic_core::Digest::of(&sent);
+                        let Some(bytes) = vm.checkpoint(digest, &question) else {
+                            return Err("the run is waiting and has no state to save".to_string());
+                        };
+                        wire.tell(&FromVm::Checkpoint(bytes))?;
                         break Ended::Suspended(question);
                     }
                     ToVm::Answer(Err(error)) => status = vm.resume_failed(&error),

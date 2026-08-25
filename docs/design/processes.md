@@ -179,21 +179,27 @@ is the whole of what this buys today, and it is worth having on its own.
 
 ---
 
-## 5a. What `--isolate` refuses
-
-A checkpoint does not cross yet, so a program whose manifest grants
-`llm.invoke`, `human.approve` or `human.choose` - the three that can answer
-later rather than now - is refused **before it starts**:
+## 5a. A run that stops to wait
 
 ```console
-$ sic run examples/approval.sic --isolate
-error: `--isolate` cannot save a run that stops to wait, and this program grants `human.approve`
-       run it without `--isolate`, which writes a checkpoint
+$ sic run examples/approval.sic --isolate --record
+run c85806cc0897f0c257fca3a8ca412191  recorded in .sic/runs/c85806cc...
+waiting: [deploy to production] deploy build 42?
+saved 394 bytes to .sic/runs/c85806cc.../checkpoint.sicc
+answer with:  sic attach c85806cc --value <VALUE>
 ```
 
-Before rather than after, because a run refused halfway has already done half
-its effects. It is read off the manifest, which is the same thing `sic plan`
-reads and for the same reason: it is there before anything runs.
+Word for word what the one-process shape prints, which is the bar: a person
+should not be able to tell from the output which shape ran their program.
+
+The bytes are the same bytes too, apart from the run id - which differs between
+any two runs of anything. That matters because `sic resume` checks a
+checkpoint's digest against the bytecode it is handed, so a checkpoint the child
+wrote has to be one the parent would have written.
+
+The digest is of the bytes that *arrived*. Re-encoding what was decoded from
+them would be a second opinion about one program, and the comparison on resume
+is between the parent's opinion and the checkpoint's.
 
 ---
 
@@ -229,7 +235,11 @@ reads and for the same reason: it is there before anything runs.
    The journal crosses too, because a sink is the parent's and the events are
    the child's. What does not cross yet is the checkpoint.
 
-4. The checkpoint across the wire.
+4. ~~The checkpoint across the wire.~~ **Done.** The child produces the bytes -
+   it has the state - and the parent writes them, because it has the
+   filesystem. The digest a checkpoint is tied to is of the bytes that
+   *arrived*, not of a re-encoding of what was decoded from them: two opinions
+   about one program is what `sic resume` would then be comparing.
 5. Failure: a child that dies, a child that hangs, a parent that leaves.
 6. `resume` and `attach`.
 7. The flag becomes the default on unix, and `docs/status.md` moves §9.

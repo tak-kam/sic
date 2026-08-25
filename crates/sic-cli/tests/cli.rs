@@ -192,18 +192,72 @@ mod isolated {
         std::fs::remove_file(src).ok();
     }
 
-    /// A checkpoint does not cross the wire yet, so a program that could stop
-    /// and wait is refused before it starts rather than after it has done half
-    /// its work. Unit 4 of `docs/design/processes.md`.
+    /// The state is in the child and the filesystem is in the parent, so the
+    /// child produces the bytes and the parent writes them. A run that stops to
+    /// wait has to be as resumable as one that never left this process.
     #[test]
-    fn a_program_that_could_wait_is_refused_before_it_starts() {
-        let (_, stderr, code) = sic(&["run", &example("approval.sic"), "--isolate"]);
-        assert_eq!(code, 2, "{stderr}");
-        assert!(
-            stderr.contains("cannot save a run that stops to wait"),
-            "{stderr}"
+    fn a_run_that_stops_to_wait_is_saved_and_picked_up_again() {
+        let store = temp_store("isolate-wait");
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", &example("approval.sic"), "--isolate", "--record"],
         );
-        assert!(stderr.contains("human.approve"), "{stderr}");
+        assert_eq!(code, 3, "{stderr}\n{stdout}");
+        assert!(stderr.contains("waiting: "), "{stderr}");
+        assert!(stderr.contains("saved "), "{stderr}");
+
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", "true"],
+        );
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "0");
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A run with nowhere to put its state is the same refusal in either
+    /// shape, and the words are the same words.
+    #[test]
+    fn a_waiting_run_with_nowhere_to_be_saved_says_so() {
+        let (_, stderr, code) = sic(&["run", &example("approval.sic"), "--isolate"]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("has nowhere to be saved"), "{stderr}");
+        let (_, one, _) = sic(&["run", &example("approval.sic")]);
+        assert_eq!(one, stderr, "the two shapes say the same thing");
+    }
+
+    /// And the bytes are the bytes. A checkpoint written by the child has to
+    /// be the one the parent would have written, or `sic resume` is checking a
+    /// digest against a program it does not describe.
+    #[test]
+    fn the_checkpoint_is_the_same_checkpoint() {
+        let store = temp_store("isolate-checkpoint");
+        std::fs::create_dir_all(&store).ok();
+        let one = store.join("one.sicc");
+        let two = store.join("two.sicc");
+        let program = example("approval.sic");
+        for (path, isolate) in [(&one, false), (&two, true)] {
+            let shown = path.to_string_lossy().into_owned();
+            let mut args = vec!["run", program.as_str(), "--checkpoint", shown.as_str()];
+            if isolate {
+                args.push("--isolate");
+            }
+            let (_, stderr, code) = sic(&args);
+            assert_eq!(code, 3, "{stderr}");
+        }
+        let a = std::fs::read(&one).unwrap();
+        let b = std::fs::read(&two).unwrap();
+        // Everything but the run id, which differs between any two runs of
+        // anything. The digest of the bytecode is bytes 8 to 40, and it is what
+        // `resume` checks.
+        assert_eq!(a[..40], b[..40], "the header and the program digest");
+        assert_eq!(a[56..], b[56..], "the state");
+        assert_eq!(a.len(), b.len());
+        std::fs::remove_dir_all(store).ok();
     }
 
     /// `sic vm` is started by a run, not by a person, and says so rather than

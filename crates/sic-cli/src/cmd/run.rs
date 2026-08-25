@@ -17,9 +17,6 @@ use super::drive::{Outcome, drive_recording, manifest};
 use super::journal::{FileSink, new_run_id};
 use super::store;
 use super::{EXIT_FAILURE, EXIT_SUSPENDED, compile_source};
-// Only the two-process path refuses anything at the command line.
-#[cfg(unix)]
-use super::EXIT_USAGE;
 
 pub struct RunOptions<'a> {
     pub journal: Option<&'a str>,
@@ -134,6 +131,19 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             }
         };
 
+    // Where a run that stops to wait puts its state. Computed before the run
+    // rather than after it, because both shapes need the same answer and only
+    // one of them still has a `Vm` to ask afterwards.
+    let checkpoint = match (&recording, options.checkpoint) {
+        (Some(dir), None) => Some(dir.join(store::CHECKPOINT).to_string_lossy().into_owned()),
+        (_, given) => given.map(str::to_string),
+    };
+    // A recorded run is identified by its id, so that is what the hint uses:
+    // nothing about a path has to be remembered.
+    let hint = recording
+        .as_ref()
+        .map(|_| format!("sic attach {} --value <VALUE>", &run_id.to_string()[..8]));
+
     #[cfg(not(unix))]
     if options.isolate {
         eprintln!(
@@ -148,7 +158,11 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             run_id,
             sink.as_mut(),
             &mut broker,
-            recording.as_deref(),
+            Keeping {
+                recording: recording.as_deref(),
+                checkpoint: checkpoint.as_deref(),
+                hint: hint.as_deref(),
+            },
         );
     }
 
@@ -162,15 +176,6 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 
     // A recorded run that has to wait keeps its checkpoint too, so `sic resume`
     // can find it beside everything else.
-    let checkpoint = match (&recording, options.checkpoint) {
-        (Some(dir), None) => Some(dir.join(store::CHECKPOINT).to_string_lossy().into_owned()),
-        (_, given) => given.map(str::to_string),
-    };
-    // A recorded run is identified by its id, so that is what the hint uses:
-    // nothing about a path has to be remembered.
-    let hint = recording
-        .as_ref()
-        .map(|_| format!("sic attach {} --value <VALUE>", &run_id.to_string()[..8]));
     finish(
         &mut vm,
         &program,
@@ -186,6 +191,18 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
 /// different loop: there is no `Vm` on this side to ask anything of, and the
 /// events arrive rather than being emitted. `docs/design/processes.md` §4 says
 /// which commands take this shape and which do not.
+/// What a run keeps, and how it is picked up again if it stops to wait.
+///
+/// Three facts that are one idea: whether the whole run is being recorded,
+/// where its state goes if it waits, and what to tell a person to type. They
+/// travel together because they are decided together, above.
+#[cfg(unix)]
+pub struct Keeping<'a> {
+    pub recording: Option<&'a std::path::Path>,
+    pub checkpoint: Option<&'a str>,
+    pub hint: Option<&'a str>,
+}
+
 #[cfg(unix)]
 fn isolated(
     program: &Program,
@@ -193,18 +210,8 @@ fn isolated(
     run_id: sic_journal::RunId,
     sink: &mut dyn sic_journal::Sink,
     broker: &mut sic_broker::Broker,
-    recording: Option<&std::path::Path>,
+    keeping: Keeping<'_>,
 ) -> ExitCode {
-    // A checkpoint does not cross the wire yet, so a program that could stop
-    // and wait is refused before it starts rather than after it has done half
-    // its work.
-    if let Some(cap) = super::isolate::could_suspend(program) {
-        eprintln!(
-            "error: `--isolate` cannot save a run that stops to wait, and this program grants `{cap}`"
-        );
-        eprintln!("       run it without `--isolate`, which writes a checkpoint");
-        return ExitCode::from(EXIT_USAGE);
-    }
     match super::isolate::drive(
         program,
         entry,
@@ -212,9 +219,15 @@ fn isolated(
         DEFAULT_FUEL,
         broker,
         sink,
-        recording,
+        keeping.recording,
     ) {
-        Ok(ended) => super::isolate::finish(ended),
+        Ok(ran) => {
+            // A run that is still waiting keeps whatever the driver is
+            // holding; one that is over keeps nothing. Same as the shape
+            // above, and for the same reason.
+            broker.finish(matches!(ran.ended, crate::wire::Ended::Suspended(_)));
+            super::isolate::finish(ran, keeping.checkpoint, keeping.hint)
+        }
         Err(message) => {
             eprintln!("error: {message}");
             ExitCode::from(EXIT_FAILURE)

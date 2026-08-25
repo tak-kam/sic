@@ -57,6 +57,16 @@ impl Drop for Interpreter {
     }
 }
 
+/// How an isolated run ended, and the state it left if it stopped to wait.
+///
+/// The checkpoint is bytes rather than a file: the child holds the state and
+/// the parent holds the filesystem, which is the split that makes the child
+/// able to be given less.
+pub struct Ran {
+    pub ended: Ended,
+    pub checkpoint: Option<Vec<u8>>,
+}
+
 /// Runs `program` in a child, answering every capability call from `broker`.
 ///
 /// The loop is `drive_recording`'s, with a wire where the `Vm` was: the child
@@ -69,7 +79,7 @@ pub fn drive(
     broker: &mut Broker,
     sink: &mut dyn Sink,
     record_into: Option<&std::path::Path>,
-) -> Result<Ended, String> {
+) -> Result<Ran, String> {
     let socket = Socket::open(&run.to_string())?;
     let me =
         std::env::current_exe().map_err(|e| format!("cannot tell where this binary is: {e}"))?;
@@ -109,7 +119,8 @@ fn converse(
     broker: &mut Broker,
     sink: &mut dyn Sink,
     record_into: Option<&std::path::Path>,
-) -> Result<Ended, String> {
+) -> Result<Ran, String> {
+    let mut checkpoint = None;
     loop {
         let Some(bytes) = recv(stream).map_err(|e| e.to_string())? else {
             // The child closed without saying how the run ended. That is the
@@ -134,20 +145,20 @@ fn converse(
                 send(stream, &ToVm::Answer(answer).to_bytes())
                     .map_err(|e| format!("cannot answer the interpreter: {e}"))?;
             }
-            // Unit 4 of `docs/design/processes.md`. Until it arrives, `run`
-            // refuses `--isolate` for a program that could suspend, so nothing
-            // reaches here.
-            FromVm::Checkpoint(_) => {
-                return Err("a checkpoint crossed a wire that does not carry one yet".to_string());
-            }
-            FromVm::Ended(ended) => return Ok(ended),
+            // It arrives before the ending it belongs to, so it is held until
+            // the child says what that ending was.
+            FromVm::Checkpoint(bytes) => checkpoint = Some(bytes),
+            FromVm::Ended(ended) => return Ok(Ran { ended, checkpoint }),
         }
     }
 }
 
 /// Reports how an isolated run ended, in the parent's voice.
-pub fn finish(ended: Ended) -> ExitCode {
-    match ended {
+///
+/// The same words `run::finish` uses, because a person should not be able to
+/// tell which shape ran their program from what it printed.
+pub fn finish(ran: Ran, checkpoint_path: Option<&str>, resume_hint: Option<&str>) -> ExitCode {
+    match ran.ended {
         Ended::Finished(text) if text.is_empty() => ExitCode::SUCCESS,
         Ended::Finished(text) => {
             println!("{text}");
@@ -160,22 +171,26 @@ pub fn finish(ended: Ended) -> ExitCode {
             ExitCode::from(EXIT_FAILURE)
         }
         Ended::Suspended(question) => {
-            eprintln!("error: the run is waiting for `{question}` and `--isolate` cannot save it");
-            eprintln!("       run it without `--isolate` to write a checkpoint");
+            let Some(path) = checkpoint_path else {
+                eprintln!("error: the run is waiting for `{question}` and has nowhere to be saved");
+                eprintln!("       pass --checkpoint PATH to write its state out");
+                return ExitCode::from(EXIT_FAILURE);
+            };
+            let Some(bytes) = ran.checkpoint else {
+                eprintln!("internal error: the run is waiting but sent no state to save");
+                return ExitCode::from(EXIT_FAILURE);
+            };
+            if let Err(e) = std::fs::write(path, &bytes) {
+                eprintln!("error: cannot write `{path}`: {e}");
+                return ExitCode::from(EXIT_FAILURE);
+            }
+            eprintln!("waiting: {question}");
+            eprintln!("saved {} bytes to {path}", bytes.len());
+            match resume_hint {
+                Some(hint) => eprintln!("answer with:  {hint}"),
+                None => eprintln!("resume with: sic resume {path} <FILE.sic> --value <VALUE>"),
+            }
             ExitCode::from(EXIT_SUSPENDED)
         }
     }
-}
-
-/// Whether a program has any capability call that could stop the run.
-///
-/// `--isolate` cannot write a checkpoint yet, so a program that might need one
-/// is refused before it starts rather than after it has done half its work.
-/// The three that can defer are the ones nothing in this process can answer.
-pub fn could_suspend(program: &sic_bytecode::Program) -> Option<&str> {
-    program
-        .caps
-        .iter()
-        .map(|c| c.name.as_str())
-        .find(|name| matches!(*name, "llm.invoke" | "human.approve" | "human.choose"))
 }
