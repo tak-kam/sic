@@ -7,6 +7,8 @@
 mod cmd;
 mod module;
 mod path;
+#[cfg(unix)]
+mod wire;
 
 use std::process::ExitCode;
 
@@ -16,14 +18,17 @@ const USAGE: &str = "\
 sic - a language for AI agents and workflows
 
 Usage:
-  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record] [--llm SPEC]
+  sic run <FILE.sic> [--journal PATH] [--checkpoint PATH] [--record] [--llm SPEC] [--isolate]
                                   compile, verify and run a source file,
                                   optionally recording its execution journal,
                                   saving its state if it has to wait, or
                                   keeping the whole run with --record;
                                   --llm <multiplexer>:<agent>, as in tmux:claude,
                                   answers llm.invoke by driving that agent in a
-                                  pane instead of stopping to ask a person
+                                  pane instead of stopping to ask a person;
+                                  --isolate puts the interpreter in a process of
+                                  its own, which opens no file and starts no
+                                  program (unix only)
   sic runs [--waiting]            list recorded runs, or only those waiting
   sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
                                   see what a waiting run needs, or answer it -
@@ -78,13 +83,14 @@ fn main() -> ExitCode {
 
     match command.as_str() {
         "run" => match parse_run(rest) {
-            Ok((file, flags, record)) => cmd::run::run(
-                &file,
+            Ok(asked) => cmd::run::run(
+                &asked.file,
                 cmd::run::RunOptions {
-                    journal: flags[0].as_deref(),
-                    checkpoint: flags[1].as_deref(),
-                    record,
-                    llm: flags[2].as_deref(),
+                    journal: asked.flags[0].as_deref(),
+                    checkpoint: asked.flags[1].as_deref(),
+                    record: asked.record,
+                    llm: asked.flags[2].as_deref(),
+                    isolate: asked.isolate,
                 },
             ),
             Err(msg) => usage_error(msg),
@@ -160,8 +166,15 @@ fn main() -> ExitCode {
             true => cmd::hook::run(),
             false => usage_error("`hook` takes no arguments"),
         },
+        // The interpreter as a process of its own, talking over the socket the
+        // run listens on: `docs/design/processes.md`.
+        #[cfg(unix)]
+        "vm" => match rest {
+            [flag, path] if flag == "--socket" => cmd::vm::run(path),
+            _ => usage_error("`vm` takes `--socket PATH`"),
+        },
         #[cfg(not(unix))]
-        "mcp" | "hook" => {
+        "mcp" | "hook" | "vm" => {
             usage_error("this serves the unix socket a run listens on, and this build has none")
         }
         "parse" => with_one_file(rest, "parse", cmd::parse::run),
@@ -214,22 +227,42 @@ fn with_one_file(args: &[String], name: &str, f: fn(&str) -> ExitCode) -> ExitCo
 /// `run <input> [--journal PATH] [--checkpoint PATH] [--llm SPEC] [--record]`.
 ///
 /// `--record` takes no value, so it cannot go through `parse_flags`.
-fn parse_run(args: &[String]) -> Result<(String, Vec<Option<String>>, bool), String> {
+/// What `sic run` was asked for.
+///
+/// A struct rather than a tuple of four, because the fourth was the one that
+/// made a reader count positions.
+struct Run {
+    file: String,
+    flags: Vec<Option<String>>,
+    record: bool,
+    isolate: bool,
+}
+
+fn parse_run(args: &[String]) -> Result<Run, String> {
     let mut record = false;
+    let mut isolate = false;
     let rest: Vec<String> = args
         .iter()
-        .filter(|a| {
-            if a.as_str() == "--record" {
+        .filter(|a| match a.as_str() {
+            "--record" => {
                 record = true;
                 false
-            } else {
-                true
             }
+            "--isolate" => {
+                isolate = true;
+                false
+            }
+            _ => true,
         })
         .cloned()
         .collect();
     let (files, flags) = parse_flags(&rest, &["--journal", "--checkpoint", "--llm"], 1)?;
-    Ok((files[0].clone(), flags, record))
+    Ok(Run {
+        file: files[0].clone(),
+        flags,
+        record,
+        isolate,
+    })
 }
 
 /// `upgrade [--to PATH] [--sha256 HEX] [--check]`.

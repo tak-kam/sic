@@ -21,6 +21,7 @@
 
 pub mod json;
 pub mod read;
+pub mod wire;
 
 pub use read::{ReadResult, TimedEvent, read_jsonl};
 

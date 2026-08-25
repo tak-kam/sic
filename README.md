@@ -230,7 +230,7 @@ for the program, made of cases it has actually been through.
 ## Commands
 
 ```text
-sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC]
+sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--isolate]
 sic plan <FILE.sic|FILE.sicb>      what a program may do, running nothing
 sic runs [--waiting]               what has been recorded, or what is waiting
 sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
@@ -238,6 +238,7 @@ sic attach <RUN-ID> [--value V] [--because WHY] [--llm SPEC]
 sic resume <CHECKPOINT> <FILE.sic> --value <V>
 sic explain <RUN-ID> | inspect-run <RUN-ID> | replay <RUN-ID>
 sic recheck <RUN-ID> <FILE.sic>     does this edit still ask what the run answered
+sic vm --socket P                  the interpreter, started by a run rather than a person
 sic export <JOURNAL> [--traces P] [--metrics P]
 sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir

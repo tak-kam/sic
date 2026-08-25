@@ -17,6 +17,9 @@ use super::drive::{Outcome, drive_recording, manifest};
 use super::journal::{FileSink, new_run_id};
 use super::store;
 use super::{EXIT_FAILURE, EXIT_SUSPENDED, compile_source};
+// Only the two-process path refuses anything at the command line.
+#[cfg(unix)]
+use super::EXIT_USAGE;
 
 pub struct RunOptions<'a> {
     pub journal: Option<&'a str>,
@@ -28,6 +31,16 @@ pub struct RunOptions<'a> {
     /// What is to answer `llm.invoke`, as `<multiplexer>:<agent>`. Without one
     /// a model call defers, which is what it has always done.
     pub llm: Option<&'a str>,
+    /// Run the interpreter in a process of its own - see
+    /// `docs/design/processes.md`. Unix only, and a flag rather than the
+    /// default while the second shape is new.
+    ///
+    /// Accepted everywhere and acted on where there is a socket: a person who
+    /// types it on Windows is told by `sic run` that it did nothing, which is
+    /// better than a command line that fails to parse for a reason about this
+    /// machine.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    pub isolate: bool,
 }
 
 pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
@@ -95,10 +108,13 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         },
         None => Box::new(sic_journal::NullSink),
     };
-    let journal = Journal::new(
-        run_id,
-        Box::new(super::journal::LogSink::around(sink, recording.as_deref())),
-    );
+    // The sink is the CLI's, on either shape. In one process a `Journal` wraps
+    // it and the VM emits through it; in two the child emits and the events
+    // arrive here, so the sink is handed over on its own.
+    // `mut` only on the side that hands it over rather than wrapping it.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut sink: Box<dyn sic_journal::Sink> =
+        Box::new(super::journal::LogSink::around(sink, recording.as_deref()));
 
     // Opened before the run starts, so a run that is going to fail for want of
     // a tool fails before it has done anything.
@@ -118,6 +134,25 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
             }
         };
 
+    #[cfg(not(unix))]
+    if options.isolate {
+        eprintln!(
+            "warning: `--isolate` needs a unix socket, and this build has none; running here"
+        );
+    }
+    #[cfg(unix)]
+    if options.isolate {
+        return isolated(
+            &program,
+            entry,
+            run_id,
+            sink.as_mut(),
+            &mut broker,
+            recording.as_deref(),
+        );
+    }
+
+    let journal = Journal::new(run_id, sink);
     let mut vm = Vm::with_journal(&program, DEFAULT_FUEL, journal);
     let status = vm.run(entry, &[]);
     let outcome = drive_recording(&mut vm, &mut broker, status, recording.as_deref());
@@ -143,6 +178,48 @@ pub fn run(path: &str, options: RunOptions<'_>) -> ExitCode {
         checkpoint.as_deref(),
         hint.as_deref(),
     )
+}
+
+/// The same run, with the interpreter in a process of its own.
+///
+/// A separate function rather than a branch inside the loop, because it is a
+/// different loop: there is no `Vm` on this side to ask anything of, and the
+/// events arrive rather than being emitted. `docs/design/processes.md` §4 says
+/// which commands take this shape and which do not.
+#[cfg(unix)]
+fn isolated(
+    program: &Program,
+    entry: u32,
+    run_id: sic_journal::RunId,
+    sink: &mut dyn sic_journal::Sink,
+    broker: &mut sic_broker::Broker,
+    recording: Option<&std::path::Path>,
+) -> ExitCode {
+    // A checkpoint does not cross the wire yet, so a program that could stop
+    // and wait is refused before it starts rather than after it has done half
+    // its work.
+    if let Some(cap) = super::isolate::could_suspend(program) {
+        eprintln!(
+            "error: `--isolate` cannot save a run that stops to wait, and this program grants `{cap}`"
+        );
+        eprintln!("       run it without `--isolate`, which writes a checkpoint");
+        return ExitCode::from(EXIT_USAGE);
+    }
+    match super::isolate::drive(
+        program,
+        entry,
+        run_id,
+        DEFAULT_FUEL,
+        broker,
+        sink,
+        recording,
+    ) {
+        Ok(ended) => super::isolate::finish(ended),
+        Err(message) => {
+            eprintln!("error: {message}");
+            ExitCode::from(EXIT_FAILURE)
+        }
+    }
 }
 
 /// Reports how a run ended, writing a checkpoint if it stopped to wait.

@@ -158,6 +158,43 @@ happens not to use the filesystem, which is what §1 already guarantees - so the
 first version of this buys §2's first half and not its second, and should say
 so rather than implying a sandbox that is not there.
 
+### The first half, demonstrated
+
+Under a 200 MB limit, with the program from §2:
+
+```console
+$ sic run mem.sic
+memory allocation of 63488 bytes failed
+Aborted (core dumped)                                     # exit 134
+
+$ sic run mem.sic --isolate
+memory allocation of 63488 bytes failed
+error: the interpreter stopped without saying how the run ended;
+       the journal has everything it managed to say        # exit 1
+```
+
+One process aborts and nothing is left to say what happened. Two processes:
+the child aborts, the parent has every event it was sent, and it says so. That
+is the whole of what this buys today, and it is worth having on its own.
+
+---
+
+## 5a. What `--isolate` refuses
+
+A checkpoint does not cross yet, so a program whose manifest grants
+`llm.invoke`, `human.approve` or `human.choose` - the three that can answer
+later rather than now - is refused **before it starts**:
+
+```console
+$ sic run examples/approval.sic --isolate
+error: `--isolate` cannot save a run that stops to wait, and this program grants `human.approve`
+       run it without `--isolate`, which writes a checkpoint
+```
+
+Before rather than after, because a run refused halfway has already done half
+its effects. It is read off the manifest, which is the same thing `sic plan`
+reads and for the same reason: it is there before anything runs.
+
 ---
 
 ## 6. Not here
@@ -177,12 +214,22 @@ so rather than implying a sandbox that is not there.
 
 ## 7. Units of work
 
-1. The protocol: message kinds, framing, and a round trip over a socketpair in
-   a test. No command yet.
-2. `sic vm`: the child, reading a program and answering a socket.
-3. `sic run --isolate`: the parent, behind a flag, so that both shapes are
-   exercised while the second is new.
-4. The journal and the checkpoint across the wire.
+1. ~~The protocol: message kinds, framing, and a round trip over a socketpair
+   in a test. No command yet.~~
+2. ~~`sic vm`: the child, reading a program and answering a socket.~~
+3. ~~`sic run --isolate`: the parent, behind a flag, so that both shapes are
+   exercised while the second is new.~~
+
+   **Done, and as one piece rather than three.** Unit 1 did not finish on its
+   own: a protocol with no endpoints is dead code, and this repository has
+   said since phase 1 that crates are added in the phase that needs them. A
+   unit that leaves `#[allow(dead_code)]` behind is a unit that was split
+   wrongly, and saying so is worth more than pretending three commits happened.
+
+   The journal crosses too, because a sink is the parent's and the events are
+   the child's. What does not cross yet is the checkpoint.
+
+4. The checkpoint across the wire.
 5. Failure: a child that dies, a child that hangs, a parent that leaves.
 6. `resume` and `attach`.
 7. The flag becomes the default on unix, and `docs/status.md` moves §9.

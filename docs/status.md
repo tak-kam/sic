@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 585 tests.
+Last updated at 596 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -90,6 +90,13 @@ invented.
 **§9, as separate processes.** The VM and the broker are separate crates with no
 dependency between them, and the values that cross between them are already
 serializable. They still run in one process.
+
+`sic run --isolate` does it, on unix, for a run that does not stop to wait: the
+child is `sic vm`, it opens no file and starts no program, and every effect
+crosses back to the parent's broker. Under a memory limit a run that would abort
+the whole thing now aborts the child, and the parent still has the journal and
+says what happened. What is left is the checkpoint, which does not cross yet -
+so `--isolate` refuses a program that could suspend, before it starts.
 
 `docs/design/processes.md` is the design, and it starts by measuring what the
 split would buy rather than assuming: "the VM cannot reach the outside world" is

@@ -100,6 +100,129 @@ fn temp_dir(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// the interpreter in a process of its own.
+///
+/// `docs/design/processes.md`. What the split buys today is a resource bound;
+/// what it makes possible later is a child with fewer privileges than the
+/// parent, which is the one thing a crate boundary cannot do.
+#[cfg(unix)]
+mod isolated {
+    use super::*;
+
+    /// The same answer either way, which is the first thing to be sure of: a
+    /// second shape that computes something else is not a second shape.
+    #[test]
+    fn a_run_gives_the_same_answer_in_one_process_or_two() {
+        for name in ["milestone.sic", "records.sic", "branching.sic"] {
+            let (one, stderr, code) = sic(&["run", &example(name)]);
+            assert_eq!(code, 0, "{name}: {stderr}");
+            let (two, stderr, code) = sic(&["run", &example(name), "--isolate"]);
+            assert_eq!(code, 0, "{name}: {stderr}");
+            assert_eq!(one, two, "{name}");
+        }
+    }
+
+    /// The child asks and the parent performs. Nothing in the child opens a
+    /// file; the answer came back over the socket.
+    #[test]
+    fn a_capability_call_crosses_the_wire_and_is_performed_by_the_parent() {
+        let (stdout, stderr, code) = sic(&["run", &example("read-file.sic"), "--isolate"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "\"hello from a file\\n\"");
+    }
+
+    /// The events crossed whole. A journal that differed between the shapes
+    /// would mean the wire lost something, and the one thing it must not lose
+    /// is what `sic explain` and the exporter read.
+    #[test]
+    fn the_journal_is_the_same_journal() {
+        let store = temp_store("isolate-journal");
+        std::fs::create_dir_all(&store).ok();
+        let one = store.join("one.jsonl");
+        let two = store.join("two.jsonl");
+        for (path, args) in [
+            (&one, vec!["run", &example("read-file.sic"), "--journal"]),
+            (
+                &two,
+                vec!["run", &example("read-file.sic"), "--isolate", "--journal"],
+            ),
+        ] {
+            let mut args = args;
+            let shown = path.to_string_lossy().into_owned();
+            args.push(&shown);
+            let (_, stderr, code) = sic(&args);
+            assert_eq!(code, 0, "{stderr}");
+        }
+        // The run id and the wall clock differ between two runs of anything;
+        // everything else is the run.
+        let strip = |path: &std::path::Path| -> Vec<String> {
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .map(|line| {
+                    let json = sic_json::parse(line).expect("a journal line");
+                    let sic_json::Json::Object(members) = json else {
+                        panic!("a line that is not an object: {line}");
+                    };
+                    members
+                        .iter()
+                        .filter(|(name, _)| name != "ts" && name != "run")
+                        .map(|(name, value)| format!("{name}={value:?}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .collect()
+        };
+        assert_eq!(strip(&one), strip(&two));
+        assert!(!strip(&one).is_empty());
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The failure is rendered by the child, because the value and the source
+    /// position live in its arena. It has to read the same.
+    #[test]
+    fn a_failure_reads_the_same_from_either_side_of_the_wire() {
+        let src = write_temp("isolate-fail.sic", "fn main() -> Int { return 1 / 0; }\n");
+        let (_, one, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        let (_, two, code) = sic(&["run", src.to_str().unwrap(), "--isolate"]);
+        assert_eq!(code, 1);
+        assert_eq!(one, two, "the child renders it and the parent prints it");
+        assert!(one.contains("division by zero"), "{one}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A checkpoint does not cross the wire yet, so a program that could stop
+    /// and wait is refused before it starts rather than after it has done half
+    /// its work. Unit 4 of `docs/design/processes.md`.
+    #[test]
+    fn a_program_that_could_wait_is_refused_before_it_starts() {
+        let (_, stderr, code) = sic(&["run", &example("approval.sic"), "--isolate"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(
+            stderr.contains("cannot save a run that stops to wait"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("human.approve"), "{stderr}");
+    }
+
+    /// `sic vm` is started by a run, not by a person, and says so rather than
+    /// waiting for a socket nobody is listening on.
+    #[test]
+    fn the_interpreter_says_so_when_there_is_no_run_to_reach() {
+        let (_, stderr, code) = sic(&["vm", "--socket", "/nonexistent/sic.sock"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("cannot reach the run"), "{stderr}");
+    }
+
+    #[test]
+    fn the_interpreter_needs_a_socket() {
+        let (_, stderr, code) = sic(&["vm"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("`vm` takes `--socket PATH`"), "{stderr}");
+    }
+}
+
 /// what a program has to say about itself.
 ///
 /// A log line goes where a person can see it and is kept where the run is

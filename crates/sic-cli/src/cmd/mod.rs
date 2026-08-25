@@ -6,6 +6,8 @@ pub mod export;
 pub mod hir;
 #[cfg(unix)]
 pub mod hook;
+#[cfg(unix)]
+pub mod isolate;
 pub mod journal;
 #[cfg(unix)]
 pub mod mcp;
@@ -17,6 +19,8 @@ pub mod runs;
 pub mod store;
 pub mod upgrade;
 pub mod verify;
+#[cfg(unix)]
+pub mod vm;
 
 use std::process::ExitCode;
 

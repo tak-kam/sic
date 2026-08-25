@@ -67,8 +67,10 @@ intention:
   is a pure function of its input; that is what makes the capability boundary
   mean anything (`crates/sic-core/tests/workspace.rs`).
 - **`sic-vm` never depends on `sic-broker`.** The VM suspends at an effect, the
-  driver asks the broker. That boundary is where the two will later split into
-  separate processes (`crates/sic-vm/tests/isolation.rs`).
+  driver asks the broker (`crates/sic-vm/tests/isolation.rs`). `sic run
+  --isolate` makes that boundary a process boundary as well, on unix, for a run
+  that does not stop to wait - see `docs/design/processes.md`, which starts by
+  measuring what the split buys that the crate boundary does not.
 - **`sic-core` depends on nothing else in the workspace.**
 
 The journal records digests, never values. A checkpoint and a recorded run's
@@ -87,6 +89,8 @@ sic recheck <ID> <FILE.sic>       run FILE against a recorded run's answers
 sic export <JOURNAL> [--traces P] [--metrics P]
 sic upgrade [--check] | --to FILE --sha256 HEX
 sic compile | verify | disasm | parse | hir
+sic run ... --isolate             the interpreter in a process of its own (unix)
+sic vm --socket P                 that process; started by a run, not a person
 sic mcp                           the capabilities a run granted, served to the
                                   agent answering for it
 ```
