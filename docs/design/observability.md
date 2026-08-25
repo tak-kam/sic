@@ -151,6 +151,35 @@ collector is for.
 `sic.agent.invocations` counts `llm.invoke` calls, because that is what an agent
 is at this level - the exporter does not know what an agent is either.
 
+### Two histograms, because a call takes one of two kinds of time
+
+```text
+sic.capability.duration    ms, split by capability
+sic.capability.deferred    ms, split by capability
+```
+
+The numbers were already measured. A capability call is a span that opens on
+`CapabilityRequested` and closes on `CapabilityCompleted`, and a sink stamps
+both, which is why a trace backend has shown the duration of every call since
+phase 5. Nothing new is recorded; the distance between the two events is read.
+
+They are two metrics because the distance means two different things. Answered
+within the call it is the time the broker spent - a `fs.read`, a `process.run`.
+Answered after a suspension it includes the whole wait: a `human.approve`
+answered on Thursday is two days, and the two timestamps were written by two
+processes. Both are real numbers and each is the answer to a question the other
+is useless for, so a histogram holding both would have buckets spanning four
+orders of magnitude and tell you nothing about either.
+
+The journal says which: a call that was open when a `RunSuspended` went past
+waited across it. A call that *failed* is in neither - it is counted by
+`sic.capability.failures`, and how long a refusal takes is not what these are
+for.
+
+Each point carries `min` and `max` as well as the buckets. A run produces a
+handful of calls rather than a stream, and at that count the buckets say almost
+nothing while the extremes say most of what there is.
+
 ---
 
 ## 5. What is not here
@@ -166,9 +195,16 @@ is at this level - the exporter does not know what an agent is either.
   HTTP transport, and a document is what this produces.
 - **No sampling and no batching.** Both are decisions about a stream of runs,
   and this converts one journal at a time.
-- **No durations.** No event carries one, because the broker does not report
-  how long a call took, so a histogram here would be a number nobody measured.
-  A span still has a start and an end, from the timestamps a sink wrote.
+- **No token costs.** Nothing reports them: the broker is not told what a model
+  call cost, so a number here would be invented. This entry used to say "no
+  durations" for the same reason and it was wrong about half of itself - the
+  duration is the distance between two events a sink already stamped, which the
+  sentence after it said. §4 has the histograms now; the token count is the half
+  that was right.
+- **No duration in the journal.** A timestamp is an observation about a run
+  rather than part of it - `cmd/journal.rs` says so - and so is a duration. One
+  in an event would also make every replay differ, because `sic replay` compares
+  events.
 - **No trust or secret attributes.** Section 19's types do not exist yet, so
   there is nothing to label. When they do, `sic.trust.level` is the attribute
   and the rule is that a `Secret<T>` never reaches an attribute at all.

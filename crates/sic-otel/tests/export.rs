@@ -179,6 +179,115 @@ fn metrics_count_what_the_runtime_already_records() {
     assert!(json.contains("\"aggregationTemporality\":1"), "{json}");
 }
 
+/// The distance between a call's two events, which a sink already stamped.
+/// Nothing new is recorded; the number is read.
+#[test]
+fn a_call_answered_within_the_call_is_timed_from_its_own_two_events() {
+    let json = metrics(&simple_run(), &Resource::default());
+    assert!(json.contains("sic.capability.duration"), "{json}");
+    assert!(json.contains("\"unit\":\"ms\""), "{json}");
+    // 130ns to 140ns in `simple_run`, which is 0.00001ms - small, real, and
+    // in the first bucket rather than rounded away.
+    assert!(json.contains("\"count\":\"1\""), "{json}");
+    // Nothing waited, so the other histogram is left out the way an
+    // unincremented counter is.
+    assert!(!json.contains("sic.capability.deferred"), "{json}");
+}
+
+/// A call answered after a suspension includes the whole wait, and a histogram
+/// holding both would have buckets spanning four orders of magnitude.
+#[test]
+fn a_call_that_waited_is_measured_apart_from_one_that_did_not() {
+    let d = Digest::of(b"x");
+    let mut events = vec![
+        event(
+            0,
+            0,
+            None,
+            0,
+            EventKind::RunStarted {
+                workflow: "main".into(),
+                args: d,
+            },
+        ),
+        // A call the broker answered: one millisecond.
+        event(
+            1,
+            1,
+            Some(0),
+            1_000_000,
+            EventKind::CapabilityRequested {
+                cap: "fs.read".into(),
+                args: d,
+                attempt: 1,
+            },
+        ),
+        event(
+            2,
+            1,
+            Some(0),
+            2_000_000,
+            EventKind::CapabilityCompleted {
+                cap: "fs.read".into(),
+                result: d,
+                attempt: 1,
+            },
+        ),
+        // A call a person answered, two hours later.
+        event(
+            3,
+            2,
+            Some(0),
+            3_000_000,
+            EventKind::CapabilityRequested {
+                cap: "human.approve".into(),
+                args: d,
+                attempt: 1,
+            },
+        ),
+    ];
+    events.push(event(
+        4,
+        0,
+        None,
+        3_100_000,
+        EventKind::RunSuspended {
+            cap: "human.approve".into(),
+        },
+    ));
+    events.push(event(
+        5,
+        0,
+        None,
+        7_200_003_000_000,
+        EventKind::RunResumed {
+            cap: "human.approve".into(),
+        },
+    ));
+    events.push(event(
+        6,
+        2,
+        Some(0),
+        7_200_003_000_000,
+        EventKind::CapabilityCompleted {
+            cap: "human.approve".into(),
+            result: d,
+            attempt: 1,
+        },
+    ));
+
+    let json = metrics(&events, &Resource::default());
+    assert!(json.contains("sic.capability.duration"), "{json}");
+    assert!(json.contains("sic.capability.deferred"), "{json}");
+    // One millisecond in the first, two hours in the second. If they shared a
+    // histogram, neither number would be readable.
+    assert!(json.contains("\"max\":\"1\""), "the answered call: {json}");
+    assert!(
+        json.contains("\"max\":\"7200000\""),
+        "the waited call: {json}"
+    );
+}
+
 #[test]
 fn a_failed_run_counts_once_in_runs_and_once_in_failures() {
     let mut events = simple_run();

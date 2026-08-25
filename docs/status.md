@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 583 tests.
+Last updated at 585 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -77,8 +77,11 @@ nothing produces one yet - see `docs/design/trust.md`.
 **§22, OpenTelemetry.** The journal converts to OTLP documents. Nothing sends
 them: sending is an external effect, and an external effect is a capability.
 
-**§25, metrics.** Counts are there. Durations and token costs are not: the
-broker does not report either, so any number would be invented.
+**§25, metrics.** Counts and durations are there - two histograms, because a
+call answered within the call and one answered after a suspension are times four
+orders of magnitude apart and each is useless as an answer to the other's
+question. Token costs are not: nothing reports them, so a number would be
+invented.
 
 ---
 
