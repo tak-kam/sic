@@ -33,6 +33,42 @@ v0.1 ships seven, chosen because they need no credentials and no network:
 | `human.approve` | `(question: String) -> Bool` | invoke |
 | `human.choose` | `(question: String, options: List<String>) -> Int` | invoke |
 
+### What a child gets, and where it is said
+
+A child process depends on three things beyond its arguments: the binary, the
+directory it runs in, and the environment it is given. Only the first was ever
+in the manifest.
+
+```sic
+allow {
+    process.run "/usr/bin/cargo" args ["test"]
+        in "/home/me/project"
+        env { RUSTFLAGS: "-C debuginfo=0" };
+}
+```
+
+**The environment is cleared and then filled from the grant.** That has always
+been true of the clearing - a capability call has never been able to read a
+token out of the environment of whoever ran `sic` - and it was written down
+nowhere, which is how a security property stops being one. What `env` adds is
+that a program can now say what it needs instead of doing without.
+
+**`in` is absolute or it is nothing.** A relative directory would be resolved
+against whatever shell started `sic`, which is the thing `in` exists to stop;
+it is `E0335`, refused before anything runs. That is the same rule the binary's
+path is under, for the same reason: what a call does should be decided by the
+grant rather than by the environment the run happens to have.
+
+**A grant that says neither still depends on both**, so `sic plan` prints which:
+`in the directory `sic` is started in` and `with no environment`. A reader who
+is not told assumes the grant is the whole of it, and until this existed they
+were wrong.
+
+`env` is a real authority and is meant to be read as one: a program that sets
+`PATH` or `LD_PRELOAD` is deciding something about what the binary does. It is
+in the manifest, `sic plan` names every variable it sets, and that is the point
+of putting it there rather than leaving programs to reach for `sh -c`.
+
 A `process` grant may also say `delegable`, which hands it to an agent
 answering the program's model calls as well. Without it the capability is the
 program's alone: for that family the constraint does not bound the authority,

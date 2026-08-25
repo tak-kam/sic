@@ -672,8 +672,19 @@ impl Parser {
         //
         // Both are claims the manifest makes and the language cannot check, so
         // both are words on the grant, and either may come first.
+        //
+        // `in "/abs/path"` and `env { NAME: "value" }` are the other two facts
+        // a child process depends on. They are on the grant for the same
+        // reason `args` is: a plan reads the manifest and runs nothing, so
+        // what it can print is what the manifest says. See
+        // `docs/design/capabilities.md`.
+        //
+        // All four may come in any order, and each at most once.
         let mut repeatable = false;
         let mut delegable = false;
+        let mut dir = None;
+        let mut env = Vec::new();
+        let mut saw_env = false;
         loop {
             match self.peek().clone() {
                 TokenKind::Ident(name) if name == "repeatable" && !repeatable => {
@@ -683,6 +694,30 @@ impl Parser {
                 TokenKind::Ident(name) if name == "delegable" && !delegable => {
                     self.bump();
                     delegable = true;
+                }
+                TokenKind::Kw(Keyword::Reserved("in")) if dir.is_none() => {
+                    self.bump();
+                    match self.peek().clone() {
+                        TokenKind::Str(text) => {
+                            let span = self.bump().span;
+                            dir = Some(Ident2 { text, span });
+                        }
+                        other => {
+                            let span = self.span();
+                            self.error(
+                                "E0216",
+                                "`in` needs a directory",
+                                span,
+                                format!("found {}", other.describe()),
+                            );
+                            break;
+                        }
+                    }
+                }
+                TokenKind::Ident(name) if name == "env" && !saw_env => {
+                    self.bump();
+                    saw_env = true;
+                    env = self.parse_grant_env();
                 }
                 _ => break,
             }
@@ -698,7 +733,65 @@ impl Parser {
             args,
             repeatable,
             delegable,
+            dir,
+            env,
             span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// `{ RUSTFLAGS: "-C debuginfo=0" }`: the environment the child is given.
+    ///
+    /// Names are identifiers and values are string literals, for the same
+    /// reason `args` takes only literals: a grant is read before anything runs,
+    /// so anything a plan cannot print does not belong in one.
+    fn parse_grant_env(&mut self) -> Vec<(Ident2, Ident2)> {
+        let mut out = Vec::new();
+        if !self.expect(&TokenKind::LBrace, "after `env`") {
+            return out;
+        }
+        loop {
+            match self.peek().clone() {
+                TokenKind::RBrace => {
+                    self.bump();
+                    return out;
+                }
+                TokenKind::Ident(name) => {
+                    let span = self.bump().span;
+                    let key = Ident2 { text: name, span };
+                    if !self.expect(&TokenKind::Colon, "after an environment variable's name") {
+                        return out;
+                    }
+                    match self.peek().clone() {
+                        TokenKind::Str(text) => {
+                            let span = self.bump().span;
+                            out.push((key, Ident2 { text, span }));
+                        }
+                        other => {
+                            let span = self.span();
+                            self.error(
+                                "E0217",
+                                "an environment variable's value is a string",
+                                span,
+                                format!("found {}", other.describe()),
+                            );
+                            return out;
+                        }
+                    }
+                    if self.at(&TokenKind::Comma) {
+                        self.bump();
+                    }
+                }
+                other => {
+                    let span = self.span();
+                    self.error(
+                        "E0217",
+                        "`env` takes `NAME: \"value\"` pairs",
+                        span,
+                        format!("found {}", other.describe()),
+                    );
+                    return out;
+                }
+            }
         }
     }
 

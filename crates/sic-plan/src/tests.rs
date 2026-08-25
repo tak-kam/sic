@@ -28,6 +28,8 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
             pin: String::new(),
             repeatable: false,
             delegable: false,
+            dir: String::new(),
+            env: Vec::new(),
             args: Vec::new(),
             params: vec![4],
             ret_type: 4,
@@ -190,6 +192,8 @@ fn a_granted_but_uncalled_capability_is_named() {
         pin: String::new(),
         repeatable: false,
         delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
         args: Vec::new(),
         params: vec![4],
         ret_type: 2,
@@ -275,6 +279,8 @@ fn the_plan_tells_a_translated_grant_from_a_routed_one() {
             // about is the difference between a translated grant and a routed
             // one. The difference a withheld grant makes is its own test.
             delegable: *name == "process.exec",
+            dir: String::new(),
+            env: Vec::new(),
             called_from: Vec::new(),
         })
         .collect();
@@ -308,6 +314,8 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
             args: Vec::new(),
             repeatable: false,
             delegable: false,
+            dir: String::new(),
+            env: Vec::new(),
             called_from: Vec::new(),
         },
         Grant {
@@ -318,6 +326,8 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
             args: Vec::new(),
             repeatable: false,
             delegable: false,
+            dir: String::new(),
+            env: Vec::new(),
             called_from: Vec::new(),
         },
     ];

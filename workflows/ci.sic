@@ -9,11 +9,17 @@
 //     sic plan workflows/ci.sic
 //     sic run workflows/ci.sic --record
 //
-// The cargo path is one machine's. `sic` searches no `PATH` by design
-// (`docs/design/capabilities.md`), so a grant names a file rather than a
-// command, and a workflow does not move between machines unedited. That is a
-// consequence of a security property rather than a defect, and it is written
-// down rather than worked around.
+// Every path here is one machine's, and that is the shape rather than a
+// shortcut. `sic` searches no `PATH` by design, so a grant names a file rather
+// than a command; `in` and `env` name the rest of what a child depends on for
+// the same reason (#51). The result is a manifest a reader can check against
+// the machine in front of them, and a workflow that does not move between
+// machines unedited.
+//
+// The `RUSTFLAGS` line is this repository's own documented workaround for a
+// machine with no C linker (`CLAUDE.md`, "Building"). Before #51 it could not
+// be written: a capability call was given no environment and there was no way
+// to say what it needed.
 type Diagnosis {
     cause: String,
     file: String,
@@ -21,7 +27,13 @@ type Diagnosis {
 }
 
 allow {
-    process.run "/PATH/TO/cargo-bin/cargo" args ["test"];
+    process.run "/PATH/TO/cargo-bin/cargo" args ["test"]
+        in "/PATH/TO/sic"
+        env {
+            PATH: "/PATH/TO/cargo-bin:/usr/bin:/bin",
+            HOME: "/PATH/TO/home",
+            RUSTFLAGS: "-Clinker=/PATH/TO/rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/bin/rust-lld -Clinker-flavor=ld.lld",
+        };
     llm.invoke "claude-opus-4";
 }
 

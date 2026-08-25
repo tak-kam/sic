@@ -123,6 +123,13 @@ pub struct CapGrant {
     /// The broker needs it because it decides what is offered to the agent, and
     /// nothing else here does. See `docs/design/authority.md` §4.
     pub delegable: bool,
+    /// The directory the child runs in, or empty for the one `sic` was started
+    /// in. Absolute when it is there at all, so that the grant decides it
+    /// rather than the shell.
+    pub dir: String,
+    /// The environment the child is given. Empty means none, which is what
+    /// every grant meant before this existed.
+    pub env: Vec<(String, String)>,
 }
 
 /// What the VM asks the broker to do.

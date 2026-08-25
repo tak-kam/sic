@@ -166,6 +166,12 @@ pub struct CapEntry {
     /// Whether the grant says the agent answering this program's model calls
     /// may use it too, from `delegable`.
     pub delegable: bool,
+    /// The directory the child runs in, from `in "..."`. Empty means the one
+    /// `sic` itself was started in.
+    pub dir: String,
+    /// The environment the child is given, from `env { .. }`. Empty means
+    /// none, which is what every grant meant before this existed.
+    pub env: Vec<(String, String)>,
     pub params: Vec<TypeId>,
     /// From the signature: whether the last parameter may be left off.
     pub optional_tail: bool,

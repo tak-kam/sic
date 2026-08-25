@@ -218,9 +218,10 @@ fn process_capture(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome,
     reject_timeout(request)?;
     let (path, args) = exec_target(grant, request)?;
 
-    let out = std::process::Command::new(&path)
-        .args(&args)
-        .env_clear()
+    let mut command = std::process::Command::new(&path);
+    command.args(&args);
+    as_the_grant_says(&mut command, grant);
+    let out = command
         .output()
         .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
 
@@ -286,9 +287,10 @@ fn process_run(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Cap
     reject_timeout(request)?;
     let (path, args) = exec_target(grant, request)?;
 
-    let out = std::process::Command::new(&path)
-        .args(&args)
-        .env_clear()
+    let mut command = std::process::Command::new(&path);
+    command.args(&args);
+    as_the_grant_says(&mut command, grant);
+    let out = command
         .output()
         .map_err(|e| CapError::new(format!("cannot run `{}`: {e}", path.display())))?;
 
@@ -317,6 +319,27 @@ fn process_run(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Cap
         code: code as i64,
         output,
     }))
+}
+
+/// Gives a command the environment and the directory the grant names.
+///
+/// The environment is cleared first and then filled from the grant, so a child
+/// gets exactly what the manifest says and nothing that happened to be in the
+/// shell that started `sic`. That was already true - the clearing is not new -
+/// and what is new is that a program can say what it needs instead of doing
+/// without.
+///
+/// A grant with no `in` leaves the directory alone, which means the child
+/// inherits the one `sic` was started in. `sic plan` says which of the two it
+/// is, because a reader who is not told assumes the grant is the whole of it.
+fn as_the_grant_says(command: &mut std::process::Command, grant: &CapGrant) {
+    command.env_clear();
+    for (name, value) in &grant.env {
+        command.env(name, value);
+    }
+    if !grant.dir.is_empty() {
+        command.current_dir(&grant.dir);
+    }
 }
 
 fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<String>), CapError> {
@@ -376,7 +399,7 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
 
     let mut command = std::process::Command::new(&path);
     command.args(&args);
-    command.env_clear();
+    as_the_grant_says(&mut command, grant);
     let status = if request.timeout_ms == 0 {
         command
             .status()

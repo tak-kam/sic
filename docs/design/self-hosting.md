@@ -92,7 +92,10 @@ LLD="$(rustc --print sysroot)/..."; RUSTFLAGS="-Clinker=$LLD ..." cargo test
 reason that has nothing to do with the tests. **This repository's own documented
 build command cannot be expressed as a sic capability call.**
 
-→ #51
+→ #51, **fixed**: a `process` grant says `in "/abs/path"` and
+`env { NAME: "value" }`, so `workflows/ci.sic` now carries this repository's own
+documented build command and runs the same from any shell. `sic plan` says which
+of the two a grant depends on. See `docs/design/capabilities.md`.
 
 ## 4. An agent call cannot be given a deadline
 

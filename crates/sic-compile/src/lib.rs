@@ -75,6 +75,8 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
             args: c.args.clone(),
             repeatable: c.repeatable,
             delegable: c.delegable,
+            dir: c.dir.clone(),
+            env: c.env.clone(),
             params: c
                 .params
                 .iter()

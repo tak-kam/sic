@@ -432,6 +432,58 @@ impl Checker {
                 } else {
                     grant.delegable
                 };
+                // `in` and `env` describe a child process, so they mean
+                // something only for the capabilities that start one.
+                let runs_something = full.starts_with("process.");
+                if !runs_something {
+                    if let Some(dir) = &grant.dir {
+                        self.error(
+                            "E0334",
+                            format!("`{full}` starts no process"),
+                            dir.span,
+                            "only a `process` capability takes `in` or `env`",
+                        );
+                    }
+                    if let Some((name, _)) = grant.env.first() {
+                        self.error(
+                            "E0334",
+                            format!("`{full}` starts no process"),
+                            name.span,
+                            "only a `process` capability takes `in` or `env`",
+                        );
+                    }
+                }
+                let dir = match &grant.dir {
+                    // A relative directory would be resolved against whatever
+                    // shell started `sic`, which is the thing `in` exists to
+                    // stop. Refused here rather than at the call, because a
+                    // grant is a literal and everything checkable before a run
+                    // is checked before it.
+                    Some(dir) if !std::path::Path::new(&dir.text).is_absolute() => {
+                        self.error(
+                            "E0335",
+                            "`in` needs an absolute path",
+                            dir.span,
+                            "a relative one would be decided by the shell",
+                        );
+                        self.note(
+                            "the directory a call runs in is part of what it does, so the \
+                             manifest names it the way it names the binary",
+                        );
+                        String::new()
+                    }
+                    Some(dir) if runs_something => dir.text.clone(),
+                    _ => String::new(),
+                };
+                let env: Vec<(String, String)> = if runs_something {
+                    grant
+                        .env
+                        .iter()
+                        .map(|(name, value)| (name.text.clone(), value.text.clone()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 let id = CapId(self.caps.len() as u32);
                 self.cap_ids.insert(full.clone(), id);
                 self.caps.push(CapEntry {
@@ -442,6 +494,8 @@ impl Checker {
                     args,
                     repeatable: grant.repeatable,
                     delegable,
+                    dir,
+                    env,
                     params: sig.params.to_vec(),
                     optional_tail: sig.optional_tail,
                     ret: sig.ret,

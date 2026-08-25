@@ -281,6 +281,11 @@ pub struct CapDecl {
     /// Whether the grant says an agent answering this program's model calls
     /// may use it too, from `delegable` on the grant.
     pub delegable: bool,
+    /// The directory the child runs in, or empty for the one `sic` was
+    /// started in.
+    pub dir: String,
+    /// The environment the child is given. Empty means none.
+    pub env: Vec<(String, String)>,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

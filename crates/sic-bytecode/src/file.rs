@@ -28,7 +28,10 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 6 for `delegable`, for exactly the same reason: a second flag in
 /// the same place, and a reader that stopped after the first would take it for
 /// the parameter count.
-pub const VERSION_MINOR: u16 = 7;
+/// Bumped from 7 for `in` and `env`: a manifest entry now says what directory
+/// and what environment a child gets, and a reader that stopped after the flags
+/// would take the directory's length for the parameter count.
+pub const VERSION_MINOR: u16 = 8;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -114,6 +117,12 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.str(&c.pin);
         w.bool(c.repeatable);
         w.bool(c.delegable);
+        w.str(&c.dir);
+        w.u32(c.env.len() as u32);
+        for (name, value) in &c.env {
+            w.str(name);
+            w.str(value);
+        }
         w.u8(c.args.len() as u8);
         for a in &c.args {
             w.str(a);
@@ -387,6 +396,14 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
         let pin = r.str()?;
         let repeatable = r.bool()?;
         let delegable = r.bool()?;
+        let dir = r.str()?;
+        // Two strings is the smallest a pair can be, which is what stops a
+        // claimed count from allocating on a promise.
+        let pairs = r.count(2)?;
+        let mut env = Vec::with_capacity(pairs);
+        for _ in 0..pairs {
+            env.push((r.str()?, r.str()?));
+        }
         let arg_count = r.u8()? as usize;
         let mut args = Vec::with_capacity(arg_count);
         for _ in 0..arg_count {
@@ -404,6 +421,8 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             pin,
             repeatable,
             delegable,
+            dir,
+            env,
             args,
             params,
             ret_type: r.u32()?,
@@ -492,6 +511,8 @@ mod tests {
                 pin: "a".repeat(64),
                 repeatable: false,
                 delegable: false,
+                dir: String::new(),
+                env: Vec::new(),
                 args: Vec::new(),
                 params: vec![4],
                 ret_type: 2,
@@ -590,6 +611,8 @@ mod tests {
                     pin: "b".repeat(64),
                     repeatable: false,
                     delegable: false,
+                    dir: String::new(),
+                    env: Vec::new(),
                     args: vec!["status".into(), "--porcelain".into()],
                     params: vec![4],
                     ret_type: 2,
@@ -601,6 +624,8 @@ mod tests {
                     pin: String::new(),
                     repeatable: false,
                     delegable: false,
+                    dir: String::new(),
+                    env: Vec::new(),
                     args: Vec::new(),
                     params: Vec::new(),
                     ret_type: 4,

@@ -73,6 +73,8 @@ pub fn manifest(program: &Program) -> Vec<CapGrant> {
             pin: c.pin.clone(),
             args: c.args.clone(),
             delegable: c.delegable,
+            dir: c.dir.clone(),
+            env: c.env.clone(),
         })
         .collect()
 }

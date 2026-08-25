@@ -150,6 +150,12 @@ pub struct Grant {
     /// claim the manifest makes that the language cannot check, so the person
     /// reading the plan is the one who has to decide it.
     pub delegable: bool,
+    /// The directory a call runs in, or empty for the one `sic` was started
+    /// in. Printed either way: a reader deciding whether to run this needs to
+    /// know when the answer depends on their shell.
+    pub dir: String,
+    /// The environment a call is given. Empty means none.
+    pub env: Vec<(String, String)>,
     /// The files whose code calls it. Derived from the call sites rather than
     /// from a declaration, so it says where a grant is really used.
     pub called_from: Vec<String>,
@@ -292,6 +298,8 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             args: c.args.clone(),
             repeatable: c.repeatable,
             delegable: c.delegable,
+            dir: c.dir.clone(),
+            env: c.env.clone(),
             called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
@@ -399,6 +407,22 @@ pub fn render(plan: &Plan, source: &str) -> String {
         } else {
             out.push_str(&format!("  sha256:{}", grant.pin));
         }
+        // A child process depends on these whether or not the grant mentions
+        // them, so the plan says which - a reader who is not told assumes the
+        // grant is the whole of it.
+        if grant.name.starts_with("process.") {
+            match grant.dir.is_empty() {
+                true => out.push_str("  in the directory `sic` is started in"),
+                false => out.push_str(&format!("  in {:?}", grant.dir)),
+            }
+            match grant.env.is_empty() {
+                true => out.push_str("  with no environment"),
+                false => {
+                    let names: Vec<&str> = grant.env.iter().map(|(n, _)| n.as_str()).collect();
+                    out.push_str(&format!("  env {}", names.join(", ")));
+                }
+            }
+        }
         if grant.delegable {
             out.push_str("  delegable");
         }
@@ -462,6 +486,8 @@ fn agent_authority(manifest: &[Grant]) -> String {
             pin: g.pin.clone(),
             args: g.args.clone(),
             delegable: g.delegable,
+            dir: g.dir.clone(),
+            env: g.env.clone(),
         })
         .collect();
 

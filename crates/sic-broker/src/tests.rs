@@ -12,6 +12,8 @@ fn grant(name: &str, kind: CapKind, constraint: &str) -> CapGrant {
         // The default, and the safe one: a `process` grant is the program's
         // until the manifest says otherwise. The routing tests below say so.
         delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
     }
 }
 

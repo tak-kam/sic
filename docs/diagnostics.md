@@ -57,6 +57,8 @@ reason.
 | E0213 | `args` without a list of strings |
 | E0214 | an expression tree deeper than the parser will build |
 | E0215 | `memory` with anything but `task` |
+| E0216 | `in` without a directory |
+| E0217 | `env` without `NAME: "value"` pairs |
 
 ## E03xx — names, types and effects
 
@@ -100,6 +102,8 @@ reason.
 | E0331 | `main` returning a task |
 | E0332 | spawning a capability |
 | E0333 | awaiting something that is not a task |
+| E0334 | `in` or `env` on a capability that starts no process |
+| E0335 | `in` with a relative path |
 
 ### Records and lists
 

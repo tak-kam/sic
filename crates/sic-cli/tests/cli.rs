@@ -356,6 +356,109 @@ mod verification {
 mod capabilities {
     use super::*;
 
+    /// A child depends on a directory and an environment whether or not the
+    /// manifest mentions them. `in` is what makes the grant decide the first,
+    /// so the same bytecode does the same thing from any shell.
+    #[test]
+    fn a_grant_can_say_which_directory_a_call_runs_in() {
+        let src = write_temp(
+            "cap-in.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/pwd\" args [] in \"/tmp\";\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   return process.run(\"/bin/pwd\", none).output;\n\
+             }\n",
+        );
+        // From two different directories, the same answer. Without `in` this
+        // is the test that would print two.
+        for from in [repo_root(), std::path::PathBuf::from("/")] {
+            let (stdout, stderr, code) = sic_in(from, &["run", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "stderr: {stderr}");
+            assert_eq!(stdout.trim(), "\"/tmp\\n\"", "{stdout}");
+        }
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The environment is cleared and then filled from the grant, so a child
+    /// gets what the manifest says and nothing the shell happened to have.
+    #[test]
+    fn a_call_gets_the_environment_the_grant_names_and_no_other() {
+        let src = write_temp(
+            "cap-env.sic",
+            "allow {\n\
+             \x20   process.run \"/usr/bin/env\" args [] env { GREETING: \"from the manifest\" };\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   return process.run(\"/usr/bin/env\", none).output;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(stdout.contains("GREETING=from the manifest"), "{stdout}");
+        // `SIC_RUNS` is set in this process by other tests and is never in the
+        // child's, which is the half of this that matters.
+        assert!(!stdout.contains("SIC_RUNS"), "{stdout}");
+        assert!(!stdout.contains("PATH="), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A grant that says neither still depends on both, so the plan says which
+    /// - a reader who is not told assumes the grant is the whole of it.
+    #[test]
+    fn a_plan_says_when_a_call_depends_on_the_shell_that_started_it() {
+        let (stdout, _, code) = sic(&["plan", &example("run.sic")]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("in the directory `sic` is started in"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("with no environment"), "{stdout}");
+    }
+
+    /// `in` and `env` describe a child process, and a capability that starts
+    /// none has nothing to do with either.
+    #[test]
+    fn only_a_capability_that_starts_a_process_takes_in_or_env() {
+        let src = write_temp(
+            "cap-in-wrong.sic",
+            "allow {\n\
+             \x20   fs.read \"./examples/greeting.txt\" in \"/tmp\";\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   return fs.read(\"./examples/greeting.txt\");\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0334"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A relative `in` would be resolved against whatever shell started `sic`,
+    /// which is the thing `in` exists to stop.
+    #[test]
+    fn a_relative_directory_is_refused_before_anything_runs() {
+        let src = write_temp(
+            "cap-in-relative.sic",
+            "allow {\n\
+             \x20   process.exec \"/bin/true\" args [] in \"./crates\";\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let none: List<String> = [];\n\
+             \x20   return process.exec(\"/bin/true\", none);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0335"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
     #[test]
     fn a_granted_capability_is_performed_by_the_broker() {
         let data = write_temp("cap-data.txt", "hello from a file");

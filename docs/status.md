@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 562 tests.
+Last updated at 567 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and

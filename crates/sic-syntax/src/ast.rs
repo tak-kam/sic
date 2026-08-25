@@ -151,6 +151,12 @@ pub struct CapGrant {
     /// may use it too, from `delegable`. Without it the capability is the
     /// program's and not the agent's. See `docs/design/authority.md`.
     pub delegable: bool,
+    /// The directory the child runs in, from `in "/abs/path"`. Absent means
+    /// the one `sic` itself was started in.
+    pub dir: Option<Ident2>,
+    /// The environment the child is given, from `env { NAME: "value" }`.
+    /// Absent and empty mean the same thing: no environment at all.
+    pub env: Vec<(Ident2, Ident2)>,
     pub span: Span,
 }
 

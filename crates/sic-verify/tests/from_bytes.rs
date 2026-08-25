@@ -45,6 +45,8 @@ fn well_formed() -> Program {
             pin: "a".repeat(64),
             repeatable: false,
             delegable: false,
+            dir: String::new(),
+            env: Vec::new(),
             args: Vec::new(),
             params: vec![4],
             ret_type: 2,

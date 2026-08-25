@@ -84,6 +84,17 @@ impl Printer {
             if let Some(pin) = &g.sha256 {
                 parts.push(format!("sha256 {:?}", pin.text));
             }
+            if let Some(dir) = &g.dir {
+                parts.push(format!("in {:?}", dir.text));
+            }
+            if !g.env.is_empty() {
+                let pairs: Vec<String> = g
+                    .env
+                    .iter()
+                    .map(|(k, v)| format!("{}: {:?}", k.text, v.text))
+                    .collect();
+                parts.push(format!("env {{{}}}", pairs.join(", ")));
+            }
             if g.delegable {
                 parts.push("delegable".to_string());
             }
