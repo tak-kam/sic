@@ -157,6 +157,18 @@ grant to drive every pane on the machine.
 → [capabilities.md](docs/design/capabilities.md),
 [arguments.md](docs/design/arguments.md)
 
+**Granting git is closer to granting arbitrary execution than it looks.**
+`core.pager`, `diff.external` and an alias are command lines in a config file;
+`.git/hooks` holds executables that arrived with the repository;
+`credential.helper` and `protocol.ext` name programs too. A manifest can pin
+the binary and clear the environment and reach none of them. So `git.status`
+and `git.rev_parse` are capabilities of their own: the broker builds the
+command line, and every call turns all of that off. That is the test a program
+has to pass to get a capability rather than a `process.run` grant - the broker
+must be able to enforce something the manifest cannot say - and `cargo` and
+`npm` do not pass it.
+→ [git.md](docs/design/git.md)
+
 **Reading what a program said is its own grant.** `process.capture` returns
 standard output, and only when the program succeeded. An exit code is one bit;
 standard output is everything the program can see, so the two are different
@@ -288,6 +300,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
+| [git.md](docs/design/git.md) | `git`, and when a program deserves a capability |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [extraction.md](docs/design/extraction.md) | why the longest functions are the right length |

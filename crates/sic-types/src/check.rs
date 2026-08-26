@@ -434,7 +434,23 @@ impl Checker {
                 };
                 // `in` and `env` describe a child process, so they mean
                 // something only for the capabilities that start one.
-                let runs_something = full.starts_with("process.");
+                let runs_something = full.starts_with("process.") || full.starts_with("git.");
+                // But only a `process` grant may say what the child gets. The
+                // whole reason `git` is a capability rather than a
+                // `process.run` grant is that the broker decides what git
+                // reads - a manifest that could set `GIT_CONFIG_GLOBAL` would
+                // be handing that decision straight back.
+                if full.starts_with("git.") {
+                    if let Some((name, _)) = grant.env.first() {
+                        self.error(
+                            "E0336",
+                            format!("`{full}` decides its own environment"),
+                            name.span,
+                            "a variable here would change what git reads, which is what this \
+                             grant exists to settle; `process.run` is where you say that",
+                        );
+                    }
+                }
                 if !runs_something {
                     if let Some(dir) = &grant.dir {
                         self.error(

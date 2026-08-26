@@ -2769,6 +2769,310 @@ mod the_plan_against_the_run {
     }
 }
 
+/// `git`, and the reason it is a capability rather than a `process.run` grant.
+/// `docs/design/git.md`.
+mod git {
+    use super::*;
+
+    /// Where git is on this machine. A test that guessed a path would be
+    /// testing the machine rather than the broker.
+    fn git_binary() -> Option<String> {
+        for path in ["/usr/bin/git", "/bin/git", "/usr/local/bin/git"] {
+            if std::path::Path::new(path).exists() {
+                return Some(path.to_string());
+            }
+        }
+        None
+    }
+
+    /// A repository of its own, so a test never reads the one it is running
+    /// in: what is dirty there depends on who is working.
+    fn a_repository(named: &str) -> Option<(String, std::path::PathBuf)> {
+        let git = git_binary()?;
+        let dir = temp_store(named);
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        let run = |args: &[&str]| {
+            std::process::Command::new(&git)
+                .args(args)
+                .current_dir(&dir)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@example.com")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@example.com")
+                .output()
+                .expect("git runs")
+        };
+        run(&["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "one\n").unwrap();
+        run(&["add", "a.txt"]);
+        run(&["commit", "-qm", "one"]);
+        Some((git, dir))
+    }
+
+    /// The two calls, against a repository this test made. A clean tree has
+    /// nothing to report, and `HEAD` resolves to something 40 characters long.
+    #[test]
+    fn a_program_can_ask_what_a_repository_is() {
+        let Some((git, dir)) = a_repository("git-ask") else {
+            panic!("no git on this machine, and this test needs one rather than a pass");
+        };
+        let src = write_temp(
+            "git-ask.sic",
+            &format!(
+                "allow {{\n\
+             \x20   git.status {git:?} in {:?};\n\
+             \x20   git.rev_parse {git:?} in {:?};\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   let head = git.rev_parse(\"HEAD\");\n\
+             \x20   log info head;\n\
+             \x20   return len(git.status());\n\
+             }}\n",
+                dir.to_string_lossy(),
+                dir.to_string_lossy()
+            ),
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "0", "a clean tree has nothing to report");
+        // The commit this repository was just given.
+        let logged = stderr
+            .lines()
+            .find(|l| l.starts_with("info:"))
+            .unwrap_or_default();
+        let hash = logged.trim_start_matches("info:").trim();
+        assert_eq!(hash.len(), 40, "{stderr}");
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()), "{stderr}");
+
+        // And a dirty tree has one entry per path, which is what makes `len`
+        // the question a workflow actually asks.
+        std::fs::write(dir.join("b.txt"), "two\n").unwrap();
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "1", "{stderr}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// The claim the whole capability rests on. A repository is data that came
+    /// from somewhere; its hooks are executables that came with it. A
+    /// `process.run "/usr/bin/git"` grant cannot say this, and that is why
+    /// `git.status` exists.
+    #[test]
+    fn a_hook_in_the_repository_does_not_run() {
+        let Some((git, dir)) = a_repository("git-hook") else {
+            panic!("no git on this machine, and this test needs one rather than a pass");
+        };
+        let ran = dir.join("the-hook-ran");
+        let hooks = dir.join(".git/hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        // `post-index-change` is a read-path hook: `git status` refreshes the
+        // index, so this is one git would run.
+        let hook = hooks.join("post-index-change");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\ntouch {:?}\n", ran.to_string_lossy()),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // And a config that names a program, which is the other half.
+        std::fs::write(
+            dir.join(".git/config"),
+            format!(
+                "[core]\n\trepositoryformatversion = 0\n\tpager = sh -c 'touch {:?}'\n",
+                ran.to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        let src = write_temp(
+            "git-hook.sic",
+            &format!(
+                "allow {{\n\
+             \x20   git.status {git:?} in {:?};\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   return len(git.status());\n\
+             }}\n",
+                dir.to_string_lossy()
+            ),
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            !ran.exists(),
+            "the repository's own hook or pager ran, which is the one thing this \
+             capability exists to prevent"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A revision is a name. One that starts with `-` is an option, and an
+    /// option is how a read becomes something else.
+    #[test]
+    fn a_revision_that_is_an_option_is_refused() {
+        let Some((git, dir)) = a_repository("git-option") else {
+            panic!("no git on this machine, and this test needs one rather than a pass");
+        };
+        let src = write_temp(
+            "git-option.sic",
+            &format!(
+                "allow {{\n\
+             \x20   git.rev_parse {git:?} in {:?};\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   return len(git.rev_parse(\"--git-dir\"));\n\
+             }}\n",
+                dir.to_string_lossy()
+            ),
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("is not a revision"), "{stderr}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// What git reads is what this capability decides, so a manifest cannot
+    /// take the decision back. Refused at compile time rather than ignored at
+    /// the call.
+    #[test]
+    fn a_git_grant_cannot_say_what_git_reads() {
+        let src = write_temp(
+            "git-env.sic",
+            "allow {\n\
+         \x20   git.status \"/usr/bin/git\" in \"/tmp\" env { GIT_CONFIG_GLOBAL: \"/tmp/mine\" };\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   return len(git.status());\n\
+         }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0336"), "{stderr}");
+        assert!(stderr.contains("decides its own environment"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// It runs a program and reads the answer, which is neither `READ` - a
+    /// file - nor `EXEC` - a program whose arguments the program chose. And
+    /// the plan says which repository, because that is what a reader is being
+    /// asked to allow.
+    #[test]
+    fn a_plan_says_which_repository_and_what_git_may_read() {
+        let src = write_temp(
+            "git-plan.sic",
+            "allow {\n\
+         \x20   git.status \"/usr/bin/git\" in \"/srv/thing\";\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   return len(git.status());\n\
+         }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("INSPECT"), "{stdout}");
+        assert!(stdout.contains("in \"/srv/thing\""), "{stdout}");
+        assert!(
+            stdout.contains("reading no configuration but this repository's"),
+            "{stdout}"
+        );
+        // Not "with no environment", which would read as a thing this grant
+        // chose rather than one it cannot change.
+        assert!(!stdout.contains("with no environment"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The output is what a program printed, so it cannot decide what another
+    /// program is told - which is the whole of what `Observed` is for.
+    #[test]
+    fn what_git_said_cannot_decide_what_runs() {
+        let src = write_temp(
+            "git-trust.sic",
+            "allow {\n\
+         \x20   git.rev_parse \"/usr/bin/git\" in \"/srv/thing\";\n\
+         \x20   fs.write \"./out.txt\";\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   fs.write(\"./out.txt\", git.rev_parse(\"HEAD\"));\n\
+         \x20   return 0;\n\
+         }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The safe command line is the broker's, and no rule about a shell
+    /// command can hold it - so the agent reaches git only by coming back
+    /// through the broker, where the grant is applied again.
+    ///
+    /// Without `delegable`, which a `git` grant cannot say (E0329) and does
+    /// not need: that word means something only where the manifest has not
+    /// already bounded the authority, and this one is bounded three times -
+    /// which binary, which repository, and a command line the agent never gets
+    /// to write.
+    #[test]
+    fn the_agent_reaches_git_only_through_the_broker() {
+        let src = write_temp(
+            "git-agent.sic",
+            // With a model call, because that is when there is an agent for
+            // the plan to say anything about.
+            "allow {\n\
+         \x20   git.status \"/usr/bin/git\" in \"/srv/thing\";\n\
+         \x20   llm.invoke \"claude\";\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   let said = llm.invoke(\"hello\");\n\
+         \x20   return len(said) + len(git.status());\n\
+         }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("through the broker"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And the word is refused rather than ignored, so a manifest cannot look
+    /// like it widened something it did not.
+    #[test]
+    fn a_git_grant_cannot_say_delegable() {
+        let src = write_temp(
+            "git-delegable.sic",
+            "allow {\n\
+         \x20   git.status \"/usr/bin/git\" in \"/srv/thing\" delegable;\n\
+         }\n\
+         \n\
+         fn main() -> Int {\n\
+         \x20   return len(git.status());\n\
+         }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0329"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// trust and provenance.
 mod trust {
     use super::*;

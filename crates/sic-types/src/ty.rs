@@ -140,6 +140,9 @@ impl Types {
     /// exists. The provenance belongs to the field that has one: the text a
     /// program printed, exactly as `process.capture` returns it.
     pub const EXIT: TypeId = TypeId(8);
+    /// What a program printed, one line at a time. Interned for the same
+    /// reason `LIST_STR` is: a builtin capability signature is a `const`.
+    pub const OBSERVED_LIST_STR: TypeId = TypeId(9);
 
     pub fn new() -> Self {
         let mut t = Self {
@@ -172,6 +175,10 @@ impl Types {
             ],
         );
         assert_eq!(t.intern(Type::Object(exit)), Self::EXIT);
+        assert_eq!(
+            t.intern(Type::Trust(TrustKind::Observed, Self::LIST_STR)),
+            Self::OBSERVED_LIST_STR
+        );
         t
     }
 

@@ -230,6 +230,28 @@ pub fn reach_of(grant: &CapGrant) -> Reach {
             }
         }
 
+        // The command line is the broker's, not the grant's: `-c
+        // core.hooksPath=/dev/null` and the six lines beside it are what makes
+        // this different from `process.run "/usr/bin/git"`, and none of them
+        // survives translation into a rule about a shell command. So it is
+        // routed, and on the same terms as the `process` family - a grant the
+        // program has is not always a grant the agent should have.
+        // Routed rather than translated: the safe command line is the
+        // broker's, not the grant's. `-c core.hooksPath=/dev/null` and the six
+        // lines beside it are the whole difference between this and
+        // `process.run "/usr/bin/git"`, and none of them survives being
+        // rewritten as a rule about a shell command.
+        //
+        // And routed without `delegable`, which a `git` grant cannot say
+        // (E0329) and does not need. That word means something only where the
+        // manifest has not already bounded the authority - `sh -c` can be an
+        // entire program. A `git` grant is bounded three times over: which
+        // binary, which repository, and a command line the agent never gets to
+        // write. Coming back through the broker, it is the grant, exactly.
+        name if name.starts_with("git.") => {
+            Reach::Routed("the safe command line is the broker's, and a rule cannot hold it")
+        }
+
         // Asking a person is not a tool the agent has, and it suspends the run
         // when the broker performs it. Only the broker can do either.
         "human.approve" | "human.choose" => Reach::Routed("only the broker can ask a person"),

@@ -134,6 +134,10 @@ impl Action {
             Action::Capability { name, .. } if name == "process.run" => "RUN",
             // Asking a person is not the same act as asking a model, and a
             // plan is read by the person who will be asked.
+            // Neither `READ`, which is a file, nor `EXEC`, which is a
+            // program the grant named and the program chose the arguments
+            // for. This runs git, with a command line the broker decides.
+            Action::Capability { name, .. } if name.starts_with("git.") => "INSPECT",
             Action::Capability { name, .. } if name == "human.choose" => "CHOOSE",
             Action::Capability { name, .. } if name == "human.approve" => "APPROVE",
             Action::Capability { kind, .. } => match kind {
@@ -458,11 +462,13 @@ pub fn render(plan: &Plan, source: &str) -> String {
         // A child process depends on these whether or not the grant mentions
         // them, so the plan says which - a reader who is not told assumes the
         // grant is the whole of it.
-        if grant.name.starts_with("process.") {
+        if grant.name.starts_with("process.") || grant.name.starts_with("git.") {
             match grant.dir.is_empty() {
                 true => out.push_str("  in the directory `sic` is started in"),
                 false => out.push_str(&format!("  in {:?}", grant.dir)),
             }
+        }
+        if grant.name.starts_with("process.") {
             match grant.env.is_empty() {
                 true => out.push_str("  with no environment"),
                 false => {
@@ -470,6 +476,13 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     out.push_str(&format!("  env {}", names.join(", ")));
                 }
             }
+        }
+        // Not "with no environment", which would read as a thing this grant
+        // chose. A `git` grant cannot say `env` at all (E0336), and what git
+        // is allowed to read is the whole reason it is a capability - so the
+        // plan says what was settled rather than what was left out.
+        if grant.name.starts_with("git.") {
+            out.push_str("  reading no configuration but this repository's");
         }
         if grant.delegable {
             out.push_str("  delegable");

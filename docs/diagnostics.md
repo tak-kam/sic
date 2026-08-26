@@ -105,6 +105,7 @@ reason.
 | E0333 | awaiting something that is not a task |
 | E0334 | `in` or `env` on a capability that starts no process |
 | E0335 | `in` with a relative path |
+| E0336 | `env` on a `git` grant, which decides its own |
 
 ### Records and lists
 

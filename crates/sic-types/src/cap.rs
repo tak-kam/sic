@@ -126,6 +126,35 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         optional_tail: true,
     },
     CapSig {
+        name: "git.status",
+        // Reading, and the kind is what the trust rule looks at. Nothing about
+        // this changes a repository.
+        kind: CapKind::Read,
+        // Nothing. Which repository is `in` on the grant, and what git is
+        // asked is the whole of what this capability is.
+        params: &[],
+        // One entry per path with something to report, exactly as
+        // `--porcelain=v1` gives them. `Observed`, because it is what a
+        // program printed - see `docs/design/git.md` §4.
+        ret: Types::OBSERVED_LIST_STR,
+        // The constraint names git itself, at an absolute path, the way every
+        // other grant that starts a program does.
+        requires_constraint: true,
+        accepts_pin: true,
+        optional_tail: false,
+    },
+    CapSig {
+        name: "git.rev_parse",
+        kind: CapKind::Read,
+        // What to resolve: `HEAD`, a tag, a branch. Checked against a short
+        // list before it reaches git - see `docs/design/git.md` §3.
+        params: &[Types::STR],
+        ret: Types::OBSERVED_STR,
+        requires_constraint: true,
+        accepts_pin: true,
+        optional_tail: false,
+    },
+    CapSig {
         name: "process.exec",
         kind: CapKind::Exec,
         // The path, then what to pass it. The vector may be left off, and

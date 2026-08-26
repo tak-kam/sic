@@ -164,6 +164,8 @@ pub fn perform_granted(grant: &CapGrant, request: &CapRequest) -> Result<CapOutc
         "process.exec" => process_exec(grant, request),
         "process.capture" => process_capture(grant, request),
         "process.run" => process_run(grant, request),
+        "git.status" => git_status(grant, request),
+        "git.rev_parse" => git_rev_parse(grant, request),
         "human.approve" => human_approve(grant, request),
         "human.choose" => human_choose(grant, request),
         other => Err(CapError::new(format!(
@@ -353,6 +355,26 @@ fn as_the_grant_says(command: &mut std::process::Command, grant: &CapGrant) {
     }
 }
 
+/// Checks a pinned binary against what is on disk.
+///
+/// A path says where to look, not what is there. When the grant pins the
+/// contents they are checked on every call: a check that ran earlier tells you
+/// what was true earlier.
+fn check_pin(grant: &CapGrant, path: &std::path::Path) -> Result<(), CapError> {
+    if grant.pin.is_empty() {
+        return Ok(());
+    }
+    let found = hash_file(path)?;
+    if found != grant.pin.to_ascii_lowercase() {
+        return Err(CapError::new(format!(
+            "`{}` is sha256:{found}, but the grant pins sha256:{}",
+            path.display(),
+            grant.pin
+        )));
+    }
+    Ok(())
+}
+
 fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<String>), CapError> {
     let args = exec_args(request)?;
     let path = allowed_path(grant, string_arg(request, 0, request.args.len())?)?;
@@ -366,19 +388,7 @@ fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<S
         )));
     }
 
-    // A path says where to look, not what is there. When the grant pins the
-    // contents, they are checked on every call: a check that ran earlier tells
-    // you what was true earlier.
-    if !grant.pin.is_empty() {
-        let found = hash_file(&path)?;
-        if found != grant.pin.to_ascii_lowercase() {
-            return Err(CapError::new(format!(
-                "`{}` is sha256:{found}, but the grant pins sha256:{}",
-                path.display(),
-                grant.pin
-            )));
-        }
-    }
+    check_pin(grant, &path)?;
 
     // Two rules, and the difference between them is the point. A grant that
     // names a prefix allows anything starting with it. A grant that names
@@ -724,6 +734,139 @@ fn string_arg_of(request: &CapRequest, index: usize) -> Result<&str, CapError> {
             request.args[index].type_name()
         ))
     })
+}
+
+/// What git is told on every call, before anything the grant says.
+///
+/// This list is the reason `git` is a capability at all. A manifest can pin
+/// the binary and clear the environment, and neither of those reaches
+/// `.git/config`, `~/.gitconfig` or `/etc/gitconfig` - and any of the three
+/// can name a program git will then run:
+///
+/// | what | reaches |
+/// |------|---------|
+/// | `core.pager`, `core.editor`, `diff.external` | a command line |
+/// | `.git/hooks` | executables that arrived with the repository |
+/// | `credential.helper` | a program, named in configuration |
+/// | `protocol.ext` | a remote URL turned into a command |
+///
+/// A repository is data that came from somewhere. Its hooks are not.
+///
+/// `docs/design/git.md` §2.
+const FIRST: &[&str] = &[
+    // Nothing here writes, so a hook has nothing to run on. Set anyway: a
+    // repository may name a `hooksPath` that a later read triggers, and a list
+    // that is right for the reason rather than for today's calls is the one
+    // that stays right.
+    "-c",
+    "core.hooksPath=/dev/null",
+    // Each of these is a command line in a configuration file.
+    "-c",
+    "core.pager=cat",
+    "-c",
+    "core.editor=false",
+    "-c",
+    "diff.external=",
+    // A URL that becomes a command, which is the one line in a config file
+    // that reaches the network and a shell in the same step.
+    "-c",
+    "protocol.ext.allow=never",
+    // A program named in configuration, asked for by anything that touches a
+    // remote. Nothing here does; it costs one line to be sure.
+    "-c",
+    "credential.helper=",
+    // And no pager process at all, whatever the config said.
+    "--no-pager",
+];
+
+/// The environment git gets, which is nothing plus the two that say so.
+///
+/// `env_clear` alone is not enough: git reads `/etc/gitconfig` and
+/// `$HOME/.gitconfig` by paths of its own, and with no `HOME` it falls back to
+/// the passwd entry rather than to nothing. These say it in git's own words.
+fn only_this_repository(command: &mut std::process::Command) {
+    command.env_clear();
+    command.env("GIT_CONFIG_NOSYSTEM", "1");
+    command.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    // Asked for by `credential.helper` and by anything that opens a terminal.
+    // There is nobody to ask: this run's person is answering `sic`, not git.
+    command.env("GIT_TERMINAL_PROMPT", "0");
+}
+
+/// Builds the call, with the grant's binary and directory and none of its
+/// environment.
+///
+/// A `git` grant may say `in`, because which repository is exactly what a
+/// reader needs to see. It may not say `env`, and E0336 refuses it at compile
+/// time: a variable there would decide what git reads, which is the decision
+/// this capability exists to take.
+fn git_command(grant: &CapGrant, rest: &[&str]) -> Result<std::process::Command, CapError> {
+    let path = PathBuf::from(&grant.constraint);
+    if !path.is_absolute() {
+        return Err(CapError::new(format!(
+            "`{}` is not an absolute path, and `git` is not searched for on PATH",
+            path.display()
+        )));
+    }
+    check_pin(grant, &path)?;
+    let mut command = std::process::Command::new(&path);
+    only_this_repository(&mut command);
+    if !grant.dir.is_empty() {
+        command.current_dir(&grant.dir);
+    }
+    command.args(FIRST);
+    command.args(rest);
+    Ok(command)
+}
+
+/// What git said, or what it said when it failed.
+fn git_output(mut command: std::process::Command) -> Result<String, CapError> {
+    let out = command
+        .output()
+        .map_err(|e| CapError::new(format!("cannot run git: {e}")))?;
+    if !out.status.success() {
+        // git's own diagnosis, which is more use than the exit code: "not a
+        // git repository" and "unknown revision" are different problems with
+        // different fixes.
+        let said = String::from_utf8_lossy(&out.stderr);
+        let said = said.trim();
+        return Err(CapError::new(match said.is_empty() {
+            true => format!("git exited {}", out.status),
+            false => format!("git: {said}"),
+        }));
+    }
+    String::from_utf8(out.stdout)
+        .map_err(|_| CapError::new("git answered with something that is not text".to_string()))
+}
+
+/// What is modified, staged or untracked, one entry per path.
+///
+/// `--porcelain=v1` because it is the format git documents as stable for
+/// scripts, which is what makes reading it a reasonable thing for a broker to
+/// do and an unreasonable thing for a workflow to do - `sic`'s string handling
+/// is thin on purpose and should stay that way rather than grow to meet `sed`.
+fn git_status(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
+    let text = git_output(git_command(grant, &["status", "--porcelain=v1"])?)?;
+    let lines = text.lines().map(str::to_string).collect();
+    Ok(CapOutcome::Value(CapValue::List(lines)))
+}
+
+/// What a revision resolves to.
+fn git_rev_parse(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
+    reject_timeout(request)?;
+    let rev = string_arg(request, 0, 1)?;
+    // A revision is a name, and this is the only place a `git` call takes one
+    // from the program. `--` and a leading `-` are how an argument becomes an
+    // option, and an option is how a read becomes something else.
+    if rev.starts_with('-') || rev.contains(char::is_whitespace) || rev.is_empty() {
+        return Err(CapError::new(format!(
+            "`{rev}` is not a revision: a revision is a name, and one that starts with `-` is \
+             an option"
+        )));
+    }
+    let text = git_output(git_command(grant, &["rev-parse", "--verify", rev])?)?;
+    Ok(CapOutcome::Value(CapValue::Str(text.trim().to_string())))
 }
 
 #[cfg(test)]
