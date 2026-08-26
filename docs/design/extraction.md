@@ -4,16 +4,31 @@ The longest functions in the tree are these:
 
 | lines | where | what it is |
 |---|---|---|
-| 333 | `sic-verify/src/lib.rs:517` `check_data_flow` | one arm per opcode |
-| 331 | `sic-vm/src/lib.rs:874` `run_task` | one arm per opcode |
-| 233 | `sic-ir/src/lower.rs:236` `expr` | one arm per expression kind |
-| 204 | `sic-otel/src/traces.rs:36` `traces` | one arm per journal event |
-| 183 | `sic-compile/src/lib.rs:431` `inst` | one arm per HIR instruction |
-| 181 | `sic-verify/src/lib.rs:280` `check_structure` | one arm per opcode |
+| 357 | `sic-vm/src/lib.rs` `run_task` | one arm per opcode |
+| 347 | `sic-verify/src/lib.rs` `check_data_flow` | one arm per opcode |
+| 233 | `sic-ir/src/lower.rs` `expr` | one arm per expression kind |
+| 210 | `sic-otel/src/traces.rs` `traces` | one arm per journal event |
+| 190 | `sic-types/src/check.rs` `collect_capabilities` | one check per thing a grant may say |
+| 185 | `sic-otel/src/metrics.rs` `metrics` | one arm per journal event |
+| 184 | `sic-verify/src/lib.rs` `check_structure` | one arm per opcode |
 
-Every one of them is a single exhaustive `match`, and they should stay that way.
-This document exists so that the next survey of the codebase finds the argument
-rather than the line count.
+Six of the seven are a single exhaustive `match`, and they should stay that
+way. This document exists so that the next survey of the codebase finds the
+argument rather than the line count.
+
+Line numbers are left out on purpose: a table of them is wrong by the next
+commit, and a document that carries a checkable fact it does not check is worse
+than one that does not carry it.
+
+`collect_capabilities` is the seventh and is not a `match`. It is a loop over
+every grant in an `allow` block with one check per thing a grant may say - a
+constraint, a `sha256`, an `args` prefix, `delegable`, `in`, `env`,
+`repeatable` - each producing one field of the entry it builds. §3's rule
+covers it for the same reason: no two of those checks share a procedure, so
+extracting one would move the code without letting anything be checked in one
+place. What it *has* shown is a different problem, and one worth fixing: which
+family a capability belongs to is re-derived from its name by string prefix in
+nine places across three crates.
 
 ## 1. An arm is not a piece of work
 

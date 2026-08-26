@@ -432,6 +432,31 @@ impl<'a> FnCompile<'a> {
     }
 
     /// Reserves `n` consecutive scratch registers and returns the first.
+    /// Lays a call's operands out the way every caller has to, and answers
+    /// with the window they start at.
+    ///
+    /// Four instructions share this and none of them chose it: consecutive
+    /// registers are the calling convention, so `CALL`, `CALL_CAP`, `SPAWN`
+    /// and `MAKE_OBJECT` all have to place their operands the same way.
+    /// Written out four times it was a layout four places agreed about by
+    /// remembering to, which is what a shared job looks like just before it
+    /// stops being shared.
+    ///
+    /// Evaluation already happened; this only moves.
+    fn operands(
+        &mut self,
+        args: &[sic_core::LocalId],
+        dst: sic_core::LocalId,
+        span: Span,
+    ) -> (u8, u8) {
+        let base = self.scratch(args.len());
+        for (i, arg) in args.iter().enumerate() {
+            let src = self.reg(*arg);
+            self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
+        }
+        (self.reg(dst), base)
+    }
+
     fn scratch(&mut self, n: usize) -> u8 {
         self.scratch_used = self.scratch_used.max(n);
         let base = self.scratch_base;
@@ -503,14 +528,7 @@ impl<'a> FnCompile<'a> {
                 self.emit(Inst::abc(opcode, dst, l, r), span);
             }
             InstKind::Call { dst, func, args } => {
-                let base = self.scratch(args.len());
-                // Arguments are copied into consecutive registers because that
-                // is the calling convention; evaluation already happened.
-                for (i, arg) in args.iter().enumerate() {
-                    let src = self.reg(*arg);
-                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
-                }
-                let dst = self.reg(*dst);
+                let (dst, base) = self.operands(args, *dst, span);
                 match u8::try_from(func.0) {
                     Ok(f) => self.emit(Inst::abc(Op::Call, dst, f, base), span),
                     Err(_) => self
@@ -524,14 +542,7 @@ impl<'a> FnCompile<'a> {
                 args,
                 policy,
             } => {
-                // Same calling convention as CALL: the arguments go into
-                // consecutive scratch registers.
-                let base = self.scratch(args.len());
-                for (i, arg) in args.iter().enumerate() {
-                    let src = self.reg(*arg);
-                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
-                }
-                let dst = self.reg(*dst);
+                let (dst, base) = self.operands(args, *dst, span);
                 match u8::try_from(cap.0) {
                     Ok(c) => {
                         // The policy is keyed by the instruction's offset: a
@@ -548,14 +559,7 @@ impl<'a> FnCompile<'a> {
                 }
             }
             InstKind::Spawn { dst, func, args } => {
-                // Same calling convention as CALL: the arguments go into
-                // consecutive scratch registers.
-                let base = self.scratch(args.len());
-                for (i, arg) in args.iter().enumerate() {
-                    let src = self.reg(*arg);
-                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
-                }
-                let dst = self.reg(*dst);
+                let (dst, base) = self.operands(args, *dst, span);
                 match u8::try_from(func.0) {
                     Ok(f) => self.emit(Inst::abc(Op::Spawn, dst, f, base), span),
                     Err(_) => self
@@ -568,12 +572,7 @@ impl<'a> FnCompile<'a> {
                 self.emit(Inst::abc(Op::Await, dst, task, 0), span);
             }
             InstKind::MakeObject { dst, ty, fields } => {
-                let base = self.scratch(fields.len());
-                for (i, field) in fields.iter().enumerate() {
-                    let src = self.reg(*field);
-                    self.emit(Inst::abc(Op::Move, base + i as u8, src, 0), span);
-                }
-                let dst = self.reg(*dst);
+                let (dst, base) = self.operands(fields, *dst, span);
                 let type_index = self.type_index(*ty);
                 self.emit(Inst::abc(Op::MakeObject, dst, type_index, base), span);
             }
