@@ -35,6 +35,13 @@ stops again asks again.
 
 Not on `resume`, and §4 says why.
 
+A run without the flag is a **non-interactive run**, and that is the term used
+throughout this document and in the code. It is a negation, and it is still the
+right word: it is what `bash` calls the same distinction in its own manual, and
+unlike "batch" it does not suggest that runs arrive in groups. One name, so
+that the case `sic` is actually for is a thing with a name rather than three
+ways of saying "not the other one".
+
 Nothing about what an answer *is* changes. The question is the text the broker
 already produced, character for character - the same text `sic attach` prints,
 with `human.choose`'s alternatives already numbered. The value is parsed by
@@ -92,11 +99,11 @@ measurable next to the person deciding.
 
 ## 3. It is never the default
 
-The unattended run is the case sic is for. A run answered by a queue, by CI, by
-somebody on another continent the following morning - that is why a checkpoint
-is a file and why `sic runs --waiting` exists.
+The non-interactive run is the case sic is for. A run answered by a queue, by
+CI, by somebody on another continent the following morning - that is why a
+checkpoint is a file and why `sic runs --waiting` exists.
 
-If `--interactive` had to be turned *off*, the unattended run would be the
+If `--interactive` had to be turned *off*, the non-interactive run would be the
 special one, and every script that ever inherited a terminal would hang the
 first time somebody added an `approve` to a workflow. So it is typed, every
 time, and the default is what it is today.
