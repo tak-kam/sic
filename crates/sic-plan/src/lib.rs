@@ -756,11 +756,17 @@ fn agent_authority(manifest: &[Grant]) -> String {
                         &grant.pin[..8.min(grant.pin.len())]
                     ),
                 };
-                out.push_str(&line(
-                    "the agent may use",
-                    &format!("{:?}", grant.constraint),
-                    &how,
-                ));
+                // The capability, not only the constraint. For the
+                // `process` family a constraint names one binary and says the
+                // whole thing; for `git` it names git, and two grants on one
+                // repository would otherwise print the same line twice and
+                // tell a reader neither what the agent may do nor that there
+                // were two of them.
+                let what = match grant.name.starts_with("git.") {
+                    true => format!("{} in {:?}", grant.name, grant.dir),
+                    false => format!("{:?}", grant.constraint),
+                };
+                out.push_str(&line("the agent may use", &what, &how));
             }
             // Said rather than left out. A reader deciding whether to run this
             // needs to know that the program may run something the agent may

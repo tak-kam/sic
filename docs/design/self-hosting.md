@@ -214,6 +214,29 @@ written down anywhere as a decision, and a reader who has just been told that an
 `Observed` value may not decide what runs may be surprised that it may decide
 what an agent is asked.
 
+## What it says about the run, since #62
+
+The workflow now asks what it is testing before it tests anything:
+
+```sic
+fn what_is_being_tested() -> Int {
+    log info git.rev_parse("HEAD");
+    return len(git.status());
+}
+```
+
+That is worth more here than the two lines suggest. A test result that is not
+tied to a state of the repository is a fact about nothing, and until there was
+a `git` capability the workflow had no way to say which state - the honest
+alternatives were a shell, or a `process.run "/usr/bin/git"` grant whose
+manifest could not say that the repository's own hooks and config would not
+run. `sic explain` on a recorded run now says which commit it was about and how
+much was not in it.
+
+It reports rather than refuses. A tree with uncommitted work in it is the
+normal case while somebody is working, and a workflow that stopped there would
+be refusing to test the thing it was written to test.
+
 ## What this is not
 
 **Not a replacement for `.github/workflows/ci.yml`.** CI runs on a machine with

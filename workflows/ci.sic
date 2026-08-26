@@ -38,6 +38,13 @@ type Diagnosis {
 }
 
 allow {
+    // What this run is about. The constraint names git the way every grant
+    // that starts a program does, and `in` names the repository - and the
+    // broker turns off every hook, pager, alias and config file it did not put
+    // there, which is what a `process.run "/PATH/TO/git"` grant could not say.
+    // See `docs/design/git.md`.
+    git.rev_parse "/PATH/TO/git" in "/PATH/TO/sic";
+    git.status "/PATH/TO/git" in "/PATH/TO/sic";
     process.run "/PATH/TO/cargo" args ["test"]
         in "/PATH/TO/sic"
         env {
@@ -77,7 +84,24 @@ fn tests() -> Exit {
     );
 }
 
+// A test result that is not tied to a state of the repository is a fact about
+// nothing. This puts both halves of that state in the journal before anything
+// runs, so `sic explain` on a recorded run says which commit it was about and
+// how much was not in it.
+//
+// It reports rather than refuses. A tree with uncommitted work in it is the
+// normal case while somebody is working, and a workflow that stopped there
+// would be refusing to test the thing it was written to test.
+fn what_is_being_tested() -> Int {
+    log info git.rev_parse("HEAD");
+    return len(git.status());
+}
+
 fn main() -> Observed<String> {
+    let uncommitted = what_is_being_tested();
+    if uncommitted > 0 {
+        log warn "there is uncommitted work, so this is not a test of HEAD";
+    }
     log info "running the tests";
     let r = tests();
     if r.code == 0 {

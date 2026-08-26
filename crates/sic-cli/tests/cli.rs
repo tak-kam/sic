@@ -3049,6 +3049,11 @@ mod git {
         let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
         assert_eq!(code, 0, "{stderr}");
         assert!(stdout.contains("through the broker"), "{stdout}");
+        // Which capability, not only which binary. Two `git` grants on one
+        // repository name the same constraint, so a line that printed only
+        // that would say the same thing twice and tell a reader neither what
+        // the agent may do nor that there were two of them.
+        assert!(stdout.contains("git.status in \"/srv/thing\""), "{stdout}");
         std::fs::remove_file(src).ok();
     }
 
