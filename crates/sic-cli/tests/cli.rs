@@ -37,6 +37,10 @@ fn repo_root() -> std::path::PathBuf {
 }
 
 /// Writes a source file to a temporary path (no tempfile crate).
+///
+/// The path is this process and `name`, so **two tests that pass the same
+/// name share a file** - and tests run at the same time as each other, so one
+/// deletes the other's while it is being read. Give each test its own name.
 fn write_temp(name: &str, contents: &str) -> std::path::PathBuf {
     let mut path = std::env::temp_dir();
     path.push(format!("sic-test-{}-{name}", std::process::id()));
@@ -3356,6 +3360,119 @@ mod what_a_grant_may_say {
             );
             std::fs::remove_file(src).ok();
         }
+    }
+}
+
+/// Every field of a grant survives the journey from bytecode to a plan.
+///
+/// A grant is declared three times - `CapDecl` in `sic-bytecode`, `CapGrant`
+/// in `sic-core`, `Grant` in `sic-plan` - and copied between them field by
+/// field, by hand, in three places. That is #64, and the reason it is a
+/// problem is not that three structs agree: it is that several of the fields
+/// are `String`, so writing `dir: c.constraints.clone()` compiles.
+///
+/// What fails then is `sic plan`, quietly, by printing the wrong thing or
+/// nothing - and `sic plan` is the one output in this project that must never
+/// under-report, because it is what a person reads to decide whether to run a
+/// program at all.
+///
+/// So every field gets a value that could not have come from any other field,
+/// and the plan has to name each one where it belongs.
+mod nothing_is_lost_in_transcription {
+    use super::*;
+
+    /// A digest is 64 hex characters and nothing here runs, so this is never
+    /// checked against a file - it only has to be recognisable.
+    const PIN: &str = "abc0000000000000000000000000000000000000000000000000000000000def";
+
+    /// Named by the caller, because `write_temp` keys on the process id and
+    /// these two tests run at the same time as each other.
+    fn a_grant_that_says_everything(named: &str) -> std::path::PathBuf {
+        write_temp(
+            named,
+            &format!(
+                "allow {{\n\
+             \x20   process.run \"/usr/bin/theconstraint\"\n\
+             \x20       args [\"theargument\"]\n\
+             \x20       sha256 \"{PIN}\"\n\
+             \x20       in \"/thedirectory\"\n\
+             \x20       env {{ THEVARIABLE: \"thevalue\" }}\n\
+             \x20       repeatable delegable;\n\
+             \x20   llm.invoke \"themodel\";\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   let said = llm.invoke(\"hello\");\n\
+             \x20   let r = process.run(\"/usr/bin/theconstraint\", [\"theargument\"]);\n\
+             \x20   return r.code + len(said);\n\
+             }}\n"
+            ),
+        )
+    }
+
+    /// Each field, named where it belongs. A value in the wrong place fails
+    /// twice over - the line it should be on is missing it, and the line it
+    /// landed on says something that was never granted.
+    #[test]
+    fn a_plan_names_every_field_of_a_grant_where_it_belongs() {
+        let src = a_grant_that_says_everything("grant-every-field.sic");
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+
+        let wanted: &[(&str, &str)] = &[
+            ("the constraint", "\"/usr/bin/theconstraint\""),
+            ("the argument prefix", "args [\"theargument\"]"),
+            ("the digest pin", &format!("sha256:{PIN}")),
+            ("the directory", "in \"/thedirectory\""),
+            ("the environment", "env THEVARIABLE"),
+            ("repeatable", "repeatable"),
+            ("delegable", "delegable"),
+            ("the model", "\"themodel\""),
+        ];
+        for (what, text) in wanted {
+            assert!(
+                stdout.contains(text),
+                "{what} did not survive the journey from bytecode to the plan: \
+                 nothing in the output says {text:?}. A grant is transcribed field by \
+                 field in three places (#64), and several of its fields are `String`, \
+                 so a line that copies the wrong one compiles.\n{stdout}"
+            );
+        }
+
+        // And nowhere it does not belong. `dir` and `constraint` are both
+        // `String`, so the copy that swaps them is the one that compiles - and
+        // this is what catches it.
+        assert!(
+            !stdout.contains("in \"/usr/bin/theconstraint\""),
+            "the constraint was printed as the directory:\n{stdout}"
+        );
+        assert!(
+            !stdout.contains("\"/thedirectory\"  ("),
+            "the directory was printed as the constraint:\n{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The same journey again, one crate further: what the agent may do is
+    /// worked out from a `CapGrant` copied out of the plan's own `Grant`, so a
+    /// field lost there is a plan that describes a different agent.
+    #[test]
+    fn the_agent_section_is_made_from_the_same_grant() {
+        let src = a_grant_that_says_everything("grant-every-field-agent.sic");
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+
+        let line = stdout
+            .lines()
+            .find(|l| l.contains("the agent may use"))
+            .unwrap_or_else(|| panic!("a delegable grant reaches the agent:\n{stdout}"));
+        // The name it may use, and the digest that names which one - both of
+        // which had to cross into `CapGrant` to be here at all.
+        assert!(line.contains("/usr/bin/theconstraint"), "{line}");
+        assert!(line.contains(&PIN[..8]), "the pin did not cross: {line}");
+
+        std::fs::remove_file(src).ok();
     }
 }
 

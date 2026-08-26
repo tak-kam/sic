@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 638 tests.
+Last updated at 640 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -48,6 +48,7 @@ in the source, so it is the same on every platform - four of them are
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 | - | What a grant on each capability may say - `in`, `env`, `delegable`, and how an agent reaches it - is a table with a test that it is complete, so a capability added without those four decisions fails rather than being found by reading the output | `crates/sic-cli/tests/cli.rs` |
+| - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
 
 **§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and
 that child is the interpreter: it opens no file and starts no program, and every
