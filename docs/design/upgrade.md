@@ -3,9 +3,9 @@
 ```console
 $ sic upgrade
   installed  0.1.1  sha256:975d6bcb...  /home/me/.local/bin/sic
-fetching v0.2.0 for x86_64-unknown-linux-musl
-  candidate  0.2.0  sha256:88eb87ac...  sic-v0.2.0-x86_64-unknown-linux-musl/sic
-replaced /home/me/.local/bin/sic  0.1.2 -> 0.2.0
+fetching v0.3.0 for x86_64-unknown-linux-musl
+  candidate  0.3.0  sha256:88eb87ac...  sic-v0.3.0-x86_64-unknown-linux-musl/sic
+replaced /home/me/.local/bin/sic  0.2.0 -> 0.3.0
 ```
 
 One command, and every step of it says what it did.
