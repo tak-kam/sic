@@ -3078,6 +3078,287 @@ mod git {
     }
 }
 
+/// What every capability does about the things a grant may say.
+///
+/// This is `every_diagnostic_code_is_in_the_index` for capabilities. Each of
+/// the facts below is decided somewhere else - `in` and `env` in the type
+/// checker, `delegable` beside them, how an agent reaches it in `sic-core` -
+/// and each is decided by testing a prefix of the capability's name, in nine
+/// places across three crates. That is #63.
+///
+/// This table does not make #63 unnecessary: adding a capability still means
+/// visiting those nine places and getting each right. What it does is make
+/// getting one wrong *loud*. A capability with no row here fails the first
+/// test; a row that disagrees with what the binary actually does fails the
+/// rest. Both of the mistakes #62 made would have failed here rather than
+/// being found by reading the output.
+mod what_a_grant_may_say {
+    use super::*;
+
+    /// How the agent answering this program's model calls reaches a grant.
+    #[derive(Clone, Copy, PartialEq, Debug)]
+    enum Reaches {
+        /// Translated into the agent's own permissions.
+        ItsOwnTool,
+        /// Back through the broker, against this manifest.
+        TheBroker,
+        /// Not at all.
+        Not,
+        /// It is the grant being exercised: answering it is what the agent is
+        /// for, so a plan says nothing about it as a tool.
+        ItIsTheAgent,
+    }
+
+    struct Row {
+        cap: &'static str,
+        /// Whether the grant may say `in "/abs"`, which only a capability that
+        /// starts a process has any use for.
+        takes_in: bool,
+        /// Whether it may say `env { … }`. `git` may not: what git reads is
+        /// the decision that capability exists to take (E0336).
+        takes_env: bool,
+        /// Whether `delegable` means anything. It does only where the manifest
+        /// has not already bounded the authority (E0329).
+        takes_delegable: bool,
+        reaches: Reaches,
+    }
+
+    const TABLE: &[Row] = &[
+        Row {
+            cap: "fs.read",
+            takes_in: false,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::ItsOwnTool,
+        },
+        Row {
+            cap: "fs.write",
+            takes_in: false,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::ItsOwnTool,
+        },
+        Row {
+            cap: "llm.invoke",
+            takes_in: false,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::ItIsTheAgent,
+        },
+        Row {
+            cap: "human.approve",
+            takes_in: false,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::TheBroker,
+        },
+        Row {
+            cap: "human.choose",
+            takes_in: false,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::TheBroker,
+        },
+        Row {
+            cap: "git.status",
+            takes_in: true,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::TheBroker,
+        },
+        Row {
+            cap: "git.rev_parse",
+            takes_in: true,
+            takes_env: false,
+            takes_delegable: false,
+            reaches: Reaches::TheBroker,
+        },
+        Row {
+            cap: "process.capture",
+            takes_in: true,
+            takes_env: true,
+            takes_delegable: true,
+            reaches: Reaches::Not,
+        },
+        Row {
+            cap: "process.run",
+            takes_in: true,
+            takes_env: true,
+            takes_delegable: true,
+            reaches: Reaches::Not,
+        },
+        Row {
+            cap: "process.exec",
+            takes_in: true,
+            takes_env: true,
+            takes_delegable: true,
+            reaches: Reaches::Not,
+        },
+    ];
+
+    /// A program that grants `cap` and says one extra thing about it, and does
+    /// nothing else. An unused grant is a warning rather than an error, so
+    /// whether this compiles is exactly whether the extra thing was allowed.
+    fn granting(cap: &str, named: &str, extra: &str) -> std::path::PathBuf {
+        write_temp(
+            // Named for what is being asked rather than for the text asking
+            // it: `write_temp` keys on the process id, and these tests run at
+            // the same time as each other.
+            &format!("cap-{}-{named}.sic", cap.replace('.', "-")),
+            &format!(
+                "allow {{\n\
+             \x20   {cap} \"/usr/bin/true\"{extra};\n\
+             }}\n\
+             \n\
+             fn main() -> Int {{\n\
+             \x20   return 0;\n\
+             }}\n"
+            ),
+        )
+    }
+
+    fn compiles(cap: &str, named: &str, extra: &str) -> (bool, String) {
+        let src = granting(cap, named, extra);
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        std::fs::remove_file(src).ok();
+        (code == 0, stderr)
+    }
+
+    /// The first thing, and the reason the rest is worth anything: a
+    /// capability that was added without a row here has not been thought about
+    /// in this file, and probably not in the other nine either.
+    #[test]
+    fn every_capability_has_a_row() {
+        let known: Vec<&str> = TABLE.iter().map(|r| r.cap).collect();
+        let mut missing = Vec::new();
+        for name in sic_types::cap::all_names() {
+            if !known.contains(&name) {
+                missing.push(name);
+            }
+        }
+        assert!(
+            missing.is_empty(),
+            "these capabilities exist and this table does not say what a grant on them \
+             may say: {missing:?}. Adding a capability means deciding, in nine places \
+             across three crates, whether it takes `in`, `env` and `delegable` and how \
+             an agent reaches it - see #63. Say so here too, and the tests below check \
+             that what you said is what the binary does."
+        );
+        // And the other direction, so a removed capability does not leave a
+        // row that quietly tests nothing.
+        for row in TABLE {
+            assert!(
+                sic_types::cap::all_names().contains(&row.cap),
+                "`{}` has a row and is not a capability",
+                row.cap
+            );
+        }
+    }
+
+    /// `in` names a directory, which means something only to a capability that
+    /// starts a process (E0334).
+    #[test]
+    fn in_is_taken_by_exactly_the_capabilities_that_start_a_process() {
+        for row in TABLE {
+            let (ok, stderr) = compiles(row.cap, "in", " in \"/tmp\"");
+            assert_eq!(
+                ok, row.takes_in,
+                "`{}` and `in`: the table says {}, the binary says {}\n{stderr}",
+                row.cap, row.takes_in, ok
+            );
+            if !ok {
+                assert!(stderr.contains("E0334"), "{}: {stderr}", row.cap);
+            }
+        }
+    }
+
+    /// `env` says what a child is given, and a `git` grant may not say it:
+    /// what git reads is the decision that capability exists to take.
+    #[test]
+    fn env_is_taken_by_fewer_than_in_is() {
+        for row in TABLE {
+            let (ok, stderr) = compiles(row.cap, "env", " env { A: \"b\" }");
+            assert_eq!(
+                ok, row.takes_env,
+                "`{}` and `env`: the table says {}, the binary says {}\n{stderr}",
+                row.cap, row.takes_env, ok
+            );
+            // Two different refusals, and which one it is matters: one says
+            // there is no child to give an environment to, the other says
+            // there is and this grant does not get to describe it.
+            if !ok {
+                let expected = match row.takes_in {
+                    true => "E0336",
+                    false => "E0334",
+                };
+                assert!(stderr.contains(expected), "{}: {stderr}", row.cap);
+            }
+        }
+    }
+
+    /// `delegable` means something only where the manifest has not already
+    /// bounded the authority (E0329).
+    #[test]
+    fn delegable_is_taken_by_exactly_the_grants_it_could_widen() {
+        for row in TABLE {
+            let (ok, stderr) = compiles(row.cap, "delegable", " delegable");
+            assert_eq!(
+                ok, row.takes_delegable,
+                "`{}` and `delegable`: the table says {}, the binary says {}\n{stderr}",
+                row.cap, row.takes_delegable, ok
+            );
+            if !ok {
+                assert!(stderr.contains("E0329"), "{}: {stderr}", row.cap);
+            }
+        }
+    }
+
+    /// And how the agent reaches it, which `sic plan` prints and a person
+    /// deciding whether to run this reads.
+    #[test]
+    fn a_plan_says_how_the_agent_reaches_every_grant() {
+        for row in TABLE {
+            if row.reaches == Reaches::ItIsTheAgent {
+                continue;
+            }
+            // With a model call, because that is when there is an agent for
+            // the plan to say anything about.
+            let src = write_temp(
+                &format!("cap-reach-{}.sic", row.cap.replace('.', "-")),
+                &format!(
+                    "allow {{\n\
+                 \x20   {} \"/usr/bin/true\"{};\n\
+                 \x20   llm.invoke \"m\";\n\
+                 }}\n\
+                 \n\
+                 fn main() -> String {{\n\
+                 \x20   return llm.invoke(\"hello\");\n\
+                 }}\n",
+                    row.cap,
+                    // No `delegable`: what is under test is where a grant
+                    // reaches the agent by default.
+                    ""
+                ),
+            );
+            let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "{}: {stderr}", row.cap);
+            let said = match row.reaches {
+                Reaches::ItsOwnTool => "its own permissions",
+                Reaches::TheBroker => "through the broker",
+                Reaches::Not => "the agent may not  use",
+                Reaches::ItIsTheAgent => unreachable!("skipped above"),
+            };
+            assert!(
+                stdout.contains(said),
+                "`{}` should reach the agent as {:?}, and the plan does not say so:\n{stdout}",
+                row.cap,
+                row.reaches
+            );
+            std::fs::remove_file(src).ok();
+        }
+    }
+}
+
 /// trust and provenance.
 mod trust {
     use super::*;
