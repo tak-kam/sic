@@ -208,11 +208,37 @@ fn an_approval_defers_rather_than_answering() {
         CapKind::Invoke,
         "deploy to production",
     )]);
-    match broker.call(&request(0, "human.approve", &["proceed?"])) {
+    match broker.call(&request(0, "human.approve", &["proceed?", ""])) {
         Ok(CapOutcome::Deferred { question }) => {
             // The grant travels with the question, so whoever answers can see
             // which grant is being exercised.
             assert_eq!(question, "[deploy to production] proceed?");
+        }
+        other => panic!("expected a deferral, got {other:?}"),
+    }
+}
+
+/// The value `approve` renders travels with the question, and is what the
+/// difference between accountability and verification comes down to: a person
+/// who was shown it and one who was not do not read the same thing.
+///
+/// The empty string is what a `human.approve` call that stopped at the question
+/// sends, and no rendered value is empty - JSON has no empty document - so the
+/// two cases above and below cannot be confused. See `docs/design/trust.md` §3.
+#[test]
+fn an_approval_shows_what_is_being_approved() {
+    let mut broker = Broker::new(vec![grant(
+        "human.approve",
+        CapKind::Invoke,
+        "deploy to production",
+    )]);
+    let shown = r#"{"action":"rm -rf /"}"#;
+    match broker.call(&request(0, "human.approve", &["proceed?", shown])) {
+        Ok(CapOutcome::Deferred { question }) => {
+            assert_eq!(
+                question,
+                format!("[deploy to production] proceed?\n  approving: {shown}")
+            );
         }
         other => panic!("expected a deferral, got {other:?}"),
     }

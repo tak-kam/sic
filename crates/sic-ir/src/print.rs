@@ -79,6 +79,7 @@ fn inst_str(kind: &InstKind) -> String {
             format!("%{} = starts_with %{} %{}", dst.0, s.0, prefix.0)
         }
         InstKind::FromJson { dst, src, .. } => format!("%{} = from_json %{}", dst.0, src.0),
+        InstKind::ToJson { dst, src, .. } => format!("%{} = to_json %{}", dst.0, src.0),
         InstKind::Log { level, msg } => format!("log {} %{}", level.name(), msg.0),
     }
 }

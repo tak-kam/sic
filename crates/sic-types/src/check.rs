@@ -1743,7 +1743,42 @@ impl Checker {
         if self.types.is_error(value) {
             return Types::ERROR;
         }
+        // The value is shown to whoever is asked, so it has to be something
+        // that can be shown. A task is the one thing a run holds that is not:
+        // it is a computation in this run and means nothing outside it, which
+        // is the same reason it cannot cross to the broker.
+        if let Some(what) = self.unshowable(value) {
+            self.error(
+                "E0376",
+                format!("`{what}` cannot be shown to whoever is asked"),
+                args[1].span,
+                "`approve` shows this value to a person",
+            );
+            self.note("await the task and approve what it produced".to_string());
+            return Types::ERROR;
+        }
         self.types.trust(TrustKind::HumanApproved, value)
+    }
+
+    /// The name of the part of a type that cannot be rendered for a person, if
+    /// there is one.
+    ///
+    /// Recursive because a list of tasks is no more showable than a task, and
+    /// a record's fields are declared in source where a future type could be.
+    fn unshowable(&self, ty: TypeId) -> Option<String> {
+        let ty = self.types.untrusted(ty);
+        match self.types.get(ty) {
+            Type::Task(_) | Type::Fn(_) => Some(self.types.name(ty)),
+            Type::List(element) => self.unshowable(*element),
+            Type::Object(object) => self
+                .types
+                .object(*object)
+                .fields
+                .clone()
+                .iter()
+                .find_map(|(_, field)| self.unshowable(*field)),
+            _ => None,
+        }
     }
 
     /// `choose(question, options)`: ask a person which one, and hand back the

@@ -135,6 +135,15 @@ opcodes! {
     /// without a capability having been called, which is why the VM charges
     /// fuel for it by the byte - see `docs/design/v0.1.md` §6.
     Concat = 33, "CONCAT", ABC;
+    /// Renders a value as the JSON document it came from, so that a person can
+    /// be shown it. The inverse of `FROM_JSON`, and the only other instruction
+    /// that needs the type section at run time.
+    ///
+    /// No syntax produces it. `approve` lowers to one of these and a
+    /// `CALL_CAP`, which is why it does not hand a program back a plain string
+    /// it could compute with: nothing in the language can spell it. Like
+    /// `CONCAT` it allocates, so the VM charges fuel by the byte.
+    ToJson = 34, "TO_JSON", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

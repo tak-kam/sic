@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 690 tests.
+Last updated at 697 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -54,6 +54,7 @@ in the source, so it is the same on every platform - four of them are
 | - | `==` and `!=` on `String`: byte equality of the interned string, so `"main" == "Main"` is false. Every layer below the checker was already generic - `EQ` is three registers, the verifier asks only that both operands have the same type, and the VM's `values_equal` had the arm - which made one row of the checker's operator table the whole of the refusal. Ordering stayed out, because `<` needs a collation decision nobody has asked for | `docs/design/v0.1.md` §4 |
 | - | `contains(haystack, needle)` and `starts_with(string, prefix)`: the two questions a program may ask about a string it holds, answering `Bool` and allocating nothing. Two rather than one because a grant is about a prefix, and a match in the middle answers a different question with the same word. A labelled string may be asked either, and the answer is plain - the reason `len` gives, and the width that adds to it, is argued rather than assumed | `docs/design/trust.md` §2a, `docs/design/v0.1.md` §6 |
 | - | `"a" + "b"`: the first thing a program can do that makes a value bigger than the ones it was given, and so the first that allocates without a capability being called. `CONCAT` is charged a fuel per byte of its result before the string is built, which makes the instruction budget a bound on the arena - at most `fuel` bytes joined in a whole run - and leaves `sic plan` saying exactly what it said before. A label is contagious across it, on either side, because `"" + tainted` is laundering with an extra character; two different labels are refused, because a value comes from one place | `docs/design/v0.1.md` §6, `docs/design/trust.md` §2a |
+| - | `approve` shows the person the value. It renders it with `TO_JSON` - the inverse of `FROM_JSON`, an instruction no syntax can name, so the language still has no way to get a plain `String` out of a labelled value - and passes it to `human.approve` beside the question. The whole document crosses rather than a digest or a first screenful, and the bound is the run's own budget, because rendering is charged by the byte the way `CONCAT` is. `sic explain` needed no change: the question a person was asked is already recorded beside their answer, and the value is in the question | `docs/design/trust.md` §3 |
 | - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
 
 **§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and
@@ -107,7 +108,9 @@ rather than the agent's steps, and that is a deliberate line rather than a gap -
 see `authority.md` §7.
 
 **§19, trust.** `LLM<T>`, `HumanApproved<T>`, `Observed<T>` and
-`HumanChosen<T>` exist and are enforced. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because
+`HumanChosen<T>` exist and are enforced, and each of them says what it means:
+`HumanApproved<T>` is a person who was shown this value and said yes, which it
+was not until the value crossed to them. `Secret<T>`, `Verified<T>` and `UserProvided<T>` do not, because
 nothing produces one yet - see `docs/design/trust.md`.
 
 **§22, OpenTelemetry.** The journal converts to OTLP documents. Nothing sends

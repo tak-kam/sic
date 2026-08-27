@@ -206,6 +206,9 @@ pub(crate) struct Task {
 const MAX_FRAMES: usize = 1024;
 const MAX_REGS: usize = 1 << 16;
 const MAX_TASKS: usize = 1024;
+/// How deep a value may nest and still be shown to a person. See
+/// `Vm::value_to_json`.
+const MAX_SHOW_DEPTH: usize = 64;
 /// The default instruction budget, high enough for real work and low enough
 /// that a non-terminating program stops on its own.
 pub const DEFAULT_FUEL: u64 = 10_000_000;
@@ -1214,6 +1217,29 @@ impl<'a> Vm<'a> {
                         Err(detail) => die!(FailKind::Schema, None, Some(detail)),
                     }
                 }
+                Op::ToJson => {
+                    let value = self.get(index, base + c);
+                    let text = match self.value_to_json(&value, b as u32, 0) {
+                        Ok(text) => text,
+                        Err(detail) => die!(
+                            FailKind::Internal("a value that cannot be shown"),
+                            None,
+                            Some(detail)
+                        ),
+                    };
+                    // The second instruction that allocates without a
+                    // capability having been called, so it is charged the way
+                    // `CONCAT` is: by the byte, against the same budget. What
+                    // a person is shown is paid for by the run that shows it.
+                    let cost = text.len() as u64;
+                    if self.fuel < cost {
+                        self.fuel = 0;
+                        die!(FailKind::OutOfFuel, None, None);
+                    }
+                    self.fuel -= cost;
+                    let handle = self.arena.alloc_str(text);
+                    self.set(index, base + a, Value::Str(handle));
+                }
                 Op::CallCap => {
                     // Three jobs, and they are a method rather than seventy
                     // lines of this `match`: see `begin_capability_call`.
@@ -1419,6 +1445,70 @@ impl<'a> Vm<'a> {
             (_, found) => Err(at(
                 path,
                 &format!("expected {expected}, found {}", found.kind()),
+            )),
+        }
+    }
+
+    /// Renders a value as the document `FROM_JSON` would have parsed back.
+    ///
+    /// This is what `approve` shows a person, and being the inverse of the
+    /// parser is the whole of why it is JSON rather than something prettier:
+    /// what is on the screen is the value, escaped, and a value cannot forge
+    /// the frame around it. A prompt and `sic runs --waiting` are both
+    /// line-oriented, and a rendering that let a string put a newline in the
+    /// output would let a model write a line of its own. See
+    /// `docs/design/trust.md` §3.
+    ///
+    /// `depth` is here for a checkpoint that was tampered with rather than for
+    /// any value a run can build: nothing the VM allocates can contain itself,
+    /// because a list is built out of registers that already hold their values,
+    /// but a decoder has to refuse a hostile depth - which is the objection
+    /// `CapValue::List` records against nesting on the wire.
+    fn value_to_json(&self, value: &Value, ty: u32, depth: usize) -> Result<String, String> {
+        use sic_bytecode::TypeDesc;
+
+        if depth > MAX_SHOW_DEPTH {
+            return Err(format!("nested deeper than {MAX_SHOW_DEPTH}"));
+        }
+        let Some(desc) = self.program.types.get(ty as usize) else {
+            return Err("the type is not in this program".to_string());
+        };
+        match (desc, value) {
+            (TypeDesc::Unit, Value::Unit) => Ok("null".to_string()),
+            (TypeDesc::Bool, Value::Bool(v)) => Ok(v.to_string()),
+            (TypeDesc::Int, Value::I64(v)) => Ok(v.to_string()),
+            // The same spelling the run store writes a recorded answer with,
+            // so a value read back out of `responses.jsonl` and a value shown
+            // to a person do not disagree about what a number is.
+            (TypeDesc::Float, Value::F64(v)) => Ok(format!("{v:?}")),
+            (TypeDesc::Str, Value::Str(h)) => Ok(sic_json::quoted(self.arena.str(*h))),
+            (TypeDesc::List(element), Value::List(h)) => {
+                let element = *element;
+                let mut items = Vec::new();
+                for item in self.arena.list(*h) {
+                    items.push(self.value_to_json(item, element, depth + 1)?);
+                }
+                Ok(format!("[{}]", items.join(",")))
+            }
+            (TypeDesc::Object { fields, .. }, Value::Object(h)) => {
+                let values = self.arena.object(*h);
+                if values.len() != fields.len() {
+                    return Err("a record with the wrong number of fields".to_string());
+                }
+                let mut members = Vec::with_capacity(fields.len());
+                for ((name, field_type), field) in fields.iter().zip(values) {
+                    let rendered = self.value_to_json(field, *field_type, depth + 1)?;
+                    members.push(format!("{}:{rendered}", sic_json::quoted(name)));
+                }
+                Ok(format!("{{{}}}", members.join(",")))
+            }
+            // A task is the one thing a run holds that is not a value anybody
+            // outside it could be shown. The checker refuses `approve` of one
+            // (E0376), so reaching this is bytecode that was not checked.
+            (_, found) => Err(format!(
+                "expected {}, found {}",
+                self.program.type_name(ty),
+                found.type_name()
             )),
         }
     }

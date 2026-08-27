@@ -366,6 +366,9 @@ impl<'a> FnLower<'a> {
                 args,
                 policy,
             } => {
+                // `approve` is the one call that needs an argument's declared
+                // type and not just its register, so the expression is kept.
+                let value_arg = args.get(1);
                 // Arguments are evaluated into locals first; the bytecode
                 // compiler is what moves them into consecutive registers.
                 let args: Vec<LocalId> = args.iter().map(|a| self.expr(a)).collect();
@@ -393,7 +396,12 @@ impl<'a> FnLower<'a> {
                         e.span,
                     ),
                     Some(Res::Builtin(sic_types::Builtin::Approve)) => {
-                        self.approve(dst, args[0], args[1], e.span)
+                        let value_arg = value_arg.expect("`approve` takes two arguments");
+                        // The value's own type, with the label taken off: the
+                        // type section has no trust in it, and what the person
+                        // is shown is the value rather than where it came from.
+                        let shown = self.typed.types.untrusted(self.typed.type_of(value_arg.id));
+                        self.approve(dst, args[0], args[1], shown, e.span)
                     }
                     Some(Res::Builtin(sic_types::Builtin::Choose)) => {
                         self.choose(dst, args[0], args[1], e.span)
@@ -623,7 +631,14 @@ impl<'a> FnLower<'a> {
     /// The value itself is untouched - trust is a compile-time distinction, and
     /// the same bytes come out - so what this lowers to is the question, the
     /// branch, and the failure.
-    fn approve(&mut self, dst: LocalId, question: LocalId, value: LocalId, span: Span) {
+    fn approve(
+        &mut self,
+        dst: LocalId,
+        question: LocalId,
+        value: LocalId,
+        shown: TypeId,
+        span: Span,
+    ) {
         let Some(cap) = self
             .typed
             .caps
@@ -632,12 +647,24 @@ impl<'a> FnLower<'a> {
         else {
             unreachable!("the checker required the grant");
         };
+        // What the person is shown, rendered here rather than composed into
+        // the question by the program: the broker decides how an approval
+        // reads, the same way it numbers `choose`'s alternatives.
+        let text = self.temp(sic_types::Types::STR);
+        self.emit(
+            InstKind::ToJson {
+                dst: text,
+                ty: shown,
+                src: value,
+            },
+            span,
+        );
         let answered = self.temp(sic_types::Types::BOOL);
         self.emit(
             InstKind::CallCap {
                 dst: answered,
                 cap: sic_core::CapId(cap as u32),
-                args: vec![question],
+                args: vec![question, text],
                 policy: crate::hir::CallPolicy::default(),
             },
             span,

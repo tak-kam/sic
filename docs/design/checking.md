@@ -20,8 +20,9 @@ than a matter of taste.
 
 > **Nothing in sic can look at a labelled value and answer a fact about it.**
 > The only capability that can be handed one in the position that matters is
-> `llm.invoke`, which is self-certification, and #71 rules that out. Not even
-> `approve` looks: the person is shown the question and never the value (§2a).
+> `llm.invoke`, which is self-certification, and #71 rules that out. The one
+> thing that does look at the value is a person, and `approve` is the door they
+> stand behind (§2a).
 
 A declassifier needs evidence to be given. There is none to give, so `because`
 would be a door with nothing behind it, and every program that could be written
@@ -126,22 +127,34 @@ Ask of each what it could tell a program about a labelled value passed into it:
 | `git.rev_parse` | read | as a revision | checked against a short allowlist before it reaches git; a fact about a repository |
 | `git.status` | read | takes nothing | - |
 | `llm.invoke` | invoke | yes, as the prompt | what a model says about a model's answer |
-| `human.approve` | invoke | the question is a `String` | this **is** `approve` |
+| `human.approve` | invoke | yes, rendered, since #74 | what a **person** says about it, which is `approve` |
 | `human.choose` | invoke | the question is a `String` | this is `choose`, and the answer is an index |
 
-Exactly one of these six can be handed the value itself in the position that
-matters, and it is `llm.invoke`. Everything else takes the value as a *name* - a
+Two of these six can be handed the value itself in the position that matters.
+One is `llm.invoke`, which is a model reporting on a model. The other is
+`human.approve`, and what it answers with is a person - which is the door this
+document is about not needing. Everything else takes the value as a *name* - a
 path, a revision - or as the text of a question, which is the model steering a
 read rather than a read reporting on the model. So the sentence at the top of
 this document is not a summary of an argument; it is the capability table read
-out.
+out, and #74 changed which row it has to name rather than whether it holds.
 
 A second discharge would be a rule about a kind of evidence that no program can
 obtain. The right response to that is not to build the rule and wait.
 
 ---
 
-## 2a. `approve` does not show the person the value either
+## 2a. `approve` did not show the person the value either
+
+> **Fixed by #74, after this document was written.** `approve` now renders its
+> value and passes it to `human.approve` beside the question, and whoever
+> answers is shown it. `trust.md` §3 is the decision and says what
+> `HumanApproved<T>` claims as a result. This section is kept as it stood
+> because the argument it feeds does not depend on the gap being open - it is
+> sharper with it closed, since what `because` proposes to remove is now a
+> person who was shown the thing. Two sentences below have been overtaken and
+> are marked where they stand: what the door buys, and the second of §4.2's two
+> facts.
 
 This was the assumption most worth checking, and it is false. `approve` lowers
 to `CALL_CAP human.approve(question)` - **the question only**. The value is
@@ -181,6 +194,11 @@ That is **accountability**, not verification. Somebody is answerable for the run
 having continued, and `sic explain` can name what they were asked and why they
 agreed.
 
+> Overtaken by #74. The value crosses now, so the person was shown it, and
+> `trust.md` §3 writes the sentence this paragraph said was missing. The half
+> that does not move is that nobody can establish they *read* it - which is why
+> §3's sentence is about what was in front of them.
+
 And it is the sharpest form of the argument against `because`, because a
 criterion buys neither half. Nothing examined the value - §2 - and nobody is
 answerable, because a condition is not a party. Replacing a discharge that
@@ -192,6 +210,9 @@ asking a question the program's author wrote, about a value the answerer cannot
 see, is a real weakness of the door that exists - and one that a person can
 close by writing a better question, which is more than can be said for anything
 in §4. §6 has it as an issue.
+
+> That issue is #74, and it closed the weakness rather than working around it:
+> the value crosses, so the question no longer has to describe it.
 
 ---
 
@@ -348,14 +369,22 @@ the person the value. Put together, `approve` is not a "discharge" in the sense
 answerable*, and the value it is applied to is the program's choice of what that
 person's yes will be taken to have covered.
 
+> The second fact was the issue #74 became, and it no longer holds: the value is
+> shown. The first still does, and so does the sentence they were put together
+> to make - the program still chooses *which* value the yes covers, and that is
+> the part a reader of a program has to check. What changed is that the person
+> now sees which one it was.
+
 ### 4.3 What `sic plan` would print
 
 The mechanical constraint first, because it decides the rest.
 
 `approve` is in the plan because it lowers to a capability call. `sic-ir`'s
-`approve` emits `CALL_CAP human.approve(question)`, a `Move` of the value, and a
-branch to `Fail`; the value is untouched, because trust is erased before the
-bytecode (`trust.md` §4). A `because` that is only a type-level operation would
+`approve` emits a `TO_JSON` of the value, `CALL_CAP human.approve(question,
+text)`, a `Move` of the value, and a branch to `Fail`; the value itself is
+untouched, because trust is erased before the bytecode (`trust.md` §4) - the
+rendering is a second string beside it, not a change to it. A `because` that is
+only a type-level operation would
 lower to a `Move` and **nothing else**, and `sic plan` reads bytecode. It would
 appear nowhere.
 
@@ -504,6 +533,12 @@ checkable and unreadable; a rendering of the value, which needs a way to turn a
 record into text that `decisions.md` §7 has already refused once; or nothing
 changing in the runtime and `trust.md` saying plainly what the type claims, so
 that a program's author knows the question is the whole of what will be read.
+
+> **Done.** #74 took the second, and `trust.md` §3 argues it against the other
+> two: the whole value crosses, as the document `FROM_JSON` would parse back,
+> written by an instruction no syntax can reach. The way to turn a record into
+> text that `decisions.md` §7 refused is still refused *as a builtin*, which is
+> the distinction that made the second answer affordable.
 
 ---
 

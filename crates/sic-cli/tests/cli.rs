@@ -6551,6 +6551,221 @@ mod decisions {
     }
 }
 
+/// What a person approving something is shown: `docs/design/trust.md` §3.
+mod approving {
+    use super::*;
+
+    /// Runs a recorded program up to its first question and answers it, and
+    /// answers the model call on the way if there is one.
+    ///
+    /// The id comes back so the test can ask what the run said afterwards.
+    fn waiting_run(store: &std::path::Path, src: &str, answers: &[&str]) -> (String, String) {
+        let (_, stderr, code) = sic_with_store(repo_root(), Some(store), &["run", src, "--record"]);
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(store), &["runs", "--waiting"]);
+        assert_eq!(code, 0);
+        let id = stdout
+            .lines()
+            .find_map(|l| l.split_whitespace().next().filter(|w| w.len() >= 8))
+            .expect("a waiting run")
+            .to_string();
+        let mut last = stderr;
+        for answer in answers {
+            let (_, stderr, _) = sic_with_store(
+                repo_root(),
+                Some(store),
+                &["attach", &id, "--value", answer],
+            );
+            last = stderr;
+        }
+        (id, last)
+    }
+
+    /// The load-bearing one. `HumanApproved<T>` is supposed to mean a person saw
+    /// this value, and until #74 it meant a person answered yes to a string the
+    /// program chose. What is asserted is the real binary's prompt: the model's
+    /// answer is on the screen at the moment somebody is asked about it, and it
+    /// is still in the record afterwards.
+    #[test]
+    fn a_person_is_shown_the_value_they_are_approving() {
+        let store = write_temp("runs-approve-shows", "");
+        std::fs::remove_file(&store).ok();
+        let (id, prompt) = waiting_run(
+            &store,
+            &example("approval-flow.sic"),
+            &[r#"{"action": "rm -rf /"}"#],
+        );
+        assert!(prompt.contains("[deploying] deploy this?"), "{prompt}");
+        assert!(
+            prompt.contains(r#"approving: {"action":"rm -rf /"}"#),
+            "{prompt}"
+        );
+
+        // The same text is what something looking for work to do reads.
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["runs", "--waiting"]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains(r#"approving: {"action":"rm -rf /"}"#),
+            "{stdout}"
+        );
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", "true", "--because", "it is fine"],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+
+        // `sic explain` prints the question a person was asked, and the value
+        // is in the question - so nothing in `explain` had to change for the
+        // record to say what was in front of them.
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains(r#"approving: {"action":"rm -rf /"}"#),
+            "{stdout}"
+        );
+        assert!(stdout.contains("because it is fine"), "{stdout}");
+        std::fs::remove_dir_all(&store).ok();
+    }
+
+    /// A program that calls the capability itself is asking about whatever it
+    /// likes and has no value to show, so it shows none - and a run answered
+    /// that way does not read like one where somebody saw what they approved.
+    ///
+    /// This is the half that makes the test above mean something: without it,
+    /// "the output contains a value" could be true of every approval.
+    #[test]
+    fn a_run_where_nobody_was_shown_the_value_does_not_read_the_same() {
+        let store = write_temp("runs-approve-bare", "");
+        std::fs::remove_file(&store).ok();
+        let entry = write_temp_program("approve-bare", &[("main.sic", APPROVAL_SRC)]);
+        let (id, prompt) = waiting_run(&store, entry.to_str().unwrap(), &[]);
+        assert!(prompt.contains("[a test] go ahead?"), "{prompt}");
+        assert!(!prompt.contains("approving:"), "{prompt}");
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", "true"],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert!(stdout.contains("[a test] go ahead?"), "{stdout}");
+        assert!(!stdout.contains("approving:"), "{stdout}");
+        std::fs::remove_dir_all(&store).ok();
+    }
+
+    /// The value is escaped because the prompt and `sic runs --waiting` are
+    /// line-oriented: a model that could put a newline in its answer could
+    /// otherwise write a line of the output a person is reading.
+    #[test]
+    fn the_value_cannot_write_a_line_of_its_own() {
+        let store = write_temp("runs-approve-escapes", "");
+        std::fs::remove_file(&store).ok();
+        let (_, prompt) = waiting_run(
+            &store,
+            &example("approval-flow.sic"),
+            &[r#"{"action": "restart\nwaiting: [deploying] anything at all"}"#],
+        );
+        assert!(
+            prompt.contains(
+                r#"approving: {"action":"restart\nwaiting: [deploying] anything at all"}"#
+            ),
+            "{prompt}"
+        );
+        // One line for the question and one for the value, and the value did
+        // not get to add a third.
+        assert_eq!(
+            prompt.lines().filter(|l| l.starts_with("waiting:")).count(),
+            1,
+            "{prompt}"
+        );
+        std::fs::remove_dir_all(&store).ok();
+    }
+
+    /// The value crosses as an argument, so the journal digests it: two runs
+    /// that approved different things do not look the same afterwards. That is
+    /// what `decisions.md` §2 already claims for `choose`'s alternatives.
+    #[test]
+    fn approving_two_different_values_is_two_different_calls() {
+        fn digest(name: &str, answer: &str) -> String {
+            let store = write_temp(name, "");
+            std::fs::remove_file(&store).ok();
+            waiting_run(&store, &example("approval-flow.sic"), &[answer]);
+            let dir = std::fs::read_dir(&store)
+                .expect("a run store")
+                .next()
+                .expect("one recorded run")
+                .expect("a readable entry")
+                .path();
+            let text =
+                std::fs::read_to_string(dir.join("journal.jsonl")).expect("a recorded journal");
+            let line = text
+                .lines()
+                .find(|l| l.contains("human.approve") && l.contains("\"args\""))
+                .expect("the approval was requested")
+                .to_string();
+            std::fs::remove_dir_all(&store).ok();
+            line
+        }
+        let one = digest("runs-approve-d1", r#"{"action": "restart"}"#);
+        let two = digest("runs-approve-d2", r#"{"action": "rm -rf /"}"#);
+        assert_ne!(one, two);
+    }
+
+    /// `approve` shows the value, so it has to be something that can be shown.
+    /// A task is a computation in this run and means nothing outside it.
+    #[test]
+    fn a_task_cannot_be_approved() {
+        let entry = write_temp_program(
+            "approve-a-task",
+            &[(
+                "main.sic",
+                "allow {\n    human.approve \"a test\";\n}\n\
+             fn work() -> Int {\n    return 1;\n}\n\
+             fn main() -> Int {\n\
+             \x20   let t = spawn work();\n\
+             \x20   let a = approve(\"this?\", t);\n\
+             \x20   return 0;\n}\n",
+            )],
+        );
+        let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("E0376"), "{stderr}");
+        assert!(stderr.contains("cannot be shown"), "{stderr}");
+    }
+
+    /// The rendering is an instruction, not a builtin: nothing in the language
+    /// can name it, so no program gets a plain `String` out of a labelled value
+    /// this way. The disassembly is where that is visible.
+    #[test]
+    fn approve_renders_the_value_with_an_instruction_no_program_can_name() {
+        let out = write_temp("approve-to-json.sicb", "");
+        let out_str = out.to_str().unwrap().to_string();
+        let (_, stderr, code) = sic(&["compile", &example("approval-flow.sic"), "-o", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        let (stdout, stderr, code) = sic(&["disasm", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(stdout.contains("TO_JSON"), "{stdout}");
+        assert!(stdout.contains("; Plan"), "{stdout}");
+
+        // And it is refused as a name, in a program that has every grant the
+        // example has.
+        let entry = write_temp_program(
+            "to-json-is-not-a-builtin",
+            &[(
+                "main.sic",
+                "allow {\n    human.approve \"a test\";\n}\n\
+             fn main() -> String {\n    return to_json(1);\n}\n",
+            )],
+        );
+        let (_, stderr, code) = sic(&["run", entry.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("E0300"), "{stderr}");
+    }
+}
+
 /// driving an agent CLI: docs/design/driving.md.
 mod driving {
     use super::*;

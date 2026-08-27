@@ -189,6 +189,7 @@ fn param_name(cap: &str, index: usize) -> &'static str {
         ("process.exec" | "process.capture" | "process.run", 0) => "path",
         ("process.exec" | "process.capture" | "process.run", 1) => "args",
         ("human.approve" | "human.choose", 0) => "question",
+        ("human.approve", 1) => "value",
         ("human.choose", 1) => "options",
         _ => "argument",
     }

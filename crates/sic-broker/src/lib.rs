@@ -446,12 +446,22 @@ fn process_exec(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Ca
 /// grant's constraint says what the approval is about, and it travels with the
 /// question so that whoever answers - and whoever audits it later - can see
 /// which grant was exercised.
+///
+/// The second argument is the value, rendered, and it travels with the question
+/// for the reason `human_choose`'s alternatives do: whoever answers has to be
+/// able to read what they are answering about without the source in front of
+/// them. It is empty when there is nothing to show - a program calling the
+/// capability itself is asking about whatever it likes - and no rendered value
+/// is empty, so the two cases do not run together.
 fn human_approve(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapError> {
     reject_timeout(request)?;
-    let question = string_arg(request, 0, 1)?;
-    Ok(CapOutcome::Deferred {
-        question: format!("[{}] {question}", grant.constraint),
-    })
+    let question = string_arg(request, 0, 2)?;
+    let shown = string_arg_of(request, 1)?;
+    let mut text = format!("[{}] {question}", grant.constraint);
+    if !shown.is_empty() {
+        text.push_str(&format!("\n  approving: {shown}"));
+    }
+    Ok(CapOutcome::Deferred { question: text })
 }
 
 /// Asking a person which one.

@@ -329,14 +329,271 @@ propagate would have looked like a fix.
 approve(question: String, value: LLM<T>) -> HumanApproved<T>
 ```
 
-It asks `human.approve` with the question, and if the answer is no, the run
-fails. There is no third outcome to return: without an option type, "approved or
-not" would have to be a `Bool` beside the value, and nothing would stop the
-program from ignoring it.
+It asks `human.approve` with the question **and with the value**, and if the
+answer is no, the run fails. There is no third outcome to return: without an
+option type, "approved or not" would have to be a `Bool` beside the value, and
+nothing would stop the program from ignoring it.
 
 `approve` needs the `human.approve` capability granted, like any other path to
 an effect. It is the only way to produce a `HumanApproved<T>`, which is what
 makes the type mean anything.
+
+### What the type means
+
+> **`HumanApproved<T>` means: a person was asked about this value, at this point
+> in this run, was shown it, and said yes - and what they were shown, what they
+> answered, and why, are in the run's record.**
+
+That sentence did not exist until #74, and while it did not, the type meant less
+than a reader of this document would have taken it to mean. `approve` lowered to
+`CALL_CAP human.approve(question)` - the question only. The value was moved into
+the destination register and never crossed to the broker, so the person at the
+terminal read the words the program's author had written and nothing about the
+thing they were signing off:
+
+```console
+$ sic attach 089a1f45 --value '{"action": "rm -rf /"}'
+waiting: [deploying] deploy this?
+answer with:  sic attach 089a1f45 --value <VALUE>
+```
+
+`docs/design/checking.md` §2a found that by running the program rather than by
+reading this document, and named what was left: **accountability rather than
+verification**. Somebody was answerable; nobody had looked. The value crosses
+now, so the second half is there too:
+
+```console
+$ sic attach 089a1f45 --value '{"action": "rm -rf /"}'
+waiting: [deploying] deploy this?
+  approving: {"action":"rm -rf /"}
+answer with:  sic attach 089a1f45 --value <VALUE>
+```
+
+Three things the sentence still does not claim, and each of them matters more
+than the one it does:
+
+- **Not that they read it.** Nothing can establish that, and a type that implied
+  it would be back to claiming more than its mechanism. What is established is
+  that it was in front of them, in the same output as the question, at the
+  moment they answered.
+- **Not that the value is safe.** A person can approve a bad plan. The label
+  says who is answerable for it, not that they were right - which is the whole
+  reason `sic explain` prints the reason they gave.
+- **Not that what they saw *is* the value.** It is the document the value came
+  from and would go back to, which is the closest thing to identity a rendering
+  can be, and the next section is about why it is that and not something more
+  comfortable to read.
+
+### Why `choose` settled this and `approve` did not
+
+`decisions.md` §1 sends `choose`'s alternatives to whoever answers, numbered,
+because "whoever answers has to be able to read them without the source in front
+of them". The same document never argued about `approve` either way, and the
+asymmetry survived on a mechanical fact rather than on a decision: **a
+capability's signature is a fixed list of types.** `human.choose` could take a
+`List<String>`, because its alternatives are strings by construction.
+`human.approve` could not take a `T`, because there is no such parameter type -
+`CapValue` is flat, and `sic-core` refuses a general nested value twice, with
+reasons, in the comments on `List` and `Exit`. A record cannot cross as a
+record.
+
+So it crosses as text, and the rest of this section is the three decisions that
+follow: how the text is made, how much of it there is, and what it looks like.
+
+### The instruction
+
+`approve` lowers to three instructions and a branch rather than two:
+
+```text
+approve(q, v)  ->  TO_JSON  text, t<T>, v
+                   CALL_CAP human.approve(q, text) -> Bool
+                   MOVE     the value through
+                   BRANCH   on the answer; FAIL if it is no
+```
+
+`TO_JSON` is opcode 34, and it is the inverse of `FROM_JSON`: it reads the type
+section for the field names and writes out the document the value came from.
+Two things about it are deliberate.
+
+**No syntax produces it.** There is no `to_json` builtin, and adding one is not
+a small extension of this - it is the thing §2a's test was written to refuse.
+*Can the result be used where the labelled value could not?* A rendered
+`LLM<Plan>` is a plain `String`: it can be written to a file, passed to `exec`,
+and read back into a `Plan`. That is not a fact about a value in the way a
+length is; it is the value, laundered. So the instruction exists in the
+bytecode and is reachable only from `approve`'s lowering, where the text it
+makes goes to exactly one place - the argument of the capability that asks a
+person - and no program can name it.
+
+This is safe for the reason §4 gives about erasure generally: the rule being
+enforced is "this program may not be written", and bytecode that was not
+compiled from a program which type-checked is the verifier's business rather
+than the label's.
+
+**It is paid for by the byte.** `TO_JSON` charges fuel per byte of the document
+it writes, exactly as `CONCAT` does and against the same budget, because it is
+the second instruction that allocates without a capability having been called.
+That is also the answer to the next question.
+
+### How much of it: all of it
+
+Three candidates, and only one of them leaves the sentence at the top of this
+section true.
+
+| shown | checkable | readable | what a person does with it |
+|---|---|---|---|
+| a digest | yes | no | nothing they could not do with a coin |
+| the first N characters | no | in part | reads a value that may not be the value |
+| the whole document | yes | yes | reads it |
+
+A digest is the tempting one, because it is small and it is exact, and it fails
+on what a person is *for*. Nobody at a terminal hashes a plan by hand. The
+digest is checkable by a machine that already has the value, and a machine that
+has the value did not need to ask anybody. It would make `HumanApproved<T>` mean
+*a person saw a number* - which is a shorter distance from the old meaning than
+it looks.
+
+A truncation is the worst of the three, and the reason is worth being exact
+about: it is the only one that can **mislead**. A digest tells the person
+plainly that they are not being shown the value. A cut diff does not - every
+line they read is real, and nothing on the screen says whether the decision is
+in the part that was cut. "Neither checkable nor readable" understates it; it is
+readable and wrong.
+
+So the whole document crosses. The case that has to be answered is the large
+one - a model's answer that is a diff, a log, a document - and it has two halves
+that are usually run together.
+
+**Is it too big to send?** No, and the bound is one the run already has rather
+than a number invented for a prompt. `TO_JSON` charges by the byte against a
+default budget of ten million: a hundred-kilobyte diff costs one percent of it,
+a megabyte ten percent, and a program that tries to approve a gigabyte runs out
+of fuel and fails - which is the right outcome, because that is also a program
+that was about to put a gigabyte in front of a person. Nothing new had to be
+decided to get that bound, and no limit had to be picked, which is why this is
+the version of the rule that is worth having. The value is in the checkpoint
+already and, for a recorded run, in `responses.jsonl`; the boundary carries
+nothing this run had not committed to disk.
+
+**Is it too big to read?** That is a real question and it is a different one. A
+diff is what has to be read before it is approved, and refusing to send it does
+not make it shorter - it makes the approval uninformed. How a large value should
+be *displayed* - a pager, a first screenful with the rest a command away - is a
+question about a terminal, and #74 left it out on purpose. What is settled here
+is that the value is there to be displayed.
+
+### JSON, one line, escaped
+
+The rendering is the document `FROM_JSON` would parse back: compact, escaped, on
+one line. That is not a decision about taste.
+
+**A prompt is line-oriented, and so is `sic runs --waiting`**, which prints one
+run per row with the question last "because it is the only field that can
+contain spaces". A rendering that let a string carry a raw newline into the
+output would let a model's answer write a line of its own: a second row in that
+table, or a plausible second question above the real one, in text a person is
+reading in order to decide something. **Escaping is what stops a value from
+forging the frame around it**, and the frame is the part the person is trusting.
+It is the same argument `decisions.md` §1 makes for `choose` answering with an
+index - what a person is shown must not be something the answer can rewrite -
+one layer further down.
+
+It costs readability, and it costs it exactly where the pressure is: a patch
+arrives as one long line with `\n` in it. That is the honest trade, recorded
+here rather than smoothed over. Unescaping for display is a rendering decision,
+it is the one #74 put out of scope, and whoever makes it has to answer the
+paragraph above rather than skip past it.
+
+### What `sic explain` prints
+
+Nothing in `sic explain` changed, and that is the result rather than an
+omission.
+
+`decisions.md` §6 already records the question beside the answer, in
+`responses.jsonl`, because "an index on its own says nothing six months later".
+The question now carries the value, so the record does:
+
+```text
+  asked a person:
+    [deploying] deploy this?
+      approving: {"action":"rm -rf /"}
+    answered true
+    because the build is green
+```
+
+A run where the person was shown the value and one where they were not do not
+read the same, and the difference is a fact in the record rather than a flag
+somebody remembered to set. `--interactive` inherits it for the same reason: it
+prints the question the broker produced, and the value is in the question.
+
+The journal moved too, without being asked. It digests a call's arguments, so
+two runs that approved different values no longer have the same `human.approve`
+request digest - which is the property `decisions.md` §2 claims for `choose`'s
+alternatives, now true of the thing an approval is actually about.
+
+### A capability called directly is unchanged
+
+`human.approve`'s second parameter is an optional tail, the way
+`process.exec`'s argument vector is. A program that calls the capability itself:
+
+```sic
+let ok = human.approve("go ahead?");
+```
+
+compiles as it did and shows what it showed. The omitted argument becomes an
+empty string - the rule `arguments.md` gives - and the broker adds no line when
+it is empty. The two cases cannot run together, because **no rendered value is
+empty**: JSON has no empty document, and the shortest one is two bytes.
+
+That is deliberate rather than a convenience. A program calling `human.approve`
+with its own question is asking about whatever it likes and has no `T` in the
+call at all. `approve` is the one that claims to be about a specific value, and
+it is the one that has to produce it.
+
+The third caller is an agent, through `sic mcp`, and it does not get the
+shortcut: the tool `sic mcp` offers for `human.approve` names both fields, so an
+agent asking a person to approve something says what it is asking about or sends
+an empty string on purpose. The route repeats the signature rather than sharing
+it - `sic-broker` may not depend on `sic-types` - and "a capability that grows a
+parameter has to be added in both places" is the cost of that boundary, which
+its own comment says out loud.
+
+### A task cannot be approved
+
+```text
+error[E0376]: `Task<Plan>` cannot be shown to whoever is asked
+```
+
+`approve` takes a value of any type, and one type is not a value anybody outside
+this run could be shown: a task is a computation in this run and means nothing
+outside it, which is the same reason `to_cap_value` refuses to hand one to the
+broker. Before the value crossed, `approve(q, t)` compiled and meant nothing;
+now it is refused where it is written, and the note says what to do instead -
+await the task and approve what it produced. Lists and record fields are checked
+through, because a list of tasks is no more showable than a task.
+
+### What is deliberately not here
+
+- **A `to_json` builtin.** The instruction is not a feature. §2a's test refuses
+  it, and the argument is above.
+- **Rendering a large value nicely.** A pager, a summary, a diff that looks like
+  a diff. #74 says the value should be in front of the person; what it should
+  look like when it is a thousand lines is a separate piece of work, and the
+  escaping argument above is what it has to answer.
+- **A digest beside the value.** Two checkable facts where one is checkable by
+  hand and the other by nobody. The journal already digests the request.
+- **`sic plan` saying whether an approval will show a value.** It could be read
+  out of the bytecode - the `TO_JSON` before the call - but tying that
+  instruction to that call site is inference, and `plan.md` §3's rule is that a
+  guess dressed as a fact is the one thing a plan must not be. A plan says a
+  person will be asked; what they will be shown is in the record afterwards.
+- **Showing the value anywhere else.** `sic explain` prints the question a
+  person was asked, which now contains it. Nothing prints a value that nobody
+  was shown.
+- **Making `approve` cheaper.** An approval that covers a digest for a week, a
+  batch of values in one question, a session. `checking.md` §7 has been holding
+  that and it is still a different issue: cheaper is about how often a person is
+  asked, and this was about what they are shown when they are.
 
 ---
 
@@ -405,3 +662,4 @@ See `docs/design/output.md` §5.
 | 5 | The rule: no `LLM` into a write or exec capability | the specification's `deploy` example is a compile error |
 | 6 | Erasure | the bytecode's type section never mentions trust |
 | 7 | §2a: what a trusted value may decide | `len` stripping the label is a test rather than a sentence in a checker |
+| 8 | §3: the person is shown the value | a run where they were shown it and one where they were not do not read the same |
