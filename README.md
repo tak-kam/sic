@@ -65,8 +65,8 @@ same everywhere. CI compiles for all four targets, which is how that stays
 true.
 
 ```console
-$ tar xzf sic-v0.3.0-x86_64-unknown-linux-musl.tar.gz
-$ ./sic-v0.3.0-x86_64-unknown-linux-musl/sic version
+$ tar xzf sic-v0.4.0-x86_64-unknown-linux-musl.tar.gz
+$ ./sic-v0.4.0-x86_64-unknown-linux-musl/sic version
 ```
 
 Or with cargo, which needs Rust 1.85 or newer - CI compiles against exactly
@@ -100,9 +100,9 @@ $ RUSTFLAGS="-Clinker=$LLD -Clinker-flavor=ld.lld" \
 ```console
 $ sic upgrade
   installed  0.1.1  sha256:975d6bcb...  /home/me/.local/bin/sic
-fetching v0.3.0 for x86_64-unknown-linux-musl
-  candidate  0.3.0  sha256:88eb87ac...  sic-v0.3.0-x86_64-unknown-linux-musl/sic
-replaced /home/me/.local/bin/sic  0.2.0 -> 0.3.0
+fetching v0.4.0 for x86_64-unknown-linux-musl
+  candidate  0.4.0  sha256:88eb87ac...  sic-v0.4.0-x86_64-unknown-linux-musl/sic
+replaced /home/me/.local/bin/sic  0.3.0 -> 0.4.0
 ```
 
 `sic` does not speak HTTP: it runs `curl` at an absolute path, only when this
