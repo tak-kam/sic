@@ -124,6 +124,7 @@ reason.
 | E0351 | indexing something that is not a list |
 | E0352 | `len` of something with no length |
 | E0353 | `from_json` with nothing to say what type to produce |
+| E0354 | `for` over something that is not a list |
 
 ### Agents
 

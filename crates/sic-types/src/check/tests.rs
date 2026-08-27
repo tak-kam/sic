@@ -574,6 +574,49 @@ fn provenance_follows_a_field() {
     assert_eq!(typed.types.name(typed.fns[0].local_types[1]), "LLM<String>");
 }
 
+/// A `for` binding is the element `xs[i]` would have reached, so it carries
+/// where the list came from. `docs/design/trust.md` §2a is what both agree
+/// with, and they agree by sharing the rule rather than by both remembering it.
+#[test]
+fn provenance_follows_a_for_binding() {
+    let src = "type Plan { steps: List<String> }\n\
+               allow { llm.invoke \"m\"; }\n\
+               agent make_plan { input: String, output: Plan }\n\
+               fn main() { let p = make_plan(\"x\"); for s in p.steps { log info s; } }";
+    let typed = ok(src);
+    // Local 0 is `p`, local 1 is the binding: `p.steps` is an expression and
+    // never gets a slot of its own.
+    assert_eq!(typed.types.name(typed.fns[0].local_types[1]), "LLM<String>");
+
+    // And the label is not something the loop takes off on the way in.
+    let cs = codes(
+        "type Plan { steps: List<String> }\n\
+         allow { llm.invoke \"m\"; }\n\
+         agent make_plan { input: String, output: Plan }\n\
+         fn join(a: String) -> String { return a; }\n\
+         fn main() { let p = make_plan(\"x\"); for s in p.steps { join(s); } }",
+    );
+    assert!(cs.contains(&"E0301"), "{cs:?}");
+}
+
+/// A `return` inside a loop is not a return on every path. The list can be
+/// empty, and then the body never ran - which is the one thing a loop can do
+/// that an `if` with both arms cannot.
+#[test]
+fn a_return_inside_a_loop_is_not_a_return_on_every_path() {
+    let cs = codes("fn f(xs: List<Int>) -> Int { for x in xs { return x; } }");
+    assert!(cs.contains(&"E0307"), "{cs:?}");
+    ok("fn f(xs: List<Int>) -> Int { for x in xs { return x; } return 0; }");
+}
+
+/// Only a list. A `String` has a length and a `for` over one would have to
+/// invent what an element of it is.
+#[test]
+fn only_a_list_can_be_walked() {
+    let cs = codes("fn main() { for c in \"abc\" { log info c; } }");
+    assert!(cs.contains(&"E0354"), "{cs:?}");
+}
+
 #[test]
 fn a_trusted_value_is_not_its_inner_type() {
     // Arithmetic is exactly where provenance gets lost.

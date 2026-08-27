@@ -86,9 +86,11 @@ let n = len(xs);
 - `len` is the one built-in function. Adding methods would mean adding a method
   namespace, and there is nothing else to put in it yet.
 
-There is no iteration. v0.1 has no loop of any kind - recursion is how a program
-repeats - and adding `for` here would be adding a control structure to a phase
-about data.
+There is no iteration in this phase. Adding `for` here would have been adding a
+control structure to a phase about data, so it was left for one of its own:
+issue #66, and `v0.1.md` §2 and §5a. Nothing about a list of answers changed
+when it arrived - a loop reaches an element by the route `xs[i]` already
+reached it by, provenance and all.
 
 ---
 
@@ -291,8 +293,8 @@ spent rather than only when it runs out.
   run, which is a question about where state lives, not about agents.
 - **No token or cost budgets.** The broker would have to report them, which
   needs a richer capability result.
-- **No iteration over lists.** v0.1 has no loops at all; recursion is how a
-  program repeats.
+- **No iteration over lists.** Not in this phase; recursion was how a program
+  repeated, and `for x in xs` arrived later, on its own argument (issue #66).
 - **No optional or nullable fields.** Every field of a type is required, so
   validation is a yes or no. Optionality is a type-system feature and belongs
   with the trust types of section 19.

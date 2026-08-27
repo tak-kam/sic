@@ -275,8 +275,8 @@ worth more than the keystrokes it costs, and this makes it cost none.
 - **A REPL.** Evaluating expressions one at a time contradicts what `sic plan`
   promises: that what a program may do is readable from the whole of its
   bytecode before any of it runs. A manifest is a property of a program, not of
-  a line, and a language with no loops and a fuel budget is not one anybody
-  wants to type into a prompt.
+  a line, and a language with one loop, no assignment and a fuel budget is not
+  one anybody wants to type into a prompt.
 - **A stepper or a debugger.** Stopping on an instruction and reading a
   register is a different feature for a different audience - people working on
   sic rather than people writing sic - and `sic disasm` with the journal

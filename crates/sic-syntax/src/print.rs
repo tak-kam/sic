@@ -171,6 +171,13 @@ impl Printer {
                 self.line(&format!("(log {} {})", level.name(), expr_str(message)));
             }
             Stmt::If(i) => self.if_stmt(i),
+            Stmt::For(f) => {
+                self.line(&format!("(for {} {}", f.var.name, expr_str(&f.iter)));
+                self.depth += 1;
+                self.block(&f.body);
+                self.depth -= 1;
+                self.push_close();
+            }
         }
     }
 

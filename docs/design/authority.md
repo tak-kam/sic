@@ -571,9 +571,9 @@ in it.
   program is a stranger case of the same shape.
 
   It stays off the map for now for two reasons that are not about safety. The
-  language is too small to write in: no loops, no string concatenation, no
-  optional types, so a model asked for a sic program would mostly discover what
-  it cannot write. And the current design - the orchestrator holds the values,
+  language is too small to write in: one loop and no assignment, no string
+  concatenation, no optional types, so a model asked for a sic program would
+  mostly discover what it cannot write. And the current design - the orchestrator holds the values,
   provenance is in the type, the program is written by a person - is coherent,
   and `driving.md` §11 rejects agent-to-agent protocols on exactly that basis.
   Moving authorship into the run deserves its own argument before it gets an

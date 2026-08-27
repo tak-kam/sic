@@ -205,10 +205,101 @@ impl<'a> FnLower<'a> {
                 self.emit(InstKind::Log { level: *level, msg }, *span);
             }
             Stmt::If(if_stmt) => self.if_stmt(if_stmt),
+            Stmt::For(for_stmt) => self.for_stmt(for_stmt),
             Stmt::Expr { expr, .. } => {
                 self.expr(expr);
             }
         }
+    }
+
+    /// `for x in xs { ... }`, as an index and a backward jump.
+    ///
+    /// No instruction was added for this. The list is evaluated once, its
+    /// length once, and what is left is a counter, a comparison, `GET_INDEX`
+    /// and the jump the bytecode has always been able to encode. The counter is
+    /// a temporary the source cannot name, so nothing can move it and the loop
+    /// runs exactly `len(xs)` times.
+    ///
+    /// ```text
+    ///   list = <iter>            ; once
+    ///   n    = LEN list          ; once
+    ///   i    = 0
+    /// head: cond = i < n
+    ///   BRANCH cond -> body, exit
+    /// body: x = GET_INDEX list i
+    ///   <body>
+    ///   i = i + 1
+    ///   JUMP head                ; the backward edge
+    /// exit:
+    /// ```
+    fn for_stmt(&mut self, for_stmt: &ForStmt) {
+        let list = self.expr(&for_stmt.iter);
+        let count = self.temp(sic_types::Types::INT);
+        self.emit(
+            InstKind::Len {
+                dst: count,
+                src: list,
+            },
+            for_stmt.iter.span,
+        );
+        let index = self.constant(Const::I64(0), sic_types::Types::INT, for_stmt.span);
+
+        let head = self.new_block();
+        let body = self.new_block();
+        let exit = self.new_block();
+        self.terminate(Term::Jump(head), for_stmt.span);
+
+        self.switch_to(head);
+        let more = self.temp(sic_types::Types::BOOL);
+        self.emit(
+            InstKind::Bin {
+                dst: more,
+                op: BinOp::Lt,
+                l: index,
+                r: count,
+            },
+            for_stmt.span,
+        );
+        self.terminate(
+            Term::Branch {
+                cond: more,
+                then_bb: body,
+                else_bb: exit,
+            },
+            for_stmt.span,
+        );
+
+        self.switch_to(body);
+        let Some(Res::Local(slot)) = self.typed.res_of(for_stmt.id) else {
+            unreachable!("a `for` binding must resolve to a local");
+        };
+        self.emit(
+            InstKind::GetIndex {
+                dst: slot,
+                base: list,
+                index,
+            },
+            for_stmt.var.span,
+        );
+        self.block(&for_stmt.body);
+        // A `return` in the body leaves no path back to the head, and stepping
+        // the counter into a block nothing reaches would be code the verifier
+        // then has to report as unreachable.
+        if !self.sealed {
+            let one = self.constant(Const::I64(1), sic_types::Types::INT, for_stmt.span);
+            self.emit(
+                InstKind::Bin {
+                    dst: index,
+                    op: BinOp::Add,
+                    l: index,
+                    r: one,
+                },
+                for_stmt.span,
+            );
+            self.terminate(Term::Jump(head), for_stmt.body.span);
+        }
+
+        self.switch_to(exit);
     }
 
     fn if_stmt(&mut self, if_stmt: &IfStmt) {

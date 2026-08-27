@@ -239,6 +239,12 @@ pub enum Stmt {
         span: Span,
     },
     If(IfStmt),
+    /// `for x in xs { ... }` - the only loop in the language.
+    ///
+    /// Over a list and nothing else: the count is `len(xs)`, fixed when the
+    /// loop starts, so there is no way to write one that does not end. See
+    /// `docs/design/v0.1.md` §2.
+    For(ForStmt),
     Expr {
         id: NodeId,
         expr: Expr,
@@ -297,6 +303,7 @@ impl Stmt {
             | Stmt::Expr { span, .. }
             | Stmt::Log { span, .. } => *span,
             Stmt::If(s) => s.span,
+            Stmt::For(s) => s.span,
         }
     }
 }
@@ -307,6 +314,20 @@ pub struct IfStmt {
     pub cond: Expr,
     pub then_block: Block,
     pub else_branch: Option<Box<ElseBranch>>,
+    pub span: Span,
+}
+
+/// `for x in xs { ... }`.
+///
+/// The binding is immutable and scoped to the body, exactly like a `let`, and
+/// the iterable is an expression rather than a range because a list is the only
+/// thing there is to walk.
+#[derive(Debug, Clone)]
+pub struct ForStmt {
+    pub id: NodeId,
+    pub var: Ident,
+    pub iter: Expr,
+    pub body: Block,
     pub span: Span,
 }
 
