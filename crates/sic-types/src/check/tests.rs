@@ -64,10 +64,14 @@ fn forward_reference_needs_an_annotation() {
 }
 
 #[test]
-fn operators_are_int_or_bool_only() {
+fn operators_accept_only_what_the_vm_can_execute() {
     assert!(codes("fn main() { return 1 + true; }").contains(&"E0303"));
     assert!(codes("fn main() { return 1.5 + 2.5; }").contains(&"E0303"));
-    assert!(codes("fn main() { return \"a\" + \"b\"; }").contains(&"E0303"));
+    // `+` is the one operator with two instructions behind it, and `String` is
+    // the only type other than `Int` it takes.
+    ok("fn main() -> String { return \"a\" + \"b\"; }");
+    assert!(codes("fn main() { return \"a\" - \"b\"; }").contains(&"E0303"));
+    assert!(codes("fn main() { return \"a\" + 1; }").contains(&"E0303"));
     assert!(codes("fn main() { return true < false; }").contains(&"E0303"));
     assert!(codes("fn main() { return -true; }").contains(&"E0303"));
     assert!(codes("fn main() { return !1; }").contains(&"E0303"));
@@ -619,10 +623,11 @@ fn only_a_list_can_be_walked() {
 
 #[test]
 fn a_trusted_value_is_not_its_inner_type() {
-    // Arithmetic is exactly where provenance gets lost.
+    // Arithmetic and comparison are exactly where provenance gets lost: each
+    // answers a value the label is not on.
     assert!(
         codes(&format!(
-            "{TRUST}fn main() -> String {{ let p = make_plan(\"x\"); return p.action + \"!\"; }}"
+            "{TRUST}fn main() -> Bool {{ let p = make_plan(\"x\"); return p.action == \"go\"; }}"
         ))
         .contains(&"E0371")
     );
@@ -631,6 +636,19 @@ fn a_trusted_value_is_not_its_inner_type() {
             "{TRUST}fn main() {{ let p = make_plan(\"x\"); let n = !p; }}"
         ))
         .contains(&"E0371")
+    );
+    // Joining two strings is the exception, and it is one because its answer
+    // is still labelled - writing `String` there is E0301. See
+    // `docs/design/trust.md` §2a.
+    let typed = ok(&format!(
+        "{TRUST}fn main() -> LLM<String> {{ let p = make_plan(\"x\"); return p.action + \"!\"; }}"
+    ));
+    assert_eq!(typed.types.name(typed.fns[0].ret), "LLM<String>");
+    assert!(
+        codes(&format!(
+            "{TRUST}fn main() -> String {{ let p = make_plan(\"x\"); return p.action + \"!\"; }}"
+        ))
+        .contains(&"E0301")
     );
 }
 

@@ -317,7 +317,7 @@ Source → Lexer → Parser → AST → Type Checker → IR
        → Bytecode → Verifier → VM → Capability Broker
 ```
 
-Fourteen crates, no external dependencies, 31 instructions in a register VM that
+Fourteen crates, no external dependencies, 32 instructions in a register VM that
 only runs bytecode a verifier has accepted. Three boundaries are enforced by
 tests rather than left as intentions:
 

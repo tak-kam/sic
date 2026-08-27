@@ -378,6 +378,53 @@ fn comparing_two_different_types_is_rejected() {
     );
 }
 
+/// The VM's `CONCAT` reads two arena handles without asking what they hold,
+/// which it may only do because this rule established that both operands are
+/// strings. The compiler never emits the instruction over two integers, so a
+/// bytecode file is the only way one arrives - and a bytecode file is not
+/// something the verifier is allowed to believe.
+#[test]
+fn joining_two_things_that_are_not_strings_is_rejected() {
+    let p = program(
+        &[],
+        TypeDesc::Str,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::Concat, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("holds Int where String is required")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// And the result is a string, so a function that says it returns one is
+/// satisfied by a join and nothing else has to be taken on trust.
+#[test]
+fn a_join_of_two_strings_verifies() {
+    let p = program(
+        &[],
+        TypeDesc::Str,
+        3,
+        vec![Const::Str("a".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::Concat, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert_ok(&p);
+}
+
 #[test]
 fn a_loop_converges() {
     // A backward jump: the fixed point must terminate rather than spin.

@@ -159,6 +159,52 @@ the labelled value could not?** A length cannot be written to a file, passed to
 "parsed as an integer" could all be argued as facts about a value, and every
 one of them hands back something the label was protecting.
 
+### Joining two strings keeps the label
+
+`+` on two strings is the one operator E0371 does not refuse, and the reason is
+the sentence above rather than an exception to it.
+
+Read what E0371 is for again: *an operator takes a labelled value and answers an
+unlabelled one*, and the rule refuses that so that once attached, a label never
+comes off. Joining does not do that. It answers a **labelled** value:
+
+```sic
+let sentence = "the agent says: " + d.cause;   // LLM<String>
+```
+
+so nothing is handed back plain, and `process.exec` refuses `sentence` for
+exactly the reason it refuses `d.cause`. That puts joining beside reading a
+field and indexing a list - the operations that carry a label onward - rather
+than beside arithmetic, which is where it would sit if it produced a `String`.
+
+The alternative was not "refuse it": it was `"" + tainted` being a plain
+`String`, which is laundering with an extra character. The label is contagious
+because the bytes are, and it does not matter which side the literal is on.
+
+**Two operands with different labels are refused** (E0375):
+
+```text
+error[E0375]: `+` cannot join LLM<String> with Observed<String>
+```
+
+Not because joining them is dangerous - the honest answer is that either label
+would be safe, since both carry the same restriction. Because there is no name
+for the result. `Types::trust` already says a value has one origin, and picking
+a winner between "a model said it" and "a program printed it" needs an order
+between the labels that nothing else in this document has, invented here for a
+program nobody has written. `HumanApproved` makes that plainer: a person
+approved one of the two values, and calling the join approved would be claiming
+they approved a sentence they never saw. Refusing costs a workaround, and the
+program that finds the workaround intolerable is the issue that argues for the
+order.
+
+What this does **not** buy, and the issue that asked for it says it does:
+`approve(question, value)` takes a plain `String` question, so
+`approve("commit the fix for: " + d.cause, d)` is still refused - now with
+E0301 rather than E0303. Which builtins erase a label on an argument they only
+show to a person is a separate decision from what an operator does, and it is
+not taken here.
+
 ### The asymmetry, said out loud
 
 If a branch is not an effect, then `if d.severity > 5` could be allowed too,
@@ -176,6 +222,8 @@ section is what it has to answer.
 | a labelled value is not an operand, whoever vouched for it | E0371, with tests for `LLM<T>`, `HumanChosen<T>` and `HumanApproved<T>` |
 | both spellings of asking a model are labelled | `llm.invoke` carries the label in the capability table, so a direct call and an `agent` are checked alike |
 | a labelled value does not reach a changing capability | E0372 |
+| joining two strings keeps the label, on either side | tested in both operand positions, because a rule about `a + b` that only holds for `a` is not a rule |
+| joining two different labels is refused | E0375 |
 | reading a field keeps the label | §2, tested |
 | `len` strips it, and that is on purpose | a test that says so, so that changing it is a decision rather than a regression |
 
@@ -190,7 +238,15 @@ propagate would have looked like a fix.
   (`docs/design/output.md`), and it reaches `len` the same way for the same
   reason - `len(git.status()) > 0` is the question that capability exists to
   answer.
-- **Narrowing E0371.** Above.
+- **Narrowing E0371.** Above. `+` on two strings is not a narrowing of it: the
+  rule is about an operator answering an unlabelled value, and that one does
+  not.
+- **An order between the labels.** E0375 refuses a join of two rather than
+  ranking them.
+- **A rule about what a builtin does to a label on its arguments.** `approve`
+  and `choose` want a plain `String` question; `len` takes any label and
+  answers a plain `Int`. Those are three separate decisions and none of them is
+  taken by the operator table.
 - **A channel budget.** Counting how many bits a model can push through `len`
   is information-flow analysis, and this language is not going to have one.
 ---

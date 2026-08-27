@@ -1094,7 +1094,8 @@ mod comparing_strings {
     /// `<` on strings needs a collation decision, and nothing has asked for
     /// one, so ordering stayed out. The note has to move with the operator
     /// table: "arithmetic and comparison on Int only" stopped being true of
-    /// String the moment `==` started working.
+    /// String the moment `==` started working, and "compares String with `==`
+    /// and `!=` only" stopped being the whole of it the moment `+` did.
     #[test]
     fn strings_have_no_ordering() {
         let src = write_temp(
@@ -1114,7 +1115,7 @@ mod comparing_strings {
             "{stderr}"
         );
         assert!(
-            stderr.contains("compares String with `==` and `!=` only"),
+            stderr.contains("v0.1 joins String with `+`, and compares it with `==` and `!=`"),
             "{stderr}"
         );
         std::fs::remove_file(src).ok();
@@ -1177,6 +1178,247 @@ mod comparing_strings {
         assert!(stderr.contains("E0371"), "{stderr}");
         assert!(stderr.contains("Observed<String>"), "{stderr}");
         std::fs::remove_file(src).ok();
+    }
+}
+
+/// joining two strings.
+///
+/// Every string a program had before this came from a literal or from a
+/// capability, so `CONCAT` is the first instruction that makes a value larger
+/// than the ones it was given - and the first that allocates without anybody
+/// having asked for an effect. Two things follow it everywhere in these tests:
+/// what that costs, which is a fuel per byte, and what it does to a label,
+/// which is nothing.
+mod joining_strings {
+    use super::*;
+
+    /// The whole of the feature, and its length, because a join that produced
+    /// the right characters in the wrong order would still print something.
+    #[test]
+    fn two_strings_join_into_one() {
+        let src = write_temp(
+            "concat-join.sic",
+            "fn main() -> Int {\n\
+             \x20   let greeting = \"hello, \" + \"world\";\n\
+             \x20   log info greeting;\n\
+             \x20   return len(greeting);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "12\n");
+        assert!(stderr.contains("info: hello, world"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `LEN` counts characters and `CONCAT` costs bytes, which are the same
+    /// number only for text that happens to be ASCII. Joining two strings that
+    /// are not says which of the two the length is: seven characters, and
+    /// thirteen bytes charged for them.
+    #[test]
+    fn a_join_is_bytes_and_a_length_is_characters() {
+        let src = write_temp(
+            "concat-multibyte.sic",
+            "fn main() -> Int {\n\
+             \x20   return len(\"日本\" + \"語text\");\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "7\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The empty string is an identity on both sides, which is worth a test
+    /// rather than an assumption: a join that dropped an empty operand and one
+    /// that appended it are indistinguishable until something asks.
+    #[test]
+    fn the_empty_string_is_an_identity() {
+        let src = write_temp(
+            "concat-identity.sic",
+            "fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let word = \"main\";\n\
+             \x20   return bit(word + \"\" == word, 1)\n\
+             \x20       + bit(\"\" + word == word, 2)\n\
+             \x20       + bit(\"\" + \"\" == \"\", 4)\n\
+             \x20       + bit(len(word + \"\") == 4, 8);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "15\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A label is contagious, and the return annotation is what pins it: the
+    /// checker would report E0301 for any other answer, so this compiling is
+    /// the claim that `String + Observed<String>` is exactly
+    /// `Observed<String>`.
+    ///
+    /// Both operand positions, because a rule about `a + b` that only holds
+    /// for `a` is not a rule - and the literal is the side an attacker
+    /// controls the placement of.
+    #[test]
+    fn a_label_survives_a_join_in_either_position() {
+        for (name, expr) in [
+            ("concat-label-right", "\"prefix: \" + out"),
+            ("concat-label-left", "out + \" :suffix\""),
+        ] {
+            let src = write_temp(
+                &format!("{name}.sic"),
+                &format!(
+                    "allow {{\n\
+                     \x20   process.capture \"/bin/echo\" args [\"sic:\"];\n\
+                     }}\n\
+                     \n\
+                     fn main() -> Observed<String> {{\n\
+                     \x20   let out = process.capture(\"/bin/echo\", [\"sic:\", \"read back\"]);\n\
+                     \x20   return {expr};\n\
+                     }}\n"
+                ),
+            );
+            let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "{name} stderr: {stderr}");
+            assert!(stdout.contains("read back"), "{name}: {stdout}");
+            std::fs::remove_file(src).ok();
+        }
+    }
+
+    /// And what the label is for. `"" + tainted` must not be a way past the
+    /// rule that a value nobody signed off cannot decide what runs, so the
+    /// joined string is refused by `process.exec` for exactly the reason the
+    /// captured one is.
+    #[test]
+    fn a_joined_string_reaches_no_further_than_what_it_was_joined_from() {
+        let src = write_temp(
+            "concat-launder.sic",
+            "allow {\n\
+             \x20   process.capture \"/bin/echo\" args [\"sic:\"];\n\
+             \x20   process.exec \"/bin/true\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let out = process.capture(\"/bin/echo\", [\"sic:\", \"hi\"]);\n\
+             \x20   return process.exec(\"/bin/true\", [\"\" + out]);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        assert!(stderr.contains("Observed<String>"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Two labels have no join, because there is no order between "a model
+    /// said it" and "a program printed it" to pick a winner by. Refusing is a
+    /// decision that can be revisited; inventing the order could not have been
+    /// revisited, because programs would have been written against it.
+    #[test]
+    fn two_different_labels_cannot_be_joined() {
+        let src = write_temp(
+            "concat-two-labels.sic",
+            "type Diagnosis {\n\
+             \x20   cause: String,\n\
+             \x20   confidence: Float,\n\
+             }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"claude-opus-4\";\n\
+             \x20   process.capture \"/bin/echo\" args [\"sic:\"];\n\
+             }\n\
+             \n\
+             agent diagnose {\n\
+             \x20   input: String,\n\
+             \x20   output: Diagnosis,\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d = diagnose(\"why did it fail?\");\n\
+             \x20   let out = process.capture(\"/bin/echo\", [\"sic:\", \"hi\"]);\n\
+             \x20   return len(d.cause + out);\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0375"), "{stderr}");
+        assert!(
+            stderr.contains("cannot join LLM<String> with Observed<String>"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The point of charging by the byte.
+    ///
+    /// A loop whose body joins is the shape the issue warned about, and this
+    /// one asks for five bytes doubled sixty times - a string that does not
+    /// fit in any machine. Without the charge the run would take every byte it
+    /// could get and then die wherever the allocator happened to be, which is
+    /// the 230 MB `docs/design/processes.md` §2 measured. With it the budget is
+    /// a bound on the arena: the run stops at the instruction that asked for
+    /// more than it could afford, having never taken the memory, and says so.
+    ///
+    /// `ran out of fuel` rather than a crash is the whole assertion.
+    #[test]
+    fn a_loop_that_joins_ends_in_fuel_rather_than_in_memory() {
+        let src = write_temp(
+            "concat-runaway.sic",
+            "fn joined(s: String, times: Int) -> String {\n\
+             \x20   if times == 0 {\n\
+             \x20       return s;\n\
+             \x20   }\n\
+             \x20   return joined(s + s, times - 1);\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   for word in [\"alpha\", \"beta\", \"gamma\"] {\n\
+             \x20       log info \"grew to \" + joined(word, 60);\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("ran out of fuel"), "{stderr}");
+        // The debug section names the join rather than the loop: a run that
+        // stops has a place as well as a reason.
+        assert!(stderr.contains("concat-runaway.sic:5:"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The instruction ships with its verifier rule, so the file a compile
+    /// writes is one every path that picks it up again accepts.
+    #[test]
+    fn joined_bytecode_verifies() {
+        let src = write_temp(
+            "concat-verify.sic",
+            "fn main() -> Int {\n\
+             \x20   return len(\"a\" + \"b\");\n\
+             }\n",
+        );
+        let out = src.with_extension("sicb");
+        let out_str = out.to_str().unwrap().to_string();
+
+        let (_, stderr, code) = sic(&["compile", src.to_str().unwrap(), "-o", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+
+        let (stdout, stderr, code) = sic(&["verify", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(stdout.contains("1 function(s) verified"), "{stdout}");
+
+        let (stdout, _, code) = sic(&["disasm", &out_str]);
+        assert_eq!(code, 0);
+        assert!(stdout.contains("CONCAT"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(out).ok();
     }
 }
 

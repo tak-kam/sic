@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 669 tests.
+Last updated at 681 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -21,7 +21,7 @@ in the source, so it is the same on every platform - four of them are
 | 3 | No external crates | lexer, parser, types, IR, bytecode, verifier, VM, JSON, SHA-256, scheduler, journal all written by hand |
 | 4 | Recursive descent, Pratt for expressions | `sic-syntax` |
 | 5 | Source → AST → typed → IR → bytecode → verifier → VM | the whole pipeline runs |
-| 6, 7 | A register VM, 31 instructions | `sic-vm`, `sic-bytecode` |
+| 6, 7 | A register VM, 32 instructions | `sic-vm`, `sic-bytecode` |
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
 | 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix, output read back - and `process.run`, which reads it whether or not the program worked | `sic-broker`, `docs/design/arguments.md`, `docs/design/output.md` |
@@ -52,6 +52,7 @@ in the source, so it is the same on every platform - four of them are
 | - | What a trusted value may **decide**, as against what it may reach: a branch is not an effect, because the manifest is the unit of approval - and `len` takes the label off, which is a channel from a model to a branch and is accepted with reasons rather than by accident | `docs/design/trust.md` §2a |
 | - | What a grant on each capability may say - `in`, `env`, `delegable`, and how an agent reaches it - is a table with a test that it is complete, so a capability added without those four decisions fails rather than being found by reading the output | `crates/sic-cli/tests/cli.rs` |
 | - | `==` and `!=` on `String`: byte equality of the interned string, so `"main" == "Main"` is false. Every layer below the checker was already generic - `EQ` is three registers, the verifier asks only that both operands have the same type, and the VM's `values_equal` had the arm - which made one row of the checker's operator table the whole of the refusal. Ordering stayed out, because `<` needs a collation decision nobody has asked for | `docs/design/v0.1.md` §4 |
+| - | `"a" + "b"`: the first thing a program can do that makes a value bigger than the ones it was given, and so the first that allocates without a capability being called. `CONCAT` is charged a fuel per byte of its result before the string is built, which makes the instruction budget a bound on the arena - at most `fuel` bytes joined in a whole run - and leaves `sic plan` saying exactly what it said before. A label is contagious across it, on either side, because `"" + tainted` is laundering with an extra character; two different labels are refused, because a value comes from one place | `docs/design/v0.1.md` §6, `docs/design/trust.md` §2a |
 | - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
 
 **§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and

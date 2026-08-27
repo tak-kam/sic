@@ -59,6 +59,15 @@ it has written, the checkpoint it was handed, and something to say.
 **This is the benefit that is real today and it is about resources rather than
 about security.**
 
+`CONCAT` was the first instruction that could grow the arena without a
+capability being called, and it did not weaken this section: it is charged one
+fuel per byte of its result, before the string is built, so a run can join at
+most `fuel` bytes over its whole life - 10 MB at the default budget. See
+[v0.1.md](v0.1.md) §6. That is a bound on the total rather than on the peak, and
+it is one instruction's bound rather than the arena's: spawning tasks that
+recurse and allocate is still what §2's measurement did, and fuel still counts
+those instructions rather than their bytes. The paragraph above stands.
+
 ### Fewer privileges for the side that runs the bytecode
 
 The one thing a crate boundary cannot do is give one side less than the other.

@@ -981,6 +981,35 @@ impl<'a> Vm<'a> {
                     };
                     self.set(index, base + a, Value::I64(value));
                 }
+                // The only instruction that allocates without a capability
+                // having been asked, and the only one that costs more than one
+                // fuel: a byte of the result is a byte of the arena, so a byte
+                // of the result is a unit of fuel. That makes the budget a
+                // bound on the arena as well as on the instruction count - a
+                // run can join at most `fuel` bytes, ever - and it is charged
+                // before the string is built, so the memory a program cannot
+                // afford is never taken.
+                Op::Concat => {
+                    let (Value::Str(l), Value::Str(r)) =
+                        (self.get(index, base + b), self.get(index, base + c))
+                    else {
+                        die!(FailKind::Internal("CONCAT of a non-string"), None, None);
+                    };
+                    // Bytes rather than characters, which is the opposite of
+                    // what `LEN` counts: a length is a fact about the text and
+                    // this is a fact about the memory.
+                    let cost = (self.arena.str(l).len() + self.arena.str(r).len()) as u64;
+                    if self.fuel < cost {
+                        self.fuel = 0;
+                        die!(FailKind::OutOfFuel, None, None);
+                    }
+                    self.fuel -= cost;
+                    let mut joined = String::with_capacity(cost as usize);
+                    joined.push_str(self.arena.str(l));
+                    joined.push_str(self.arena.str(r));
+                    let handle = self.arena.alloc_str(joined);
+                    self.set(index, base + a, Value::Str(handle));
+                }
                 Op::Eq | Op::Ne => {
                     let (l, r) = (self.get(index, base + b), self.get(index, base + c));
                     let equal = self.values_equal(&l, &r);
