@@ -1106,7 +1106,11 @@ impl Checker {
         let ok = match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => l == Types::INT,
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => l == Types::INT,
-            BinOp::Eq | BinOp::Ne => l == Types::INT || l == Types::BOOL,
+            // Equality is byte equality of the interned string: not case
+            // folding, not normalization, not trimming. `"main" == "Main"` is
+            // false. Ordering is left out, because `<` on strings needs a
+            // collation decision and nothing has asked for one.
+            BinOp::Eq | BinOp::Ne => l == Types::INT || l == Types::BOOL || l == Types::STR,
             BinOp::And | BinOp::Or => l == Types::BOOL,
         };
         if !ok {
@@ -1117,8 +1121,10 @@ impl Checker {
                 span,
                 format!("no such operator for {name}"),
             );
-            if l == Types::FLOAT || l == Types::STR {
+            if l == Types::FLOAT {
                 self.note("v0.1 supports arithmetic and comparison on Int only");
+            } else if l == Types::STR {
+                self.note("v0.1 compares String with `==` and `!=` only");
             }
             return Types::ERROR;
         }

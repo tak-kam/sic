@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 645 tests.
+Last updated at 651 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -49,6 +49,7 @@ in the source, so it is the same on every platform - four of them are
 | 33 | The security principles | each one has a test |
 | - | What a trusted value may **decide**, as against what it may reach: a branch is not an effect, because the manifest is the unit of approval - and `len` takes the label off, which is a channel from a model to a branch and is accepted with reasons rather than by accident | `docs/design/trust.md` §2a |
 | - | What a grant on each capability may say - `in`, `env`, `delegable`, and how an agent reaches it - is a table with a test that it is complete, so a capability added without those four decisions fails rather than being found by reading the output | `crates/sic-cli/tests/cli.rs` |
+| - | `==` and `!=` on `String`: byte equality of the interned string, so `"main" == "Main"` is false. Every layer below the checker was already generic - `EQ` is three registers, the verifier asks only that both operands have the same type, and the VM's `values_equal` had the arm - which made one row of the checker's operator table the whole of the refusal. Ordering stayed out, because `<` needs a collation decision nobody has asked for | `docs/design/v0.1.md` §4 |
 | - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
 
 **§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and

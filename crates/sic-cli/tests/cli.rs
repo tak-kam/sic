@@ -1048,6 +1048,138 @@ mod the_pipeline {
     }
 }
 
+/// comparing two strings.
+///
+/// The VM has always been able to: `values_equal` has an arm for two strings,
+/// the verifier's rule for `EQ` is about the two operands having the same type
+/// rather than about which type, and `EQ` itself is three registers. The whole
+/// of the refusal was one row of the operator table in the checker. These
+/// tests are the end of the pipeline, so they say the row was the only thing
+/// in the way.
+mod comparing_strings {
+    use super::*;
+
+    /// Equality is byte equality of the interned string. Not case folding, not
+    /// normalization, not trimming - so `"main" == "Main"` is false, and the
+    /// program says so by weight rather than by returning a bare `1`, because
+    /// a test that only asked whether two equal strings are equal would pass
+    /// under case folding too.
+    #[test]
+    fn two_strings_compare_by_their_bytes() {
+        let src = write_temp(
+            "streq-bytes.sic",
+            "fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let branch = \"main\";\n\
+             \x20   return bit(branch == \"main\", 1)\n\
+             \x20       + bit(branch == \"release\", 2)\n\
+             \x20       + bit(branch != \"release\", 4)\n\
+             \x20       + bit(branch == \"Main\", 8);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // 1: equal strings are equal. 4: `!=` is its negation. Not 2, because
+        // different strings are not. Not 8, because `"main"` is not `"Main"`.
+        assert_eq!(stdout, "5\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `<` on strings needs a collation decision, and nothing has asked for
+    /// one, so ordering stayed out. The note has to move with the operator
+    /// table: "arithmetic and comparison on Int only" stopped being true of
+    /// String the moment `==` started working.
+    #[test]
+    fn strings_have_no_ordering() {
+        let src = write_temp(
+            "streq-ordering.sic",
+            "fn main() -> Int {\n\
+             \x20   if \"a\" < \"b\" {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0303"), "{stderr}");
+        assert!(
+            stderr.contains("`<` cannot be applied to String"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("compares String with `==` and `!=` only"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The shape the change was made for: a program reads something and asks
+    /// whether it is the one value it is allowed to act on. `fs.read` answers
+    /// a plain `String`, so this is the whole path - source, checker, verifier,
+    /// broker, VM - and not a literal compared with itself.
+    #[test]
+    fn a_program_can_ask_whether_a_file_says_the_expected_thing() {
+        let data = write_temp("streq-branch.txt", "main");
+        let data = data.to_str().unwrap().to_string();
+        let src = write_temp(
+            "streq-branch.sic",
+            &format!(
+                "allow {{ fs.read {data:?}; }}\n\
+                 \n\
+                 fn main() -> Int {{\n\
+                 \x20   let branch = fs.read({data:?});\n\
+                 \x20   if branch == \"main\" {{\n\
+                 \x20       return 1;\n\
+                 \x20   }}\n\
+                 \x20   return 0;\n\
+                 }}\n"
+            ),
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "1\n");
+        std::fs::remove_file(&data).ok();
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And the shape it was *argued* for, which it does not reach. The issue
+    /// asks "did `git.rev_parse("HEAD")` resolve to the tag that was
+    /// approved?" - but `git.rev_parse` answers `Observed<String>`, and a
+    /// labelled value is refused as an operand whatever the operator table
+    /// says. Equality on String was necessary for that question and is not
+    /// sufficient; the same is true of asking whether a path is among what
+    /// `git.status` reported, because indexing keeps the label too.
+    #[test]
+    fn what_a_repository_reported_is_still_not_an_operand() {
+        let src = write_temp(
+            "streq-revparse.sic",
+            "allow {\n\
+             \x20   git.rev_parse \"/usr/bin/git\" in \"/srv/thing\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let head = git.rev_parse(\"HEAD\");\n\
+             \x20   if head == \"deadbeef\" {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0371"), "{stderr}");
+        assert!(stderr.contains("Observed<String>"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// nothing runs bytecode that does not verify.
 ///
 /// `decode` establishes that a `Program` can exist and says nothing about
@@ -3735,6 +3867,78 @@ mod trust {
             stderr.contains("expected HumanApproved<Plan>, found LLM<Plan>"),
             "{stderr}"
         );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Equality on String did not open a door for a model's answer, and the
+    /// reason is structural rather than a second rule: `check_binary` rejects
+    /// a labelled operand *before* it consults the operator table, so the
+    /// refusal is E0371 - the laundering rule - and not E0303. It would still
+    /// be E0371 if every operator in the language accepted String.
+    #[test]
+    fn what_an_agent_answered_cannot_be_compared_with_a_string() {
+        let src = write_temp(
+            "trust-eq-agent.sic",
+            "allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             }\n\
+             \n\
+             agent ask { input: String, output: String, budget: 1 }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let said = ask(\"ship it?\");\n\
+             \x20   if said == \"yes\" {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        // E0371, not E0303: the operand was refused for where it came from,
+        // not for which operator was applied to it.
+        assert!(stderr.contains("E0371"), "{stderr}");
+        assert!(!stderr.contains("E0303"), "{stderr}");
+        assert!(stderr.contains("LLM<String>"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// **A gap, written down rather than left to be discovered.** The label is
+    /// attached where an `agent` call is checked, so a *direct* `llm.invoke`
+    /// answers a bare `String` that the trust system never sees. That is not
+    /// something equality on String caused: the second half of this test is a
+    /// model's answer reaching `fs.write`, which is a capability that changes
+    /// something, and it has compiled since `llm.invoke` existed.
+    ///
+    /// `docs/design/trust.md` §2a writes `let said = llm.invoke("...")` and
+    /// calls the result labelled, so the document and the checker disagree and
+    /// the document is the one that is right. Fixing it means giving
+    /// `llm.invoke` a labelled return type, which changes what every program
+    /// that calls it directly may do with the answer - its own issue, its own
+    /// argument. This test is what says so out loud, and it is expected to be
+    /// rewritten the day that lands.
+    #[test]
+    fn a_direct_model_call_is_not_labelled_at_all() {
+        let src = write_temp(
+            "trust-eq-invoke.sic",
+            "allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   fs.write \"./out.txt\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   fs.write(\"./out.txt\", llm.invoke(\"say something\"));\n\
+             \x20   if llm.invoke(\"ship it?\") == \"yes\" {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        // `plan` type-checks and runs nothing, so no model is asked anything.
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("llm.invoke"), "{stdout}");
+        assert!(stdout.contains("fs.write"), "{stdout}");
         std::fs::remove_file(src).ok();
     }
 }
