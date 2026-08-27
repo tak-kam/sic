@@ -3541,10 +3541,10 @@ mod trust {
 
     /// `approve` changes the label rather than removing it: `HumanApproved<T>`
     /// is refused as an operand like any other. What a person's approval buys
-    /// is reach - the value may now go to a capability that changes something
-    /// - not arithmetic. The first draft of `trust.md` §2a said "a label
-    /// leaves a value only through `approve`", and this test is why that
-    /// sentence is no longer there.
+    /// is reach (the value may now go to a capability that changes something),
+    /// not arithmetic. The first draft of `trust.md` §2a said "a label leaves
+    /// a value only through `approve`", and this test is why that sentence is
+    /// no longer there.
     #[test]
     fn an_approval_buys_reach_not_arithmetic() {
         let src = write_temp(
