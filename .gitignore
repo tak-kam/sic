@@ -4,3 +4,6 @@
 # A workflow with this machine's paths in it. `workflows/ci.sic` is the
 # template; a copy with real paths is yours and stays here.
 workflows/*.local.sic
+
+# Worktrees a subagent was given. They are not part of this repository.
+.claude/worktrees/
