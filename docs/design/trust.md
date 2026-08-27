@@ -60,6 +60,123 @@ make the whole thing decorative.
 
 ---
 
+## 2a. What a trusted value may decide
+
+§2 says what a label forbids. It does not say whether a label reaches control
+flow, and the answer has been assembled out of three unrelated decisions rather
+than taken once. This section takes it.
+
+### A branch is not an effect
+
+A model choosing which way a program goes is not, on its own, something this
+language protects against. **The manifest is the unit of approval, not the
+path.** A reader who approves
+
+```sic
+allow {
+    process.exec "/usr/bin/deploy";
+    fs.write "./rollback.log";
+}
+```
+
+has approved a program that may deploy *or* may write that file. Which one
+happens on a given run already depends on a file's contents, on an exit code,
+on what a person answered - and now on what a model said. None of those widens
+what the run may do, because none of them can reach past the manifest, and
+`sic plan` prints the manifest.
+
+So there is no rule that a branch condition must be untrusted, and this
+document should not be read as implying one.
+
+### E0371 is about laundering, not about branching
+
+This is the part that is easy to get backwards, and was:
+
+```text
+error[E0371]: LLM<Int> cannot be used as an operand
+```
+
+That looks like a rule against a model deciding a branch. It is not. §2 gives
+its actual reason - "Arithmetic on a value whose provenance matters is exactly
+where provenance gets lost" - and the shape it protects is this:
+
+```sic
+let clean: Int = d.severity + 0;   // if this compiled, the label is gone
+```
+
+An operator takes a labelled value and answers an unlabelled one. The rule
+refuses that, everywhere, so that:
+
+> **A label leaves a value only through `approve`.**
+
+That sentence is the whole of the trust system's guarantee, and it is worth
+stating in one line because the three rules in §2 are each a consequence of it.
+
+### `len` is the exception, deliberately
+
+```sic
+let said = llm.invoke("...");
+if len(said) > 5 { … }          // compiles, today
+```
+
+`len` takes a trusted value and answers a plain `Int`. The comment in
+`check_len` gives the reason - "How long something is says nothing about where
+it came from" - and that is true about the *number*: a length is a fact about
+the value rather than the value.
+
+It is not true about what the number lets somebody decide. A branch needs one
+bit, and a model asked to "answer yes or no" controls the length of its own
+answer. **So `len` is a channel from a model to a branch, and calling it
+anything else would be pretending.**
+
+It stays, and the reason is the section above rather than the comment in the
+checker: a branch is not an effect, so a channel to a branch is not a leak. The
+label has not been laundered onto a *value* - nobody can get the model's answer
+back out of its length - and no capability call has become reachable that the
+manifest did not already list.
+
+What `len` must not become is a precedent for stripping labels off values. The
+test of whether the next builtin may do it is: **can the result be used where
+the labelled value could not?** A length cannot be written to a file, passed to
+`exec`, or turned back into the answer. A "first line of", or a "trimmed", or a
+"parsed as an integer" could all be argued as facts about a value, and every
+one of them hands back something the label was protecting.
+
+### The asymmetry, said out loud
+
+If a branch is not an effect, then `if d.severity > 5` could be allowed too,
+and E0371 could be narrowed to the operators that produce a *value* the program
+keeps. It is not narrowed, and this document is not narrowing it: refusing more
+than is strictly necessary costs a workaround, and allowing more than is
+necessary costs an argument every time somebody asks why. If the refusal turns
+out to be in the way of a real program, that is the issue to write, and this
+section is what it has to answer.
+
+### What is checked
+
+| claim | how |
+|---|---|
+| a labelled value is not an operand | E0371, with tests for `LLM<T>` and `HumanChosen<T>` |
+| a labelled value does not reach a changing capability | E0372 |
+| reading a field keeps the label | §2, tested |
+| `len` strips it, and that is on purpose | a test that says so, so that changing it is a decision rather than a regression |
+
+The last row matters more than it looks. Before this section, `len`'s behaviour
+was one sentence in a checker and nothing in a test: an edit that made it
+propagate would have looked like a fix.
+
+### What is deliberately not here
+
+- **A rule about branch conditions.** The manifest is the unit of approval.
+- **`Observed<T>`.** Text a program printed carries a different argument
+  (`docs/design/output.md`), and it reaches `len` the same way for the same
+  reason - `len(git.status()) > 0` is the question that capability exists to
+  answer.
+- **Narrowing E0371.** Above.
+- **A channel budget.** Counting how many bits a model can push through `len`
+  is information-flow analysis, and this language is not going to have one.
+---
+
 ## 3. `approve`
 
 ```text
@@ -141,3 +258,4 @@ See `docs/design/output.md` §5.
 | 4 | `approve`, lowered to a capability call and a check | refusing an approval fails the run |
 | 5 | The rule: no `LLM` into a write or exec capability | the specification's `deploy` example is a compile error |
 | 6 | Erasure | the bytecode's type section never mentions trust |
+| 7 | §2a: what a trusted value may decide | `len` stripping the label is a test rather than a sentence in a checker |

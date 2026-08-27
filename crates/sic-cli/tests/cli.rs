@@ -3480,6 +3480,132 @@ mod nothing_is_lost_in_transcription {
 mod trust {
     use super::*;
 
+    /// A label leaves a value only through `approve` - which is what E0371 is
+    /// for, and it is not a rule about branching. `docs/design/trust.md` §2a.
+    #[test]
+    fn an_operator_cannot_take_a_label_off_a_value() {
+        let src = write_temp(
+            "trust-operand.sic",
+            "type Diagnosis { cause: String, severity: Int }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             }\n\
+             \n\
+             agent diagnose { input: String, output: Diagnosis, budget: 1 }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d = diagnose(\"why?\");\n\
+             \x20   if d.severity > 5 {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0371"), "{stderr}");
+        // Reading a field kept the label, which is why the operand is
+        // `LLM<Int>` rather than `Int`.
+        assert!(stderr.contains("LLM<Int>"), "{stderr}");
+        // And the refusal names the door through.
+        assert!(stderr.contains("approve("), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A person's choice is labelled too, so the same rule catches it. Named
+    /// separately because the two labels are produced by different things and
+    /// a rule that only covered one would be about spelling.
+    #[test]
+    fn a_persons_choice_is_not_an_operand_either() {
+        let src = write_temp(
+            "trust-chosen.sic",
+            "allow {\n\
+             \x20   human.choose \"which channel\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let c = choose(\"which?\", [\"a\", \"b\"]);\n\
+             \x20   if c == 0 {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0371"), "{stderr}");
+        assert!(stderr.contains("HumanChosen"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `len` takes a labelled value and answers a plain `Int`, so a model can
+    /// steer a branch by the length of its own answer. That is deliberate, and
+    /// `docs/design/trust.md` §2a argues it: a branch is not an effect, the
+    /// manifest is the unit of approval, and nobody can get the answer back
+    /// out of its length.
+    ///
+    /// **This test exists so that changing it is a decision rather than a
+    /// regression.** Before §2a the behaviour was one sentence in `check_len`
+    /// and nothing in a test, and an edit that made the label propagate would
+    /// have looked like a fix.
+    #[test]
+    fn len_takes_the_label_off_and_that_is_on_purpose() {
+        let src = write_temp(
+            "trust-len.sic",
+            "allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   process.exec \"/bin/echo\" args [\"deploying\"];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let said = llm.invoke(\"a long word to deploy, a short one not to\");\n\
+             \x20   if len(said) > 5 {\n\
+             \x20       return process.exec(\"/bin/echo\", [\"deploying\"]);\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(
+            code, 0,
+            "`len` of a model's answer is a plain Int on purpose - see \
+             docs/design/trust.md §2a before changing this\n{stderr}"
+        );
+        // And the effect it steers into is in the manifest, which is the
+        // reason the channel is accepted: a reader approved this program's
+        // being able to run it.
+        assert!(stdout.contains("process.exec"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The same for `Observed`, and this one is load-bearing: `git.status()`
+    /// answers `Observed<List<String>>`, and counting it is the question that
+    /// capability exists to answer.
+    #[test]
+    fn what_a_program_printed_can_be_counted() {
+        let src = write_temp(
+            "trust-observed-len.sic",
+            "allow {\n\
+             \x20   process.capture \"/bin/echo\" args [\"hi\"];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let said = process.capture(\"/bin/echo\", [\"hi\"]);\n\
+             \x20   if len(said) > 0 {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        // What the program returned, which is not the process's exit code:
+        // `/bin/echo hi` printed something, so the length was above zero.
+        assert_eq!(stdout.trim(), "1", "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
     #[test]
     fn a_models_answer_reaches_a_deploy_only_through_an_approval() {
         let first = write_temp("trust-1.sicc", "");

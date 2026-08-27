@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 640 tests.
+Last updated at 644 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -47,6 +47,7 @@ in the source, so it is the same on every platform - four of them are
 | - | `--interactive`: a run that stops for an answer asks the terminal instead of leaving it for whoever comes along later, and keeps asking for as long as it keeps stopping - the checkpoint is written first either way, so the worst case of an interactive run is a non-interactive one | `docs/design/interactive.md` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
+| - | What a trusted value may **decide**, as against what it may reach: a branch is not an effect, because the manifest is the unit of approval - and `len` takes the label off, which is a channel from a model to a branch and is accepted with reasons rather than by accident | `docs/design/trust.md` §2a |
 | - | What a grant on each capability may say - `in`, `env`, `delegable`, and how an agent reaches it - is a table with a test that it is complete, so a capability added without those four decisions fails rather than being found by reading the output | `crates/sic-cli/tests/cli.rs` |
 | - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
 
