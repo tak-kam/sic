@@ -1150,33 +1150,78 @@ mod comparing_strings {
         std::fs::remove_file(src).ok();
     }
 
-    /// And the shape it was *argued* for, which it does not reach. The issue
-    /// asks "did `git.rev_parse("HEAD")` resolve to the tag that was
-    /// approved?" - but `git.rev_parse` answers `Observed<String>`, and a
-    /// labelled value is refused as an operand whatever the operator table
-    /// says. Equality on String was necessary for that question and is not
-    /// sufficient; the same is true of asking whether a path is among what
-    /// `git.status` reported, because indexing keeps the label too.
+    /// And the shape it was *argued* for, which it now reaches. The issue asks
+    /// "did `git.rev_parse("HEAD")` resolve to the tag that was approved?" -
+    /// and `git.rev_parse` answers `Observed<String>`, which used to be refused
+    /// as an operand whatever the operator table said. #73 narrowed E0371 to
+    /// the operators that hand back a value of their operands' own kind, so a
+    /// comparison takes a label and answers a plain `Bool`.
+    ///
+    /// **Both spellings of the question are here on purpose.** The builtin one
+    /// reaches the same answer - a prefix and a length is byte equality - and
+    /// pinning only one of them would let the next change move them apart
+    /// again, which is the whole of what #73 was about.
     #[test]
-    fn what_a_repository_reported_is_still_not_an_operand() {
+    fn what_a_repository_reported_is_an_operand_of_a_comparison() {
+        for (name, cond) in [
+            ("streq-revparse", "head == \"deadbeef\""),
+            (
+                "streq-revparse-builtin",
+                "starts_with(head, \"deadbeef\") && len(head) == 8",
+            ),
+        ] {
+            let src = write_temp(
+                &format!("{name}.sic"),
+                &format!(
+                    "allow {{\n\
+                     \x20   git.rev_parse \"/usr/bin/git\" in \"/srv/thing\";\n\
+                     }}\n\
+                     \n\
+                     fn main() -> Int {{\n\
+                     \x20   let head = git.rev_parse(\"HEAD\");\n\
+                     \x20   if {cond} {{\n\
+                     \x20       return 1;\n\
+                     \x20   }}\n\
+                     \x20   return 0;\n\
+                     }}\n"
+                ),
+            );
+            let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "{name}: {stderr}");
+            std::fs::remove_file(src).ok();
+        }
+    }
+
+    /// The end of that pipeline, run rather than planned: what a command
+    /// printed, compared with the one value the program acts on. `EQ` had an
+    /// arm for two strings all along and trust is erased below the checker, so
+    /// this passing is the claim that a label costs nothing at run time.
+    #[test]
+    fn a_program_can_ask_whether_a_command_printed_the_expected_thing() {
         let src = write_temp(
-            "streq-revparse.sic",
+            "streq-observed.sic",
             "allow {\n\
-             \x20   git.rev_parse \"/usr/bin/git\" in \"/srv/thing\";\n\
+             \x20   process.capture \"/bin/echo\" args [\"sic:\"];\n\
+             }\n\
+             \n\
+             fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
              }\n\
              \n\
              fn main() -> Int {\n\
-             \x20   let head = git.rev_parse(\"HEAD\");\n\
-             \x20   if head == \"deadbeef\" {\n\
-             \x20       return 1;\n\
-             \x20   }\n\
-             \x20   return 0;\n\
+             \x20   let said = process.capture(\"/bin/echo\", [\"sic:\", \"hi\"]);\n\
+             \x20   return bit(said == \"sic: hi\\n\", 1)\n\
+             \x20       + bit(said == \"sic: bye\\n\", 2)\n\
+             \x20       + bit(said != \"sic: bye\\n\", 4);\n\
              }\n",
         );
-        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
-        assert_eq!(code, 1, "{stderr}");
-        assert!(stderr.contains("E0371"), "{stderr}");
-        assert!(stderr.contains("Observed<String>"), "{stderr}");
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // 5: it printed what was expected, and `!=` is the negation of `==`.
+        assert_eq!(stdout, "5\n");
         std::fs::remove_file(src).ok();
     }
 }
@@ -1588,6 +1633,43 @@ mod joining_strings {
             stderr.contains("cannot join LLM<String> with Observed<String>"),
             "{stderr}"
         );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And the same two labels compared, which is allowed - so E0375 is about
+    /// naming a result's origin and not about the two labels being near each
+    /// other. A join answers a value that has to have come from somewhere; a
+    /// comparison answers a `Bool`, which came from nowhere and needs no name.
+    #[test]
+    fn two_different_labels_can_be_compared() {
+        let src = write_temp(
+            "cmp-two-labels.sic",
+            "type Diagnosis {\n\
+             \x20   cause: String,\n\
+             \x20   confidence: Float,\n\
+             }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"claude-opus-4\";\n\
+             \x20   process.capture \"/bin/echo\" args [\"sic:\"];\n\
+             }\n\
+             \n\
+             agent diagnose {\n\
+             \x20   input: String,\n\
+             \x20   output: Diagnosis,\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d = diagnose(\"why did it fail?\");\n\
+             \x20   let out = process.capture(\"/bin/echo\", [\"sic:\", \"hi\"]);\n\
+             \x20   if d.cause == out {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
         std::fs::remove_file(src).ok();
     }
 
@@ -4353,8 +4435,11 @@ mod nothing_is_lost_in_transcription {
 mod trust {
     use super::*;
 
-    /// A label leaves a value only through `approve` - which is what E0371 is
-    /// for, and it is not a rule about branching. `docs/design/trust.md` §2a.
+    /// What E0371 refuses after #73 narrowed it: an operator that hands back a
+    /// value of its operands' own kind. `d.severity + 0` is the shape
+    /// `trust.md` §2a names - if it compiled, the label is gone - and no
+    /// builtin expresses it, which is the answer to "does the rule still refuse
+    /// anything worth refusing".
     #[test]
     fn an_operator_cannot_take_a_label_off_a_value() {
         let src = write_temp(
@@ -4369,10 +4454,8 @@ mod trust {
              \n\
              fn main() -> Int {\n\
              \x20   let d = diagnose(\"why?\");\n\
-             \x20   if d.severity > 5 {\n\
-             \x20       return 1;\n\
-             \x20   }\n\
-             \x20   return 0;\n\
+             \x20   let clean: Int = d.severity + 0;\n\
+             \x20   return clean;\n\
              }\n",
         );
         let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
@@ -4381,25 +4464,90 @@ mod trust {
         // Reading a field kept the label, which is why the operand is
         // `LLM<Int>` rather than `Int`.
         assert!(stderr.contains("LLM<Int>"), "{stderr}");
-        // And the refusal names the door through.
-        assert!(stderr.contains("approve("), "{stderr}");
+        // The note no longer sends the program to `approve`. It used to, and
+        // that was a dead end: `approve` answers `HumanApproved<Int>`, which
+        // this same rule refuses in this same position - see
+        // `an_approval_buys_reach_not_arithmetic`. What it says instead is what
+        // `approve` actually buys.
+        assert!(!stderr.contains("approve(question"), "{stderr}");
+        assert!(
+            stderr.contains("not what may be computed from it"),
+            "{stderr}"
+        );
         std::fs::remove_file(src).ok();
     }
 
-    /// A person's choice is labelled too, so the same rule catches it. Named
-    /// separately because the two labels are produced by different things and
-    /// a rule that only covered one would be about spelling.
+    /// And what it no longer refuses. A comparison answers a `Bool` about its
+    /// operands, and a `Bool` cannot be one of them - so a label may be asked.
+    ///
+    /// All four labels in one loop, because the rule is about what the operator
+    /// hands back rather than about who vouched for the value. A person's
+    /// choice is the one that made the old refusal hardest to defend: the
+    /// program wrote both options itself, and could not ask which came back.
     #[test]
-    fn a_persons_choice_is_not_an_operand_either() {
+    fn a_comparison_is_a_question_whatever_label_it_asks() {
+        let head = "type Diagnosis { cause: String, severity: Int }\n\
+                    \n\
+                    allow {\n\
+                    \x20   llm.invoke \"m\";\n\
+                    \x20   human.approve \"use it\";\n\
+                    \x20   human.choose \"which channel\";\n\
+                    \x20   process.capture \"/bin/echo\" args [\"hi\"];\n\
+                    }\n\
+                    \n\
+                    agent diagnose { input: String, output: Diagnosis, budget: 1 }\n\
+                    \n";
+        for (name, body) in [
+            (
+                "trust-cmp-llm",
+                "let d = diagnose(\"why?\");\n\
+                 \x20   if d.severity > 5 { return 1; }",
+            ),
+            (
+                "trust-cmp-approved",
+                "let d = diagnose(\"why?\");\n\
+                 \x20   let ok = approve(\"use this?\", d);\n\
+                 \x20   if ok.cause == \"disk\" { return 1; }",
+            ),
+            (
+                "trust-cmp-chosen",
+                "let c = choose(\"which?\", [\"a\", \"b\"]);\n\
+                 \x20   if c == \"a\" { return 1; }",
+            ),
+            (
+                "trust-cmp-observed",
+                "let out = process.capture(\"/bin/echo\", [\"hi\"]);\n\
+                 \x20   if out != \"hi\\n\" { return 1; }",
+            ),
+        ] {
+            let src = write_temp(
+                &format!("{name}.sic"),
+                &format!("{head}fn main() -> Int {{\n\x20   {body}\n\x20   return 0;\n}}\n"),
+            );
+            let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+            assert_eq!(code, 0, "{name}: {stderr}");
+            std::fs::remove_file(src).ok();
+        }
+    }
+
+    /// The one comparison still refused, and the reason it is the exception
+    /// that proves the rule: `a == true` hands back the `Bool` it was given, so
+    /// it is `x + 0` spelled with a different operator rather than a question
+    /// about `x`. A labelled `Bool` is not a condition in v0.1 and this is not
+    /// the door to becoming one.
+    #[test]
+    fn a_labelled_bool_is_not_a_question_about_itself() {
         let src = write_temp(
-            "trust-chosen.sic",
+            "trust-bool-operand.sic",
             "allow {\n\
-             \x20   human.choose \"which channel\";\n\
+             \x20   llm.invoke \"m\";\n\
              }\n\
              \n\
+             agent yesno { input: String, output: Bool, budget: 1 }\n\
+             \n\
              fn main() -> Int {\n\
-             \x20   let c = choose(\"which?\", [\"a\", \"b\"]);\n\
-             \x20   if c == 0 {\n\
+             \x20   let a = yesno(\"is it fine?\");\n\
+             \x20   if a == true {\n\
              \x20       return 1;\n\
              \x20   }\n\
              \x20   return 0;\n\
@@ -4408,7 +4556,8 @@ mod trust {
         let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
         assert_eq!(code, 1, "{stderr}");
         assert!(stderr.contains("E0371"), "{stderr}");
-        assert!(stderr.contains("HumanChosen"), "{stderr}");
+        assert!(stderr.contains("LLM<Bool>"), "{stderr}");
+        assert!(stderr.contains("hands the Bool back"), "{stderr}");
         std::fs::remove_file(src).ok();
     }
 
@@ -4418,6 +4567,9 @@ mod trust {
     /// not arithmetic. The first draft of `trust.md` §2a said "a label leaves
     /// a value only through `approve`", and this test is why that sentence is
     /// no longer there.
+    ///
+    /// It is also why E0371 stopped naming `approve` in its note: a program
+    /// that took the advice arrived here.
     #[test]
     fn an_approval_buys_reach_not_arithmetic() {
         let src = write_temp(
@@ -4434,10 +4586,8 @@ mod trust {
              fn main() -> Int {\n\
              \x20   let d = diagnose(\"why?\");\n\
              \x20   let ok = approve(\"use this?\", d);\n\
-             \x20   if ok.severity > 5 {\n\
-             \x20       return 1;\n\
-             \x20   }\n\
-             \x20   return 0;\n\
+             \x20   let clean: Int = ok.severity + 1;\n\
+             \x20   return clean;\n\
              }\n",
         );
         let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
@@ -4611,37 +4761,57 @@ mod trust {
         std::fs::remove_file(src).ok();
     }
 
-    /// Equality on String did not open a door for a model's answer, and the
-    /// reason is structural rather than a second rule: `check_binary` rejects
-    /// a labelled operand *before* it consults the operator table, so the
-    /// refusal is E0371 - the laundering rule - and not E0303. It would still
-    /// be E0371 if every operator in the language accepted String.
+    /// Equality on String opened no door for a model's answer, and the reason
+    /// is what the comparison hands back rather than a second rule. The
+    /// question compiles; the value it asked about is exactly where it was, so
+    /// the `fs.write` under the branch is refused as it would have been without
+    /// one.
+    ///
+    /// The pair is the point. Before #73 the first program was E0371 and the
+    /// second was unreachable, which made the refusal look like the thing
+    /// holding the second one back. It never was: E0372 is.
     #[test]
-    fn what_an_agent_answered_cannot_be_compared_with_a_string() {
-        let src = write_temp(
+    fn comparing_what_an_agent_answered_buys_the_program_nothing() {
+        let head = "allow {\n\
+                    \x20   llm.invoke \"m\";\n\
+                    \x20   fs.write \"./out.txt\";\n\
+                    }\n\
+                    \n\
+                    agent ask { input: String, output: String, budget: 1 }\n\
+                    \n";
+        let asked = write_temp(
             "trust-eq-agent.sic",
-            "allow {\n\
-             \x20   llm.invoke \"m\";\n\
-             }\n\
-             \n\
-             agent ask { input: String, output: String, budget: 1 }\n\
-             \n\
-             fn main() -> Int {\n\
-             \x20   let said = ask(\"ship it?\");\n\
-             \x20   if said == \"yes\" {\n\
-             \x20       return 1;\n\
-             \x20   }\n\
-             \x20   return 0;\n\
-             }\n",
+            &format!(
+                "{head}fn main() -> Int {{\n\
+                 \x20   let said = ask(\"ship it?\");\n\
+                 \x20   if said == \"yes\" {{\n\
+                 \x20       return 1;\n\
+                 \x20   }}\n\
+                 \x20   return 0;\n\
+                 }}\n"
+            ),
         );
-        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        let (_, stderr, code) = sic(&["plan", asked.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        std::fs::remove_file(asked).ok();
+
+        let written = write_temp(
+            "trust-eq-agent-write.sic",
+            &format!(
+                "{head}fn main() -> Int {{\n\
+                 \x20   let said = ask(\"ship it?\");\n\
+                 \x20   if said == \"yes\" {{\n\
+                 \x20       fs.write(\"./out.txt\", said);\n\
+                 \x20   }}\n\
+                 \x20   return 0;\n\
+                 }}\n"
+            ),
+        );
+        let (_, stderr, code) = sic(&["plan", written.to_str().unwrap()]);
         assert_eq!(code, 1, "{stderr}");
-        // E0371, not E0303: the operand was refused for where it came from,
-        // not for which operator was applied to it.
-        assert!(stderr.contains("E0371"), "{stderr}");
-        assert!(!stderr.contains("E0303"), "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
         assert!(stderr.contains("LLM<String>"), "{stderr}");
-        std::fs::remove_file(src).ok();
+        std::fs::remove_file(written).ok();
     }
 
     /// The hole #72 was about, closed: a *direct* `llm.invoke` is labelled at

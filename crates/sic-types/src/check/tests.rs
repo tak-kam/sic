@@ -623,14 +623,13 @@ fn only_a_list_can_be_walked() {
 
 #[test]
 fn a_trusted_value_is_not_its_inner_type() {
-    // Arithmetic and comparison are exactly where provenance gets lost: each
-    // answers a value the label is not on.
-    assert!(
-        codes(&format!(
-            "{TRUST}fn main() -> Bool {{ let p = make_plan(\"x\"); return p.action == \"go\"; }}"
-        ))
-        .contains(&"E0371")
-    );
+    // Arithmetic is exactly where provenance gets lost: it answers a value of
+    // the operand's own kind, which the label is not on. A comparison answers a
+    // `Bool` about the operand, which cannot be one - see `trust.md` §2a.
+    let typed = ok(&format!(
+        "{TRUST}fn main() -> Bool {{ let p = make_plan(\"x\"); return p.action == \"go\"; }}"
+    ));
+    assert_eq!(typed.types.name(typed.fns[0].ret), "Bool");
     assert!(
         codes(&format!(
             "{TRUST}fn main() {{ let p = make_plan(\"x\"); let n = !p; }}"

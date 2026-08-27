@@ -108,24 +108,26 @@ where provenance gets lost" - and the shape it protects is this:
 let clean: Int = d.severity + 0;   // if this compiled, the label is gone
 ```
 
-An operator takes a labelled value and answers an unlabelled one. The rule
-refuses that, everywhere, so that:
+An operator that answers a value of its operands' own kind can hand the operand
+straight back. The rule refuses that, everywhere, so that:
 
-> **Once attached, a label never comes off.**
+> **Once attached, a label never comes off a value.**
 
 Not through `approve` either, and this is worth being precise about because the
 first draft of this section got it wrong: `approve` turns `LLM<T>` into
-`HumanApproved<T>`, which is still a label. E0371 refuses it as an operand just
-the same - `if approved.severity > 5` does not compile - and what changed is
-only which capabilities the value may now reach (§2, §3). A labelled value is
-**opaque to computation, whoever vouched for it**: capabilities may take it,
-fields and elements keep its label, and nothing hands the program back a plain
-value to compute with.
+`HumanApproved<T>`, which is still a label. E0371 refuses it in the operand
+positions it refuses any other - `let n: Int = approved.severity + 1;` does not
+compile - and what changed is only which capabilities the value may now reach
+(§2, §3).
 
-That sentence is the whole of the trust system's guarantee, and the three rules
-in §2 are each a consequence of it. What a person's approval buys is reach, not
-arithmetic - and that is right, because the person approved *using* the value,
-not every conclusion a program might derive from it.
+What a person's approval buys is reach, not arithmetic - and that is right,
+because the person approved *using* the value, not every number a program might
+derive from it.
+
+The words "a value of its operands' own kind" are load-bearing, and were added
+by #73; before it the rule covered every operator, which turned out to be a rule
+about syntax rather than about laundering. "The asymmetry, answered" below is
+where that is argued and where the rule is stated in full.
 
 ### `len` is the exception, deliberately
 
@@ -185,11 +187,12 @@ if starts_with(head, "deadbeef") && len(head) == 8 { … }
 
 That is byte equality of a labelled string, spelled out of two things this
 document allows, and `head == "deadbeef"` is the same test written with an
-operator - which E0371 refuses. So after this change E0371's refusal is about
-what an expression **hands back**, not about what a program can find out. It
-was already only that: `len(x) == 1` finds out a great deal. This makes it
-plain, and the honest summary of the trust system's guarantee is the sentence
-above - *a labelled value is opaque to computation* - with "except that a
+operator - which E0371 refused when this was written, and does not any more.
+That contradiction became #73, and "The asymmetry, answered" is where it was
+taken. So E0371's refusal is about what an expression **hands back**, not about
+what a program can find out. It was already only that: `len(x) == 1` finds out a
+great deal. This makes it plain, and the honest summary of the trust system's
+guarantee is *a labelled value is opaque to computation* with "except that a
 program may ask yes-or-no questions about it" attached.
 
 The alternative was to propagate the label, and it was not close. Every
@@ -228,12 +231,14 @@ more than that.
 
 ### Joining two strings keeps the label
 
-`+` on two strings is the one operator E0371 does not refuse, and the reason is
-the sentence above rather than an exception to it.
+`+` on two strings answers a value of its operands' own kind, which is the shape
+E0371 is for - and it is not refused. The reason is the sentence above rather
+than an exception to it.
 
-Read what E0371 is for again: *an operator takes a labelled value and answers an
-unlabelled one*, and the rule refuses that so that once attached, a label never
-comes off. Joining does not do that. It answers a **labelled** value:
+Read what E0371 is for again: *an operator that answers a value of its operands'
+own kind can hand the operand straight back*, and the rule refuses that so that
+once attached, a label never comes off a value. Joining does not do that. It
+answers a **labelled** value:
 
 ```sic
 let sentence = "the agent says: " + d.cause;   // LLM<String>
@@ -272,21 +277,193 @@ E0301 rather than E0303. Which builtins erase a label on an argument they only
 show to a person is a separate decision from what an operator does, and it is
 not taken here.
 
-### The asymmetry, said out loud
+### The asymmetry, answered
 
-If a branch is not an effect, then `if d.severity > 5` could be allowed too,
-and E0371 could be narrowed to the operators that produce a *value* the program
-keeps. It is not narrowed, and this document is not narrowing it: refusing more
-than is strictly necessary costs a workaround, and allowing more than is
-necessary costs an argument every time somebody asks why. If the refusal turns
-out to be in the way of a real program, that is the issue to write, and this
-section is what it has to answer.
+The subsection this replaces said that E0371 was not narrowed, and that if the
+refusal turned out to be in the way of a real program, the issue that argued for
+it had to answer this section. #73 was that issue. It is answered here, and the
+answer is that the refusal was narrowed.
+
+The two spellings it was written about:
+
+```sic
+let head = git.rev_parse("HEAD");        // Observed<String>
+
+if head == "deadbeef" { … }              // was error[E0371]
+if starts_with(head, "deadbeef")
+    && len(head) == 8 { … }              // compiled
+```
+
+E0371 refused an **operand**. A builtin takes **arguments**, and no rule refused
+those, so a program that wanted the answer wrote the other spelling and got it.
+That is a rule about syntax, which is the same failure #72 was: two spellings of
+one act, one checked and one not.
+
+#### Which way the two spellings were made to agree
+
+Refusing both was the other direction, and it is not available. Every question
+`contains` and `starts_with` exist to answer is about what a capability
+reported, so they would take `Observed<String>` or nothing; an `Observed<Bool>`
+is not an `if` condition (E0301, checked - `expect_type(Bool, …)`) and `!` does
+not apply to one either (E0371). A refusal that covered their arguments would
+refuse every program they were added for. That was verified rather than taken
+from #68: both errors were reproduced before this was written.
+
+So the direction is to allow both, and the question is what the rule becomes.
+
+#### The rule
+
+> **A labelled operand is refused when the operator answers a value of the
+> operands' own kind, because then the result may be the operand. An operator
+> whose result cannot be one of its operands is asking a question, and a
+> question may be asked about a labelled value.**
+
+In v0.1 that is exactly the comparisons over `Int` and `String` - `==` and `!=`
+on both, `<`, `<=`, `>` and `>=` on `Int`, which is all `<` applies to until
+somebody argues for a collation. They answer `Bool`, and no `Bool` is ever one
+of the values they were given.
+
+Everything else answers its operands' type, and there the rule has two limbs
+rather than one - which is the part worth reading twice, because it is what
+makes `+` on two strings the same decision rather than a hole in this one:
+
+| operator | operands | result | what happens |
+|---|---|---|---|
+| `+ - * / %` | `Int` | `Int` | refused (E0371) |
+| `-` (unary) | `Int` | `Int` | refused |
+| `! && \|\|` | `Bool` | `Bool` | refused |
+| `== !=` | `Bool` | `Bool` | refused |
+| `+` | `String` | `String` | **carries the label** |
+| `== != < <= > >=` | `Int`, `String` | `Bool` | allowed, answers plain |
+
+An operator whose result has its operands' type either refuses a label or
+carries it onward. Joining carries it, because a joined string is still the
+bytes it was made of and `process.exec` refuses it for the reason it refuses
+what it was joined from. Arithmetic refuses it, and could have carried it
+instead - `LLM<Int> + 1` being `LLM<Int>` would be defensible - but nothing has
+asked for that, and the shape §2 was written about is a program that wants the
+plain number. The issue that wants labelled arithmetic is where that gets
+argued; it is not decided here.
+
+#### `x == true` is the value, not a question about it
+
+The one comparison that stays refused, and it is the rule rather than an
+exception to it. `a == true` answers the `Bool` it was given; `a != false` does
+too. A `Bool` compared with a literal *is* the operand, which is `d.severity +
+0` spelled with a different operator.
+
+This is not an information-flow argument, and it must not be read as one - a
+budget on how much a program can learn is refused below and the refusal has not
+moved. `x == "deadbeef"` also tells a program something, and may be asked again
+with a different literal until the string is reconstructed. The difference is
+not how much comes back; it is that one expression **hands back the operand
+itself** and the other hands back an answer that is not any value the label was
+on.
+
+The consequence is that a labelled `Bool` is still not a condition, and there is
+no back door to making it one. Whether it should become one is a separate
+decision that touches `if`, `while`, `!` and the connectives at once.
+
+#### Two labels compared, and two labels joined
+
+`d.cause + out` is E0375 - there is no name for where the result came from.
+`d.cause == out` compiles.
+
+That is the same rule from both sides rather than an inconsistency. A join
+answers a value, and a value in this document has one origin; picking a winner
+between "a model said it" and "a program printed it" would need an order between
+the labels that nothing here has. A comparison answers a `Bool`, which has no
+origin to name, so there is nothing to invent.
+
+#### What E0371 still refuses, and whether it is worth refusing
+
+#73 asked for a program the rule protects that `contains` and `len` cannot
+already express. There is one, and it is the example §2 opens with:
+
+```sic
+let clean: Int = d.severity + 0;
+```
+
+No builtin expresses that, because it is not a question about the value - it *is*
+the value, and `contains`, `starts_with` and `len` each answer something that is
+not. The same goes for `!a` and `a && b` on a labelled `Bool`. So the answer is
+that the rule still refuses the shape it was written for, and had stopped
+refusing anything else.
+
+The narrowing is worth being exact about, because it is larger than it sounds:
+
+- On a labelled **`Int`**, E0371 bites on arithmetic and nothing else.
+- On a labelled **`Bool`**, it bites on everything, because every operator that
+  applies to a `Bool` answers one.
+- On a labelled **`String`**, it now refuses nothing a program would write.
+  `==` and `!=` are allowed, `+` carries the label, `<` is not an operator on
+  `String` at all, and `-` and `!` do not apply. The refusal that remains there
+  is a refusal of expressions that would not have type-checked anyway.
+
+That last line is the honest measure of what #68 and #73 found together: for
+strings, the operand rule had already stopped doing work, and only the error
+message said otherwise.
+
+#### The note that pointed at `approve`
+
+It was wrong, and the narrowing is not what made it wrong.
+
+```text
+error[E0371]: LLM<Int> cannot be used as an operand
+  = note: `approve(question, value)` turns a model's answer into one a person
+          signed off
+```
+
+A program that took the advice wrote `approve("use this?", d)` and met
+`error[E0371]: HumanApproved<Int> cannot be used as an operand` on the next
+line. This section already said so - "E0371 refuses it just the same" - and the
+diagnostic did not. It was the only place a program was told a way through, and
+the way through was a dead end.
+
+So the note is gone from E0371 and stays on E0372, which is the rule `approve`
+actually answers: what a person's approval buys is reach. In its place E0371
+says what a labelled value may do - be compared, be asked `len`, `contains` and
+`starts_with` - and, for the `Bool` case, why comparing it is the value again.
+And the shape people write first, `head == "deadbeef"`, no longer produces a
+diagnostic at all, which is the better outcome than a better note.
+
+#### One rule over four labels
+
+`LLM<T>`, `Observed<T>`, `HumanApproved<T>` and `HumanChosen<T>` are still
+covered by one rule, and a person's choice is still not a model's answer. Those
+two facts do not conflict, because they are answered by different rules:
+
+- **E0372 is where the labels differ.** `LLM` and `Observed` cannot reach a
+  capability that changes something; `HumanApproved` and `HumanChosen` can. That
+  is the whole of what vouching buys, and it is a rule about reach.
+- **E0371 is where they do not.** Laundering is the same act whoever vouched
+  for the value. `approved.severity + 0` hands back a plain `Int` exactly as
+  `d.severity + 0` does, and the person approved *using* the plan, not every
+  number derived from it.
+
+A person's choice is where the old refusal was hardest to defend, and it is the
+clearest gain here:
+
+```sic
+let picked = choose("deploy or roll back?", ["deploy", "rollback"]);
+if picked == "deploy" { … }             // was error[E0371]
+```
+
+The program wrote both options itself. §5 already says `choose` "carries no
+restriction: unlike a model's answer or a program's output, its text was written
+by whoever wrote the program" - and the program could not ask which of its own
+two strings came back. That was the operand rule reaching a value it had no
+argument about, which is what happens when a rule is about syntax.
 
 ### What is checked
 
 | claim | how |
 |---|---|
-| a labelled value is not an operand, whoever vouched for it | E0371, with tests for `LLM<T>`, `HumanChosen<T>` and `HumanApproved<T>` |
+| an operator that answers its operands' kind refuses a label, whoever vouched for it | E0371, tested on `LLM<Int>` arithmetic and on `HumanApproved<Int>` arithmetic, which is also what says `approve` is not the way out of it |
+| a comparison may ask a labelled value, whoever vouched for it | one test over all four labels, because a rule that held for three of them would be about which capability produced the value |
+| the two spellings of asking a string agree | `head == "deadbeef"` and `starts_with(head, …) && len(head) == 8` are pinned in one test, so neither can be changed alone |
+| a labelled `Bool` compared with a literal is refused | a test, because it is the one comparison that is not a question and the reason is easy to lose |
+| two labels may be compared though they may not be joined | tested beside E0375, so the difference stays a decision about naming a result rather than a coincidence |
 | both spellings of asking a model are labelled | `llm.invoke` carries the label in the capability table, so a direct call and an `agent` are checked alike |
 | a labelled value does not reach a changing capability | E0372 |
 | joining two strings keeps the label, on either side | tested in both operand positions, because a rule about `a + b` that only holds for `a` is not a rule |
@@ -306,9 +483,14 @@ propagate would have looked like a fix.
   (`docs/design/output.md`), and it reaches `len` the same way for the same
   reason - `len(git.status()) > 0` is the question that capability exists to
   answer.
-- **Narrowing E0371.** Above. `+` on two strings is not a narrowing of it: the
-  rule is about an operator answering an unlabelled value, and that one does
-  not.
+- **Narrowing E0371 further.** It now refuses arithmetic, `-`, `!`, `&&`, `||`
+  and equality on a labelled `Bool`. Making arithmetic carry the label instead
+  of refusing it - `LLM<Int> + 1` being `LLM<Int>`, the way `+` on two strings
+  works - is defensible and is not done, because no program has asked.
+- **A labelled condition.** `if a` where `a` is `LLM<Bool>` is E0301, and
+  `a == true` is E0371 for the reason above. Making a labelled `Bool` decide a
+  branch is a decision about `if`, `while`, `!` and the connectives at once, and
+  it is not taken by narrowing an operand rule.
 - **An order between the labels.** E0375 refuses a join of two rather than
   ranking them.
 - **A rule about what a builtin does to a label on its arguments.** `approve`

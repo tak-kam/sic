@@ -1152,12 +1152,21 @@ impl Checker {
             return self.check_concat(l, r, span);
         }
         // Arithmetic on a value whose provenance matters is exactly where
-        // provenance gets lost.
-        if self.reject_trust(l, lhs.span, "an operand")
-            || self.reject_trust(r, rhs.span, "an operand")
+        // provenance gets lost - but a comparison is not arithmetic. It answers
+        // a `Bool` *about* its operands, and a `Bool` cannot be one of them.
+        // `docs/design/trust.md` §2a has the rule and what it costs.
+        if !self.asks_a_question(op, l, r)
+            && (self.reject_trust(l, lhs.span, "an operand")
+                || self.reject_trust(r, rhs.span, "an operand"))
         {
             return Types::ERROR;
         }
+        // A comparison is where a label stops, so what is compared is the type
+        // underneath it. Two operands labelled differently are compared without
+        // complaint, which is where this parts company with `+`: a join has to
+        // name where its result came from (E0375), and an answer to a question
+        // came from nowhere.
+        let (l, r) = (self.types.untrusted(l), self.types.untrusted(r));
         if l != r {
             let (ln, rn) = (self.types.name(l), self.types.name(r));
             self.error(
@@ -1200,6 +1209,33 @@ impl Checker {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => l,
             _ => Types::BOOL,
+        }
+    }
+
+    /// Whether `op` answers a `Bool` *about* its operands rather than a value
+    /// of their own kind - which is the whole of what decides whether a
+    /// labelled operand is refused.
+    ///
+    /// The criterion is not "the result is a `Bool`". It is that the result
+    /// cannot be an operand: `x == true` and `x != false` hand back exactly the
+    /// `Bool` they were given, which is the laundering shape `x + 0` is, spelled
+    /// with a different operator. Comparing an `Int` or a `String` cannot do
+    /// that - one bit comes back and the value stays where it was.
+    ///
+    /// So this is the same criterion `check_concat` answers the other way. An
+    /// operator whose result has its operands' type either refuses a label
+    /// (arithmetic, negation, the connectives) or carries it (joining two
+    /// strings); an operator whose result cannot hold the operand is a question,
+    /// and a question may be asked about a labelled value. See
+    /// `docs/design/trust.md` §2a.
+    fn asks_a_question(&self, op: BinOp, l: TypeId, r: TypeId) -> bool {
+        match op {
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => true,
+            BinOp::Eq | BinOp::Ne => {
+                self.types.untrusted(l) != Types::BOOL && self.types.untrusted(r) != Types::BOOL
+            }
+            BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => false,
+            BinOp::And | BinOp::Or => false,
         }
     }
 
@@ -2007,10 +2043,18 @@ impl Checker {
     }
 
     /// Reports a value whose provenance makes it unusable here.
+    ///
+    /// The note used to point at `approve`, and it was a dead end: `approve`
+    /// answers `HumanApproved<T>`, which this refuses in the same position for
+    /// the same reason, so a program that followed the advice met the identical
+    /// error one line later. What `approve` buys is reach (E0372), and that is
+    /// where it is still offered. Here the way through is to ask a question
+    /// about the value instead of computing one from it.
     fn reject_trust(&mut self, ty: TypeId, span: Span, what: &str) -> bool {
-        let Some((kind, inner)) = self.types.trust_of(ty) else {
+        let Some((_, inner)) = self.types.trust_of(ty) else {
             return false;
         };
+        let is_bool = inner == Types::BOOL;
         let (outer, inner) = (self.types.name(ty), self.types.name(inner));
         self.error(
             "E0371",
@@ -2018,11 +2062,23 @@ impl Checker {
             span,
             format!("this is where a {inner} came from, not a {inner}"),
         );
-        if kind == TrustKind::Llm {
+        if is_bool {
+            // The one place a comparison is refused, and the reason it is: a
+            // `Bool` compared with a literal is the `Bool` again.
             self.note(
-                "`approve(question, value)` turns a model's answer into one a person signed off",
+                "comparing a Bool with a literal hands the Bool back, \
+                 so this is the value rather than a question about it",
+            );
+        } else {
+            self.note(
+                "compare it instead, or ask `len`, `contains` or `starts_with` - \
+                 those answer a question about a labelled value rather than hand one back",
             );
         }
+        self.note(
+            "`approve` changes which capabilities a value may reach, \
+             not what may be computed from it",
+        );
         true
     }
 

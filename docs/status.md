@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 690 tests.
+Last updated at 693 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -50,6 +50,7 @@ in the source, so it is the same on every platform - four of them are
 | 33 | The security principles | each one has a test |
 | - | Both spellings of asking a model carry the label: `llm.invoke` is typed `LLM<String>` in the capability table rather than at the one call shape that declares an answer, and `from_json` carries a document's label onto the record it reads | `docs/design/trust.md` §2 |
 | - | What a trusted value may **decide**, as against what it may reach: a branch is not an effect, because the manifest is the unit of approval - and `len` takes the label off, which is a channel from a model to a branch and is accepted with reasons rather than by accident | `docs/design/trust.md` §2a |
+| - | E0371 refuses an operator that hands back a value of its operands' own kind, and nothing else. A comparison answers a `Bool` *about* a labelled value and is allowed, which is the same criterion `+` on two strings answers the other way by carrying the label; arithmetic still cannot launder one, and `x == true` is refused because it is the `Bool` again rather than a question about it. The rule stopped being about which syntax a program used to ask, which is what a builtin taking the argument an operator refused had made it | `docs/design/trust.md` §2a |
 | - | What a grant on each capability may say - `in`, `env`, `delegable`, and how an agent reaches it - is a table with a test that it is complete, so a capability added without those four decisions fails rather than being found by reading the output | `crates/sic-cli/tests/cli.rs` |
 | - | `==` and `!=` on `String`: byte equality of the interned string, so `"main" == "Main"` is false. Every layer below the checker was already generic - `EQ` is three registers, the verifier asks only that both operands have the same type, and the VM's `values_equal` had the arm - which made one row of the checker's operator table the whole of the refusal. Ordering stayed out, because `<` needs a collation decision nobody has asked for | `docs/design/v0.1.md` §4 |
 | - | `contains(haystack, needle)` and `starts_with(string, prefix)`: the two questions a program may ask about a string it holds, answering `Bool` and allocating nothing. Two rather than one because a grant is about a prefix, and a match in the middle answers a different question with the same word. A labelled string may be asked either, and the answer is plain - the reason `len` gives, and the width that adds to it, is argued rather than assumed | `docs/design/trust.md` §2a, `docs/design/v0.1.md` §6 |

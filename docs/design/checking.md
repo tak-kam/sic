@@ -517,9 +517,13 @@ that a program's author knows the question is the whole of what will be read.
   over a file the model chose the name of. Any future rule about vacuity has to
   answer that program specifically.
 - **A confidence threshold on the model's own score.** The same thing wearing a
-  number. E0371 refuses `LLM<Float>` as an operand today, so the literal
-  spelling does not compile - #71 calls that an accident, and §4.1 is the reason
-  it should stay refused on purpose.
+  number. #71 called it an accident that this did not compile, and #73 proved
+  the point by taking the accident away: E0371 was narrowed to the operators
+  that hand back a value of their operands' own kind, so a comparison may now
+  ask a labelled value, and `if d.severity > 5` on an `LLM<Int>` compiles. The
+  `Float` spelling still does not, but only because v0.1 compares `Int` alone -
+  that is E0303 and a missing feature, not a rule. §4.1 is the reason this
+  should be refused on purpose, and it is now the only reason there is.
 - **Removing `approve`.** Whatever arrives later, the door with a person behind
   it stays, and stays the only thing that produces `HumanApproved<T>`.
 - **General information-flow analysis.** Tracking how many bits of a labelled

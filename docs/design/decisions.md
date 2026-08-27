@@ -104,6 +104,13 @@ It is not `HumanApproved<T>` and does not convert to one. Approving *this value*
 and choosing *among these* are different claims, and a signature that asks for
 one is not asking for the other.
 
+The sentence this section opens with was not quite true when it was written.
+E0371 refused a labelled value as an operand, so `if picked == "deploy"` did not
+compile: a program could ask a person to choose between two strings it had
+written itself, and then could not ask which one came back. #73 narrowed that
+rule to the operators that hand back a value of their operands' own kind, and
+the sentence is true now - `trust.md` §2a has the argument.
+
 ---
 
 ## 5. A decision with no alternatives is not one

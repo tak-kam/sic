@@ -223,11 +223,17 @@ Exit { code: Int, output: Observed<String> }
 ```
 
 The provenance is on the field that has one. Wrapping the record instead -
-`Observed<Exit>` - was tried on paper and does not work: a trusted value cannot
-be an operand (`E0371`), so `if r.code == 0` would not compile, and that
-comparison is the entire reason the type exists. An exit code is produced by the
+`Observed<Exit>` - is wrong on its own terms: an exit code is produced by the
 operating system rather than written by the program, so it has no provenance to
-carry in the first place.
+carry, and a label on it would be a claim nothing supports.
+
+The argument first written here was a different one - that `if r.code == 0`
+would not compile, because a labelled value could not be an operand (`E0371`) -
+and #73 removed it. E0371 was narrowed to the operators that hand back a value
+of their operands' own kind, so a comparison takes a label and answers a plain
+`Bool`; `Observed<Exit>` would compare fine now. The shape of the type did not
+change, because the sentence above was always the reason and the operand rule
+was a second one that happened to agree. `trust.md` §2a has the narrowing.
 
 `r.output` is exactly what `process.capture` returns, and the rule that stops it
 from deciding what runs is unchanged: passing it to `process.exec` is still
