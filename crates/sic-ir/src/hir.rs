@@ -134,6 +134,17 @@ pub enum InstKind {
         ty: TypeId,
         src: LocalId,
     },
+    /// Renders a value as the document it came from, for a person to read.
+    ///
+    /// The inverse of `FromJson`, and it exists for one caller: `approve` has
+    /// to hand the value to whoever is being asked about it. No syntax
+    /// produces it, so nothing in the language gets a plain `String` out of a
+    /// labelled value this way - see `docs/design/trust.md` §3.
+    ToJson {
+        dst: LocalId,
+        ty: TypeId,
+        src: LocalId,
+    },
 
     // ---- phase 3 and later ----
     // Defined here so the shape of the IR is settled, never generated in v0.1.

@@ -95,7 +95,7 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             Op::Spawn => format!("r{}, f{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::Await | Op::Len => format!("r{}, r{}", inst.a(), inst.b()),
             Op::MakeObject => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
-            Op::FromJson => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
+            Op::FromJson | Op::ToJson => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::GetField => format!("r{}, r{}, .{}", inst.a(), inst.b(), inst.c()),
             Op::MakeList => format!("r{}, r{}, {}", inst.a(), inst.b(), inst.c()),
             Op::GetIndex => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
@@ -127,7 +127,7 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             }
         }
     }
-    if op == Op::MakeObject || op == Op::FromJson {
+    if op == Op::MakeObject || op == Op::FromJson || op == Op::ToJson {
         line.push_str(&format!("  ; {}", p.type_name(inst.b() as u32)));
     }
     if op == Op::Spawn {

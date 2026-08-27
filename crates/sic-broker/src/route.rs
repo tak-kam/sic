@@ -81,7 +81,11 @@ pub fn offered(manifest: &[CapGrant]) -> Vec<Offered> {
 fn params_of(cap: &str) -> Vec<Param> {
     match cap {
         "process.exec" | "process.capture" | "process.run" => vec![Param::Str, Param::Strings],
-        "human.approve" => vec![Param::Str],
+        // The question, then what is being approved. An agent asking for an
+        // approval has no value of the program's to show, so it fills the
+        // second in with an empty string - which is exactly what the VM sends
+        // for a `human.approve` call that stopped at the question.
+        "human.approve" => vec![Param::Str, Param::Str],
         "human.choose" => vec![Param::Str, Param::Strings],
         _ => Vec::new(),
     }

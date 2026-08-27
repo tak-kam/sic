@@ -648,6 +648,11 @@ impl<'a> FnCompile<'a> {
                 let type_index = self.type_index(*ty);
                 self.emit(Inst::abc(Op::FromJson, dst, type_index, src), span);
             }
+            InstKind::ToJson { dst, ty, src } => {
+                let (dst, src) = (self.reg(*dst), self.reg(*src));
+                let type_index = self.type_index(*ty);
+                self.emit(Inst::abc(Op::ToJson, dst, type_index, src), span);
+            }
             InstKind::Log { level, msg } => {
                 let msg = self.reg(*msg);
                 self.emit(Inst::abc(Op::Log, level_code(*level), msg, 0), span);

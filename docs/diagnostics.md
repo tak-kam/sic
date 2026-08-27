@@ -146,6 +146,7 @@ reason.
 | E0373 | `choose` without the `human.choose` grant |
 | E0374 | `retry` on a capability whose grant does not say the effect can be repeated |
 | E0375 | joining two strings whose provenance is not the same |
+| E0376 | `approve` of a value that cannot be shown to whoever is asked |
 
 ## E04xx — modules
 

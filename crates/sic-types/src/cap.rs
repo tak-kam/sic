@@ -77,14 +77,22 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
     CapSig {
         name: "human.approve",
         kind: CapKind::Invoke,
-        // The question is the argument; the answer is whether it was approved.
-        params: &[Types::STR],
+        // The question, then what is being approved, as the document it came
+        // from: `approve` renders its value and passes it here, so that the
+        // person is asked about something they can read. The answer is whether
+        // it was approved. See `docs/design/trust.md` §3.
+        params: &[Types::STR, Types::STR],
         ret: Types::BOOL,
         // An unconstrained approval would be an approval of anything, so a
         // grant has to say what it covers.
         requires_constraint: true,
         accepts_pin: false,
-        optional_tail: false,
+        // A program calling the capability itself is asking about whatever it
+        // likes and has no value to show, so it may stop at the question. The
+        // empty string is what an omitted one becomes, and no rendered value
+        // is ever empty - JSON has no empty document - so the broker can tell
+        // "nothing to show" from "this is what there is".
+        optional_tail: true,
     },
     CapSig {
         name: "human.choose",

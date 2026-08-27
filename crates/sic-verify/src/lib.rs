@@ -409,7 +409,7 @@ impl<'a> Verifier<'a> {
                     ok &= check_reg(self, inst.a(), "destination");
                     ok &= check_reg(self, inst.b(), "record");
                 }
-                Op::FromJson => {
+                Op::FromJson | Op::ToJson => {
                     ok &= check_reg(self, inst.a(), "destination");
                     ok &= check_reg(self, inst.c(), "document");
                     if inst.b() as usize >= p.types.len() {
@@ -833,6 +833,13 @@ impl<'a> Verifier<'a> {
                 Op::FromJson => {
                     self.read(&name, pc, &state, inst.c(), Some(STR));
                     next[inst.a() as usize] = Abst::Val(inst.b() as u32);
+                    successors.push(index + 1);
+                }
+                // The inverse, and checked as one: the register read holds the
+                // type the instruction names, and what comes out is text.
+                Op::ToJson => {
+                    self.read(&name, pc, &state, inst.c(), Some(inst.b() as u32));
+                    next[inst.a() as usize] = Abst::Val(STR);
                     successors.push(index + 1);
                 }
                 Op::Return => {

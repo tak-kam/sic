@@ -30,7 +30,7 @@ v0.1 ships seven, chosen because they need no credentials and no network:
 | `process.exec` | `(path: String, args: List<String>) -> Int` | exec |
 | `process.capture` | `(path: String, args: List<String>) -> Observed<String>` | exec |
 | `process.run` | `(path: String, args: List<String>) -> Exit` | exec |
-| `human.approve` | `(question: String) -> Bool` | invoke |
+| `human.approve` | `(question: String, value: String = "") -> Bool` | invoke |
 | `human.choose` | `(question: String, options: List<String>) -> Int` | invoke |
 
 ### What a child gets, and where it is said
@@ -82,10 +82,17 @@ why that is a third grant rather than a flag. `Exit` is
 `{ code: Int, output: Observed<String> }`, the one record type the language
 declares for itself.
 
-They are also the ones whose last parameter may be left off:
+They are also among the ones whose last parameter may be left off:
 `process.exec("/usr/bin/true")` passes an empty vector, so a program written
 before arguments existed still says what it said. What a grant may pin about
 those arguments is in `docs/design/arguments.md`.
+
+`human.approve` is the other. Its second parameter is what the person is shown -
+the value `approve` renders, as a document - and a program calling the
+capability itself has no value to show, so it may stop at the question. The
+omitted argument becomes the empty string, and no rendered value is empty, so
+"nothing to show" and "this is what there is" do not run together. See
+`docs/design/trust.md` §3.
 
 ---
 
@@ -324,7 +331,13 @@ possibly in another process, on another day. See
 
 The grant's constraint says what an approval is about, and it travels with the
 question (`[deploy to production] deploy build 42?`), so whoever answers, and
-whoever audits it later, can see which grant was exercised.
+whoever audits it later, can see which grant was exercised. So does the value,
+when there is one:
+
+```text
+[deploy to production] deploy build 42?
+  approving: {"action":"restart the service"}
+```
 
 ---
 
