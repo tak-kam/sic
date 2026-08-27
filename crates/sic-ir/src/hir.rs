@@ -113,6 +113,18 @@ pub enum InstKind {
         dst: LocalId,
         src: LocalId,
     },
+    /// Whether `sub` occurs anywhere in `s`.
+    Contains {
+        dst: LocalId,
+        s: LocalId,
+        sub: LocalId,
+    },
+    /// Whether `prefix` occurs at the start of `s`.
+    StartsWith {
+        dst: LocalId,
+        s: LocalId,
+        prefix: LocalId,
+    },
     /// Parses a document and checks it against a type.
     ///
     /// This is where a model's answer stops being text. A run fails here rather

@@ -37,6 +37,10 @@ pub enum Builtin {
     /// `from_json(text)`, whose result type comes from the annotation on the
     /// binding it initializes.
     FromJson,
+    /// `contains(haystack, needle)`: whether the needle occurs anywhere.
+    Contains,
+    /// `starts_with(s, prefix)`: whether it occurs at the start.
+    StartsWith,
 }
 
 #[derive(Debug, Clone)]
@@ -1262,8 +1266,8 @@ impl Checker {
             return self.check_agent_call(callee, agent, args, span);
         }
         let Some(id) = self.fn_ids.get(&name.name).copied() else {
-            // `len` is the only built-in function. It is looked up last, so a
-            // module that defines its own `len` gets that one.
+            // The built-in functions. They are looked up last, so a module
+            // that defines its own `len` gets that one.
             if name.name == "len" {
                 self.res.insert(callee.id, Res::Builtin(Builtin::Len));
                 return self.check_len(args, span);
@@ -1279,6 +1283,15 @@ impl Checker {
             if name.name == "from_json" {
                 self.res.insert(callee.id, Res::Builtin(Builtin::FromJson));
                 return self.check_from_json(args, span);
+            }
+            if name.name == "contains" {
+                self.res.insert(callee.id, Res::Builtin(Builtin::Contains));
+                return self.check_str_test("contains", ["haystack", "needle"], args, span);
+            }
+            if name.name == "starts_with" {
+                self.res
+                    .insert(callee.id, Res::Builtin(Builtin::StartsWith));
+                return self.check_str_test("starts_with", ["string", "prefix"], args, span);
             }
             for a in args {
                 self.check_expr(a);
@@ -1573,6 +1586,41 @@ impl Checker {
             );
         }
         Types::INT
+    }
+
+    /// `contains(haystack, needle)` and `starts_with(string, prefix)`: two
+    /// strings in, a `Bool` out.
+    ///
+    /// One procedure because the rule is one rule. The two differ in where the
+    /// needle is allowed to be, which is a question for the VM; the types, the
+    /// arity and the trust decision are the same, and a second copy of them is
+    /// a second place for them to drift apart.
+    ///
+    /// **The label comes off.** A labelled string may be asked either
+    /// question, and the answer is a plain `Bool`, for the reason
+    /// `docs/design/trust.md` §2a gives for `len`: a branch is not an effect,
+    /// and a `Bool` cannot be written to a file, passed to `exec`, or turned
+    /// back into the string it was asked about. It is a wider channel than
+    /// `len` - see §2a, which says how much wider and what that costs.
+    fn check_str_test(&mut self, name: &str, what: [&str; 2], args: &[Expr], span: Span) -> TypeId {
+        if args.len() != 2 {
+            for a in args {
+                self.check_expr(a);
+            }
+            self.error(
+                "E0302",
+                format!("`{name}` takes 2 arguments but {} were given", args.len()),
+                span,
+                format!("write `{name}({}, {})`", what[0], what[1]),
+            );
+            return Types::BOOL;
+        }
+        for (arg, what) in args.iter().zip(what) {
+            let found = self.check_expr(arg);
+            let found = self.types.untrusted(found);
+            self.expect_type(Types::STR, found, arg.span, &format!("this {what}"));
+        }
+        Types::BOOL
     }
 
     /// An agent is called like a function: one argument in, its output type out.

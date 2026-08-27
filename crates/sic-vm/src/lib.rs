@@ -1149,6 +1149,30 @@ impl<'a> Vm<'a> {
                     };
                     self.set(index, base + a, Value::I64(length as i64));
                 }
+                Op::Contains | Op::StartsWith => {
+                    let (Value::Str(s), Value::Str(sought)) =
+                        (self.get(index, base + b), self.get(index, base + c))
+                    else {
+                        die!(
+                            FailKind::Internal("a string test on a non-string"),
+                            None,
+                            None
+                        );
+                    };
+                    // Bytes, not characters, and the two agree: UTF-8 is
+                    // self-synchronizing, so a byte match between two strings
+                    // that are already valid cannot start or end inside a
+                    // character. `len` counts characters because a length is
+                    // shown to somebody; this answers yes or no and nobody
+                    // sees the offset.
+                    let (s, sought) = (self.arena.str(s), self.arena.str(sought));
+                    let answer = if op == Op::Contains {
+                        s.contains(sought)
+                    } else {
+                        s.starts_with(sought)
+                    };
+                    self.set(index, base + a, Value::Bool(answer));
+                }
                 Op::FromJson => {
                     let Value::Str(handle) = self.get(index, base + c) else {
                         die!(FailKind::Internal("from_json of a non-string"), None, None);

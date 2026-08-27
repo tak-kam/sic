@@ -159,6 +159,73 @@ the labelled value could not?** A length cannot be written to a file, passed to
 "parsed as an integer" could all be argued as facts about a value, and every
 one of them hands back something the label was protecting.
 
+### `contains` and `starts_with` take it off too, and widen it
+
+Two builtins ask a question about a string and answer a `Bool`:
+
+```sic
+let out = process.capture(...);          // Observed<String>
+if contains(out, "warning:") { … }       // compiles
+if starts_with(path, "/safe/dir") { … }  // compiles
+```
+
+Either argument may be labelled, and the answer is a plain `Bool`. Put through
+the test above - can the result be used where the labelled value could not? -
+they pass for `len`'s reason and no other: a `Bool` reaches no capability, is
+written to no file, and nobody can get the string back out of it.
+
+That is the whole of the argument for them, and it is worth being clear about
+what it does not cover. **`len` gives a program one number about a value it may
+not read; these give it a question of its own choosing, and a question may be
+asked again.** The consequence is concrete rather than theoretical:
+
+```sic
+if starts_with(head, "deadbeef") && len(head) == 8 { … }
+```
+
+That is byte equality of a labelled string, spelled out of two things this
+document allows, and `head == "deadbeef"` is the same test written with an
+operator - which E0371 refuses. So after this change E0371's refusal is about
+what an expression **hands back**, not about what a program can find out. It
+was already only that: `len(x) == 1` finds out a great deal. This makes it
+plain, and the honest summary of the trust system's guarantee is the sentence
+above - *a labelled value is opaque to computation* - with "except that a
+program may ask yes-or-no questions about it" attached.
+
+The alternative was to propagate the label, and it was not close. Every
+question these builtins were added for is about what a capability reported -
+what a command printed, what a repository said - and that is `Observed<T>`. A
+`contains` that answered `Observed<Bool>` would answer something that is not a
+`Bool`, cannot be an `if` condition, and cannot be `!`-ed either. The choice was
+between a channel to a branch, which the first subsection here accepts on
+purpose, and two builtins that refuse every program they were written for.
+
+### `starts_with` is not a security check, and will look like one
+
+This is the shape somebody will write:
+
+```sic
+let path = plan_path(request);            // LLM<String>
+if starts_with(path, "/safe/dir/") {
+    fs.write(path, contents);             // error[E0372]
+}
+```
+
+It does not compile, and that is the point worth recording: the guard proves
+nothing about the value, so the value keeps its label and E0372 still refuses
+it. Nothing here is a door out of §2 - a `Bool` came out, and the string went
+nowhere.
+
+The second half is about the programs where it does compile, because the path
+came from somewhere unlabelled. **A prefix of bytes is not containment in a
+filesystem**: `/safe/dir/../../etc/passwd` starts with `/safe/dir/`, and so does
+`/safe/dir-of-somebody-else`. `starts_with` answers exactly what it says and
+nothing about where a path leads. What actually holds a run to its grants is the
+broker checking the manifest before it performs anything, which is a check
+`sic plan` prints and a program cannot skip; a program's own prefix test is a
+question it asks about text, and this document is not going to let it be read as
+more than that.
+
 ### The asymmetry, said out loud
 
 If a branch is not an effect, then `if d.severity > 5` could be allowed too,
@@ -178,6 +245,7 @@ section is what it has to answer.
 | a labelled value does not reach a changing capability | E0372 |
 | reading a field keeps the label | §2, tested |
 | `len` strips it, and that is on purpose | a test that says so, so that changing it is a decision rather than a regression |
+| `contains` and `starts_with` strip it too | a test that a labelled string may be asked, beside one that the answer buys it nothing: the same value still cannot reach `fs.write` |
 
 The last row matters more than it looks. Before this section, `len`'s behaviour
 was one sentence in a checker and nothing in a test: an edit that made it
@@ -192,7 +260,11 @@ propagate would have looked like a fix.
   answer.
 - **Narrowing E0371.** Above.
 - **A channel budget.** Counting how many bits a model can push through `len`
-  is information-flow analysis, and this language is not going to have one.
+  or a run of `contains` calls is information-flow analysis, and this language
+  is not going to have one.
+- **A rule about which argument may carry a label.** Both may. A model that
+  chooses the needle is choosing which question gets asked, and choosing a
+  question is choosing a branch.
 ---
 
 ## 3. `approve`

@@ -1180,6 +1180,242 @@ mod comparing_strings {
     }
 }
 
+/// asking a string what it holds.
+///
+/// A program could hold what another program printed and answer exactly one
+/// question about it: how long it is. `contains` and `starts_with` are the two
+/// more it can ask, and unlike `==` they needed a layer each - an opcode, two
+/// verifier rules and a VM arm - so these tests run the binary rather than
+/// trusting that the pieces met in the middle.
+mod asking_a_string_a_question {
+    use super::*;
+
+    /// A program whose weights are the edges: a needle that is not there, an
+    /// empty one, one longer than the haystack, and one that is the haystack.
+    /// Each is a place a hand-written search goes wrong, and the answers are
+    /// asserted together so that a wrong one cannot hide behind a right one.
+    #[test]
+    fn a_string_answers_the_edges_of_what_it_holds() {
+        let src = write_temp(
+            "strq-edges.sic",
+            "fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let s = \"crates/sic-vm/src/lib.rs\";\n\
+             \x20   return bit(contains(s, \"sic-vm\"), 1)\n\
+             \x20       + bit(contains(s, \"sic-broker\"), 2)\n\
+             \x20       + bit(contains(s, \"\"), 4)\n\
+             \x20       + bit(contains(\"lib\", s), 8)\n\
+             \x20       + bit(contains(s, s), 16)\n\
+             \x20       + bit(starts_with(s, \"crates/\"), 32)\n\
+             \x20       + bit(starts_with(s, \"\"), 64)\n\
+             \x20       + bit(starts_with(s, s), 128);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // Everything but 2, which is not in the string, and 8, whose needle is
+        // longer than what it is being sought in. The empty needle is in every
+        // string and at the start of every string, which is what makes it an
+        // edge worth pinning: the alternative answer is defensible and is not
+        // the one this gives.
+        assert_eq!(stdout, "245\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Why there are two builtins rather than one.
+    ///
+    /// A grant is about a prefix - `process.run ... args [...]` pins a prefix
+    /// of argv - so a program reasoning about the same thing has to be able to
+    /// say prefix and mean it. A `contains` says yes to a path that merely
+    /// mentions the directory, and that is a different answer to a different
+    /// question.
+    #[test]
+    fn a_directory_named_in_the_middle_is_not_a_prefix() {
+        let src = write_temp(
+            "strq-prefix.sic",
+            "fn main() -> Int {\n\
+             \x20   let path = \"/tmp/safe/dir/report.txt\";\n\
+             \x20   if starts_with(path, \"/safe/dir/\") {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   if contains(path, \"/safe/dir/\") {\n\
+             \x20       return 2;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // 2: it is in there, and it is not where the program cares.
+        assert_eq!(stdout, "2\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The trust decision, run rather than argued: what a program printed is
+    /// `Observed<String>`, and either builtin will take it and answer a plain
+    /// `Bool`. `docs/design/trust.md` §2a says why - a branch is not an effect,
+    /// and a `Bool` cannot be written, run, or turned back into the text.
+    ///
+    /// Both positions, because the rule is about the answer rather than about
+    /// which argument the label is on: the labelled value is the haystack
+    /// once, the needle once, and both at once.
+    #[test]
+    fn what_a_program_printed_can_be_asked_about() {
+        let src = write_temp(
+            "strq-observed.sic",
+            "allow {\n\
+             \x20   process.capture \"/bin/echo\" args [\"warning: two\"];\n\
+             }\n\
+             \n\
+             fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let said = process.capture(\"/bin/echo\", [\"warning: two\"]);\n\
+             \x20   return bit(contains(said, \"warning:\"), 1)\n\
+             \x20       + bit(starts_with(said, \"warning:\"), 2)\n\
+             \x20       + bit(contains(\"nothing to report\", said), 4)\n\
+             \x20       + bit(contains(said, said), 8);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // 11, so: it was asked, and answered. 4 is absent because the answer
+        // is no - a labelled needle is not refused, it is searched for - and
+        // the program having compiled at all is what that weight is here for.
+        assert_eq!(stdout, "11\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The shape somebody will write, and the reason it is safe to have added
+    /// these: a prefix test looks like a guard, and proves nothing about the
+    /// value it tested. The string keeps its label, so the `fs.write` under
+    /// the check is refused exactly as it would have been without one.
+    ///
+    /// The builtin is a channel to a branch and not a door out of §2. If this
+    /// test ever passes, one of them has become the other.
+    #[test]
+    fn a_prefix_test_does_not_launder_what_a_model_said() {
+        let src = write_temp(
+            "strq-launder.sic",
+            "allow {\n\
+             \x20   llm.invoke \"which file?\";\n\
+             \x20   fs.write \"./out\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let path = llm.invoke(\"which file?\");\n\
+             \x20   if starts_with(path, \"./out\") {\n\
+             \x20       fs.write(path, \"hello\");\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        assert!(
+            stderr.contains("LLM<String> cannot be passed to `fs.write`"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Two arguments, and the diagnostic says which two rather than how many.
+    #[test]
+    fn a_string_question_takes_two_arguments() {
+        let src = write_temp(
+            "strq-arity.sic",
+            "fn main() -> Int {\n\
+             \x20   if contains(\"only one\") {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0302"), "{stderr}");
+        assert!(
+            stderr.contains("`contains` takes 2 arguments but 1 were given"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("write `contains(haystack, needle)`"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And both of them are strings. There is no `Int` a prefix could be, and
+    /// the verifier's rule says the same thing one layer down - which is the
+    /// point of it, because bytecode does not come only from this checker.
+    #[test]
+    fn a_string_question_takes_strings() {
+        let src = write_temp(
+            "strq-types.sic",
+            "fn main() -> Int {\n\
+             \x20   if starts_with(\"a path\", 4) {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0301"), "{stderr}");
+        assert!(stderr.contains("expected String, found Int"), "{stderr}");
+        assert!(stderr.contains("this prefix has type Int"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The instructions exist as far down as the file format: they compile,
+    /// the verifier accepts them, and the disassembler names them. `v0.1.md`
+    /// §6 asks that every addition ship with its verifier rule, and a run that
+    /// worked would not have said whether one had been written.
+    #[test]
+    fn the_two_instructions_verify_and_disassemble() {
+        let src = write_temp(
+            "strq-bytecode.sic",
+            "fn main() -> Int {\n\
+             \x20   if contains(\"crates/sic-vm\", \"vm\") {\n\
+             \x20       if starts_with(\"crates/sic-vm\", \"crates/\") {\n\
+             \x20           return 1;\n\
+             \x20       }\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let out = src.with_extension("sicb");
+        let out_str = out.to_str().unwrap().to_string();
+        let (_, stderr, code) = sic(&["compile", src.to_str().unwrap(), "-o", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+
+        let (stdout, stderr, code) = sic(&["verify", &out_str]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert!(stdout.contains("1 function(s) verified"), "{stdout}");
+
+        let (stdout, _, code) = sic(&["disasm", &out_str]);
+        assert_eq!(code, 0);
+        assert!(stdout.contains("CONTAINS"), "{stdout}");
+        assert!(stdout.contains("STARTS_WITH"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(out).ok();
+    }
+}
+
 /// nothing runs bytecode that does not verify.
 ///
 /// `decode` establishes that a `Program` can exist and says nothing about

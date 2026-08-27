@@ -83,8 +83,10 @@ let n = len(xs);
   literal needs an annotation, because there is nothing to infer from.
 - Indexing is a postfix operator. An index out of range fails the run: there is
   no option type to return instead, and a silent default would be worse.
-- `len` is the one built-in function. Adding methods would mean adding a method
-  namespace, and there is nothing else to put in it yet.
+- `len` is the built-in function this phase adds, and what it settles is that a
+  built-in is a name rather than a method: `xs.len()` would mean a method
+  namespace, and there was nothing else to put in one. `contains` and
+  `starts_with` took the same route later, which is why it was worth settling.
 
 There is no iteration in this phase. Adding `for` here would have been adding a
 control structure to a phase about data, so it was left for one of its own:

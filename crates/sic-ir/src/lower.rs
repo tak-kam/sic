@@ -372,11 +372,26 @@ impl<'a> FnLower<'a> {
                 let dst = self.temp(ty);
                 match self.typed.res_of(callee.id) {
                     Some(Res::Fn(func)) => self.emit(InstKind::Call { dst, func, args }, e.span),
-                    // `len` is the one built-in: it becomes an instruction
-                    // rather than a call.
+                    // A built-in becomes an instruction rather than a call.
                     Some(Res::Builtin(sic_types::Builtin::Len)) => {
                         self.emit(InstKind::Len { dst, src: args[0] }, e.span)
                     }
+                    Some(Res::Builtin(sic_types::Builtin::Contains)) => self.emit(
+                        InstKind::Contains {
+                            dst,
+                            s: args[0],
+                            sub: args[1],
+                        },
+                        e.span,
+                    ),
+                    Some(Res::Builtin(sic_types::Builtin::StartsWith)) => self.emit(
+                        InstKind::StartsWith {
+                            dst,
+                            s: args[0],
+                            prefix: args[1],
+                        },
+                        e.span,
+                    ),
                     Some(Res::Builtin(sic_types::Builtin::Approve)) => {
                         self.approve(dst, args[0], args[1], e.span)
                     }

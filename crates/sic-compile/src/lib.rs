@@ -615,6 +615,14 @@ impl<'a> FnCompile<'a> {
                 let (dst, src) = (self.reg(*dst), self.reg(*src));
                 self.emit(Inst::abc(Op::Len, dst, src, 0), span);
             }
+            InstKind::Contains { dst, s, sub } => {
+                let (dst, s, sub) = (self.reg(*dst), self.reg(*s), self.reg(*sub));
+                self.emit(Inst::abc(Op::Contains, dst, s, sub), span);
+            }
+            InstKind::StartsWith { dst, s, prefix } => {
+                let (dst, s, prefix) = (self.reg(*dst), self.reg(*s), self.reg(*prefix));
+                self.emit(Inst::abc(Op::StartsWith, dst, s, prefix), span);
+            }
             InstKind::FromJson { dst, ty, src } => {
                 let (dst, src) = (self.reg(*dst), self.reg(*src));
                 let type_index = self.type_index(*ty);

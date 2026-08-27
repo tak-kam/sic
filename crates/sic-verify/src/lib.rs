@@ -441,6 +441,13 @@ impl<'a> Verifier<'a> {
                     ok &= check_reg(self, inst.b(), "list");
                     ok &= check_reg(self, inst.c(), "index");
                 }
+                // Three registers and nothing else: no type index, no window,
+                // so the structure pass has only their numbers to check.
+                Op::Contains | Op::StartsWith => {
+                    ok &= check_reg(self, inst.a(), "destination");
+                    ok &= check_reg(self, inst.b(), "string");
+                    ok &= check_reg(self, inst.c(), "sought");
+                }
                 Op::Return | Op::Fail => ok &= check_reg(self, inst.a(), "operand"),
                 // `a` is the level, which is a number rather than a register,
                 // so only `b` is one.
@@ -801,6 +808,15 @@ impl<'a> Verifier<'a> {
                         }
                     }
                     next[inst.a() as usize] = Abst::Val(INT);
+                    successors.push(index + 1);
+                }
+                // Both operands are strings, so the VM reads two arena
+                // handles and does not check what they hold. The result is a
+                // `Bool` whatever they were.
+                Op::Contains | Op::StartsWith => {
+                    self.read(&name, pc, &state, inst.b(), Some(STR));
+                    self.read(&name, pc, &state, inst.c(), Some(STR));
+                    next[inst.a() as usize] = Abst::Val(BOOL);
                     successors.push(index + 1);
                 }
                 Op::FromJson => {

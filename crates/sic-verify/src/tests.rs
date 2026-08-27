@@ -395,6 +395,51 @@ fn a_loop_converges() {
     assert_ok(&p);
 }
 
+/// `CONTAINS` and `STARTS_WITH` answer a `Bool` whatever the strings held, so
+/// returning one from a function typed `Bool` is the whole of the data-flow
+/// rule.
+#[test]
+fn a_question_about_a_string_answers_a_bool() {
+    let p = program(
+        &[TypeDesc::Str],
+        TypeDesc::Bool,
+        3,
+        Vec::new(),
+        vec![
+            Inst::abc(Op::Contains, 1, 0, 0),
+            Inst::abc(Op::StartsWith, 2, 0, 0),
+            Inst::abc(Op::Return, 1, 0, 0),
+        ],
+    );
+    assert_ok(&p);
+}
+
+/// And both operands are strings. The VM reads two arena handles without
+/// looking at what they are, so this is the rule that lets it: bytecode does
+/// not come only from this workspace's compiler, and a file naming a register
+/// that holds an `Int` here would be a read of something else's memory
+/// otherwise.
+#[test]
+fn a_question_about_a_string_refuses_a_number() {
+    let p = program(
+        &[TypeDesc::Int],
+        TypeDesc::Bool,
+        2,
+        Vec::new(),
+        vec![
+            Inst::abc(Op::StartsWith, 1, 0, 0),
+            Inst::abc(Op::Return, 1, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("r0 holds Int where String is required")),
+        "{:#?}",
+        errors(&p)
+    );
+}
+
 /// The shape a `for` loop lowers to: a length, a counter, `GET_INDEX` and a
 /// backward jump.
 ///

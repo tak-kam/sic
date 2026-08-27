@@ -111,6 +111,12 @@ opcodes! {
     /// register holding the message. The only instruction whose whole effect
     /// is an entry in the journal.
     Log = 30, "LOG", ABC;
+    /// Whether one string occurs anywhere in another.
+    Contains = 31, "CONTAINS", ABC;
+    /// Whether one string begins another. Not a special case of `CONTAINS`:
+    /// a grant is about a prefix, and a match in the middle is a different
+    /// answer to a question about one.
+    StartsWith = 32, "STARTS_WITH", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
