@@ -142,3 +142,8 @@ Each is recorded where the decision was made, with the reason:
   fold is still a recursion, and still costs a frame per element
 - No package registry, no dynamic loading (§11, §33)
 - No pruning or retention for recorded runs (`docs/design/runs.md`)
+- No second discharge for a trust label. A person is the only thing that turns a
+  model's answer into one a capability may write or run, and a discharge whose
+  argument is evidence waits on a capability that can look at a labelled value
+  and answer a fact about it - which no capability in the table does
+  (`docs/design/checking.md`)
