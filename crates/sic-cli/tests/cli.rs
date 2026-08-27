@@ -3730,7 +3730,7 @@ mod what_a_grant_may_say {
                  \x20   llm.invoke \"m\";\n\
                  }}\n\
                  \n\
-                 fn main() -> String {{\n\
+                 fn main() -> LLM<String> {{\n\
                  \x20   return llm.invoke(\"hello\");\n\
                  }}\n",
                     row.cap,
@@ -4166,24 +4166,15 @@ mod trust {
         std::fs::remove_file(src).ok();
     }
 
-    /// **A gap, written down rather than left to be discovered.** The label is
-    /// attached where an `agent` call is checked, so a *direct* `llm.invoke`
-    /// answers a bare `String` that the trust system never sees. That is not
-    /// something equality on String caused: the second half of this test is a
-    /// model's answer reaching `fs.write`, which is a capability that changes
-    /// something, and it has compiled since `llm.invoke` existed.
-    ///
-    /// `docs/design/trust.md` §2a writes `let said = llm.invoke("...")` and
-    /// calls the result labelled, so the document and the checker disagree and
-    /// the document is the one that is right. Fixing it means giving
-    /// `llm.invoke` a labelled return type, which changes what every program
-    /// that calls it directly may do with the answer - its own issue, its own
-    /// argument. This test is what says so out loud, and it is expected to be
-    /// rewritten the day that lands.
+    /// The hole #72 was about, closed: a *direct* `llm.invoke` is labelled at
+    /// the capability table, so both spellings of asking a model are checked
+    /// the same way. Before this, the label was attached where an `agent` call
+    /// is checked, and the lower-level door was exempt from the rule
+    /// `trust.md` §2 opens with.
     #[test]
-    fn a_direct_model_call_is_not_labelled_at_all() {
+    fn a_direct_model_call_is_labelled_like_any_other() {
         let src = write_temp(
-            "trust-eq-invoke.sic",
+            "trust-direct-invoke.sic",
             "allow {\n\
              \x20   llm.invoke \"m\";\n\
              \x20   fs.write \"./out.txt\";\n\
@@ -4191,17 +4182,64 @@ mod trust {
              \n\
              fn main() -> Int {\n\
              \x20   fs.write(\"./out.txt\", llm.invoke(\"say something\"));\n\
-             \x20   if llm.invoke(\"ship it?\") == \"yes\" {\n\
-             \x20       return 1;\n\
-             \x20   }\n\
              \x20   return 0;\n\
              }\n",
         );
-        // `plan` type-checks and runs nothing, so no model is asked anything.
-        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        assert!(stderr.contains("LLM<String>"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And the two spellings agree. An `agent` declaration is `from_json` over
+    /// a model call with a shape declared for the answer; written out by hand
+    /// it has to reach the same refusal, or the label is about which syntax
+    /// somebody used.
+    #[test]
+    fn the_manual_spelling_of_an_agent_carries_the_same_label() {
+        let src = write_temp(
+            "trust-manual-agent.sic",
+            "type D { cause: String }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   fs.write \"./out.txt\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d: LLM<D> = from_json(llm.invoke(\"why?\"));\n\
+             \x20   fs.write(\"./out.txt\", d.cause);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `from_json` reads a document into a shape; it does not decide where the
+    /// document came from. A plain `String` in still answers a plain record,
+    /// so nothing that was not talking to a model gained a label.
+    #[test]
+    fn reading_a_plain_document_answers_a_plain_record() {
+        let src = write_temp(
+            "trust-plain-json.sic",
+            "type D { cause: String }\n\
+             \n\
+             allow {\n\
+             \x20   fs.write \"./out.txt\";\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d: D = from_json(\"{\\\"cause\\\":\\\"x\\\"}\");\n\
+             \x20   fs.write(\"./out.txt\", d.cause);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
         assert_eq!(code, 0, "{stderr}");
-        assert!(stdout.contains("llm.invoke"), "{stdout}");
-        assert!(stdout.contains("fs.write"), "{stdout}");
         std::fs::remove_file(src).ok();
     }
 }

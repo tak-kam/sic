@@ -63,7 +63,11 @@ pub const BUILTIN_CAPS: &[CapSig] = &[
         // whoever answers is told what it has to be. An `agent` fills it in;
         // a direct call may leave it off.
         params: &[Types::STR, Types::STR],
-        ret: Types::STR,
+        // What a model answered, labelled here rather than where an `agent`
+        // is checked. Attaching it at the one spelling that declares a shape
+        // left the other spelling exempt from the rule §2 opens with, and two
+        // spellings of one act must not be checked differently.
+        ret: Types::LLM_STR,
         // The constraint names the model, so a manifest says which one a
         // module may talk to.
         requires_constraint: true,

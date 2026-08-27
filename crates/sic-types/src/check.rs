@@ -1719,10 +1719,25 @@ impl Checker {
             return Types::ERROR;
         }
         let text = self.check_expr(&args[0]);
-        self.expect_type(Types::STR, text, args[0].span, "this document");
+        // A document may arrive labelled - `from_json(llm.invoke(...))` is the
+        // manual spelling of what an `agent` declaration does - so the label is
+        // taken off to check the argument and put back on the result. Reading
+        // a model's answer into a shape does not stop it being the model's
+        // answer, and a `from_json` that dropped the label would be the second
+        // door out of §2's rule.
+        let document = self.types.trust_of(text).map(|(kind, _)| kind);
+        self.expect_type(
+            Types::STR,
+            self.types.untrusted(text),
+            args[0].span,
+            "this document",
+        );
 
         match self.json_target {
-            Some(ty) => ty,
+            Some(ty) => match document {
+                Some(kind) => self.types.trust(kind, ty),
+                None => ty,
+            },
             None => {
                 self.error(
                     "E0353",

@@ -44,7 +44,11 @@ this if it were.
 ## 2. What it forbids
 
 **A `LLM<T>` cannot reach a capability that changes something.** Concretely: no
-argument of a `write` or `exec` capability may carry `LLM`. Reading and invoking
+argument of a `write` or `exec` capability may carry `LLM`. The label is
+attached by `llm.invoke` itself, in the capability table, so it does not matter
+whether a program declared an `agent` or called the capability directly - #72
+was that it did matter, and the lower-level spelling was exempt from this
+sentence. Reading and invoking
 are fine - asking a model about a model's answer is ordinary, and so is reading
 a file whose name it suggested - which is why the rule is about the
 capability's kind rather than about the value.
@@ -128,8 +132,8 @@ not every conclusion a program might derive from it.
 The one place the program gets a computable value out of a labelled one:
 
 ```sic
-let said = llm.invoke("...");
-if len(said) > 5 { … }          // compiles, today
+let d = diagnose("why did it fail?");   // LLM<Diagnosis>
+if len(d.cause) > 5 { … }               // compiles, today
 ```
 
 `len` takes a trusted value and answers a plain `Int`. The comment in
@@ -170,6 +174,7 @@ section is what it has to answer.
 | claim | how |
 |---|---|
 | a labelled value is not an operand, whoever vouched for it | E0371, with tests for `LLM<T>`, `HumanChosen<T>` and `HumanApproved<T>` |
+| both spellings of asking a model are labelled | `llm.invoke` carries the label in the capability table, so a direct call and an `agent` are checked alike |
 | a labelled value does not reach a changing capability | E0372 |
 | reading a field keeps the label | §2, tested |
 | `len` strips it, and that is on purpose | a test that says so, so that changing it is a decision rather than a regression |

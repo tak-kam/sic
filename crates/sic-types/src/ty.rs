@@ -143,6 +143,11 @@ impl Types {
     /// What a program printed, one line at a time. Interned for the same
     /// reason `LIST_STR` is: a builtin capability signature is a `const`.
     pub const OBSERVED_LIST_STR: TypeId = TypeId(9);
+    /// What a model answered. Interned here for the same reason the others
+    /// are: `llm.invoke`'s signature is a `const`, and the label belongs on
+    /// the capability rather than on the one spelling of it that `agent`
+    /// happens to use. See `docs/design/trust.md` §2.
+    pub const LLM_STR: TypeId = TypeId(10);
 
     pub fn new() -> Self {
         let mut t = Self {
@@ -178,6 +183,10 @@ impl Types {
         assert_eq!(
             t.intern(Type::Trust(TrustKind::Observed, Self::LIST_STR)),
             Self::OBSERVED_LIST_STR
+        );
+        assert_eq!(
+            t.intern(Type::Trust(TrustKind::Llm, Self::STR)),
+            Self::LLM_STR
         );
         t
     }
