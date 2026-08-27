@@ -1141,6 +1141,16 @@ impl Checker {
         if self.types.is_error(l) || self.types.is_error(r) {
             return Types::ERROR;
         }
+        // Joining two strings is the one operator a labelled value may be an
+        // operand of, and `check_concat` is where the reason is written down.
+        // It has to come first, because the rule below is what it is an
+        // exception to.
+        if op == BinOp::Add
+            && self.types.untrusted(l) == Types::STR
+            && self.types.untrusted(r) == Types::STR
+        {
+            return self.check_concat(l, r, span);
+        }
         // Arithmetic on a value whose provenance matters is exactly where
         // provenance gets lost.
         if self.reject_trust(l, lhs.span, "an operand")
@@ -1182,7 +1192,7 @@ impl Checker {
             if l == Types::FLOAT {
                 self.note("v0.1 supports arithmetic and comparison on Int only");
             } else if l == Types::STR {
-                self.note("v0.1 compares String with `==` and `!=` only");
+                self.note("v0.1 joins String with `+`, and compares it with `==` and `!=`");
             }
             return Types::ERROR;
         }
@@ -1190,6 +1200,42 @@ impl Checker {
         match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => l,
             _ => Types::BOOL,
+        }
+    }
+
+    /// `a + b` on two strings, and what the result came from.
+    ///
+    /// Every other operator refuses a labelled operand (E0371), and the reason
+    /// `docs/design/trust.md` §2a gives is that an operator takes a labelled
+    /// value and answers an unlabelled one - so the label would come off.
+    /// Joining two strings does not do that. It answers a labelled value, which
+    /// puts it beside reading a field and indexing a list rather than beside
+    /// arithmetic: the program never gets back something plain to compute with,
+    /// and `"" + tainted` has no more reach than `tainted` did.
+    ///
+    /// Two operands with *different* labels are refused. There is no order
+    /// between "a model said it" and "a program printed it" to pick a winner
+    /// by, and inventing one would be a lattice built for a program nobody has
+    /// written. `Types::trust` already says a value has one origin; a join of
+    /// two origins has none that can be named, so it is not made.
+    fn check_concat(&mut self, l: TypeId, r: TypeId, span: Span) -> TypeId {
+        match (self.types.trust_of(l), self.types.trust_of(r)) {
+            (None, None) => Types::STR,
+            (Some((kind, _)), None) | (None, Some((kind, _))) => self.types.trust(kind, Types::STR),
+            (Some((left, _)), Some((right, _))) if left == right => {
+                self.types.trust(left, Types::STR)
+            }
+            (Some(_), Some(_)) => {
+                let (ln, rn) = (self.types.name(l), self.types.name(r));
+                self.error(
+                    "E0375",
+                    format!("`+` cannot join {ln} with {rn}"),
+                    span,
+                    "the result would have come from two places, and a value comes from one",
+                );
+                self.note("join a labelled value with a literal, or with one from the same place");
+                Types::ERROR
+            }
         }
     }
 

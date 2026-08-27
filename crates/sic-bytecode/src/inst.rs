@@ -38,11 +38,25 @@ macro_rules! opcodes {
         impl Op {
             /// The last opcode that exists. Anything above it is invalid.
             ///
-            /// The count answers it because the numbers run from zero with no
-            /// gaps, which is what `every_opcode_round_trips_through_u8`
-            /// checks: it decodes every value up to this one and requires each
-            /// to come back as the number it went in as.
-            pub const MAX: u8 = ([$($value),*].len() - 1) as u8;
+            /// The largest number answers it rather than the count, because
+            /// the numbers are allowed to have a gap in them. A number is part
+            /// of the file format, so two opcodes added on two branches have to
+            /// pick different ones before either is merged, and the branch that
+            /// lands second must not renumber the first. A gap is what that
+            /// costs; `from_u8` answers `None` for one, and the verifier
+            /// refuses it as an unknown opcode like any other byte.
+            pub const MAX: u8 = {
+                let values = [$($value as u8),*];
+                let mut i = 0;
+                let mut max = 0u8;
+                while i < values.len() {
+                    if values[i] > max {
+                        max = values[i];
+                    }
+                    i += 1;
+                }
+                max
+            };
 
             pub fn from_u8(v: u8) -> Option<Op> {
                 Some(match v {
@@ -117,6 +131,10 @@ opcodes! {
     /// a grant is about a prefix, and a match in the middle is a different
     /// answer to a question about one.
     StartsWith = 32, "STARTS_WITH", ABC;
+    /// Joins two strings into a third. The only instruction that allocates
+    /// without a capability having been called, which is why the VM charges
+    /// fuel for it by the byte - see `docs/design/v0.1.md` §6.
+    Concat = 33, "CONCAT", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -194,13 +212,25 @@ mod tests {
         }
     }
 
+    /// A number that decodes decodes as itself, and `MAX` is the last one that
+    /// decodes at all.
+    ///
+    /// The loop skips the numbers no opcode claims rather than requiring every
+    /// one below `MAX` to exist. That is not laxness: a number no opcode claims
+    /// decodes to `None`, which the verifier reports as an unknown opcode like
+    /// any other byte. Requiring no gaps would mean the branch that merges
+    /// second has to renumber the opcode the first one shipped, and a number is
+    /// part of the file format.
     #[test]
     fn every_opcode_round_trips_through_u8() {
         for raw in 0..=Op::MAX {
-            let op = Op::from_u8(raw).expect("opcode below MAX must exist");
+            let Some(op) = Op::from_u8(raw) else {
+                continue;
+            };
             assert_eq!(op as u8, raw);
             assert!(!op.name().is_empty());
         }
+        assert!(Op::from_u8(Op::MAX).is_some(), "MAX must be an opcode");
         assert_eq!(Op::from_u8(Op::MAX + 1), None);
     }
 
@@ -211,9 +241,9 @@ mod tests {
     fn no_two_opcodes_are_spelled_the_same() {
         let mut seen: Vec<&'static str> = Vec::new();
         for raw in 0..=Op::MAX {
-            let name = Op::from_u8(raw)
-                .expect("opcode below MAX must exist")
-                .name();
+            let Some(name) = Op::from_u8(raw).map(Op::name) else {
+                continue;
+            };
             assert!(
                 !seen.contains(&name),
                 "{name} is the spelling of more than one opcode"
@@ -231,11 +261,13 @@ mod tests {
         let mut abc = 0;
         let mut abx = 0;
         let mut asbx = 0;
+        let mut total = 0;
         for raw in 0..=Op::MAX {
-            match Op::from_u8(raw)
-                .expect("opcode below MAX must exist")
-                .form()
-            {
+            let Some(op) = Op::from_u8(raw) else {
+                continue;
+            };
+            total += 1;
+            match op.form() {
                 Form::ABC => abc += 1,
                 Form::ABx => abx += 1,
                 Form::AsBx => asbx += 1,
@@ -246,6 +278,6 @@ mod tests {
             (1, 3),
             "LOAD_CONST is ABx, the three jumps AsBx"
         );
-        assert_eq!(abc, Op::MAX as usize + 1 - 4);
+        assert_eq!(abc, total - 4);
     }
 }

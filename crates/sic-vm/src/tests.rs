@@ -271,6 +271,71 @@ fn fuel_runs_out_on_an_endless_loop() {
     assert_eq!(vm.fuel(), 0);
 }
 
+/// A join is charged a fuel for each byte of its result, and the arithmetic is
+/// written out here rather than left to the end-to-end test, because "the
+/// budget bounds the arena" is only true if the number is exactly this one.
+///
+/// Four instructions run - two loads, the join, the return - so four fuel go on
+/// the instructions, and eleven more on the eleven bytes of "hello world".
+#[test]
+fn a_join_costs_a_fuel_for_each_byte_of_its_result() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeDesc::Str,
+            3,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abx(Op::LoadConst, 1, 1),
+                Inst::abc(Op::Concat, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![Const::Str("hello ".into()), Const::Str("world".into())],
+    );
+    let mut vm = Vm::new(&p, 1000);
+    let Status::Finished(Value::Str(handle)) = vm.run(0, &[]) else {
+        panic!("expected a string");
+    };
+    assert_eq!(vm.arena().str(handle), "hello world");
+    assert_eq!(vm.fuel(), 1000 - 4 - 11);
+}
+
+/// And the charge comes before the allocation, so a program that cannot afford
+/// a string never gets one: the run stops with the budget spent rather than
+/// with the memory taken.
+#[test]
+fn a_join_nobody_can_afford_is_never_built() {
+    let p = program(
+        vec![(
+            "f",
+            &[],
+            TypeDesc::Str,
+            3,
+            vec![
+                Inst::abx(Op::LoadConst, 0, 0),
+                Inst::abx(Op::LoadConst, 1, 0),
+                Inst::abc(Op::Concat, 2, 0, 1),
+                Inst::abc(Op::Return, 2, 0, 0),
+            ],
+        )],
+        vec![Const::Str("0123456789".into())],
+    );
+    // Enough for the instructions and for nineteen of the twenty bytes.
+    let mut vm = Vm::new(&p, 3 + 19);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::OutOfFuel),
+        other => panic!("expected a failure, got {other:?}"),
+    }
+    assert_eq!(vm.fuel(), 0);
+    assert_eq!(
+        vm.arena().strings().len(),
+        1,
+        "only the constant should be in the arena"
+    );
+}
+
 #[test]
 fn fail_reports_its_value_and_position() {
     let p = program(

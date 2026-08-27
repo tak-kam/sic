@@ -419,6 +419,18 @@ impl<'a> FnCompile<'a> {
         self.types.intern(ty, self.type_table)
     }
 
+    /// Whether a local holds a string, whatever it came from.
+    ///
+    /// The provenance is looked through because it is erased below this layer:
+    /// `Observed<String>` and `String` are the same bytes in the same register,
+    /// and both are joined by the same instruction.
+    fn holds_a_string(&self, local: sic_core::LocalId) -> bool {
+        match self.func.locals.get(local.index()) {
+            Some(ty) => self.type_table.untrusted(*ty) == sic_types::Types::STR,
+            None => false,
+        }
+    }
+
     fn reg(&mut self, local: sic_core::LocalId) -> u8 {
         let index = local.index();
         if index >= MAX_REGISTERS {
@@ -503,8 +515,16 @@ impl<'a> FnCompile<'a> {
                 }
             }
             InstKind::Bin { dst, op, l, r } => {
+                // Asked before the locals become register numbers, because a
+                // register number has no type.
+                let joins_strings = self.holds_a_string(*l);
                 let (dst, l, r) = (self.reg(*dst), self.reg(*l), self.reg(*r));
                 let opcode = match op {
+                    // `+` is the one operator with two instructions behind it.
+                    // The checker decided which by giving the operands their
+                    // types, and the verifier checks the choice again from the
+                    // registers rather than believing this line.
+                    BinOp::Add if joins_strings => Op::Concat,
                     BinOp::Add => Op::AddI64,
                     BinOp::Sub => Op::SubI64,
                     BinOp::Mul => Op::MulI64,

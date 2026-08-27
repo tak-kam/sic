@@ -330,6 +330,7 @@ impl<'a> Verifier<'a> {
                 | Op::MulI64
                 | Op::DivI64
                 | Op::RemI64
+                | Op::Concat
                 | Op::Eq
                 | Op::Ne
                 | Op::Lt
@@ -586,6 +587,16 @@ impl<'a> Verifier<'a> {
                     self.read(&name, pc, &state, inst.b(), Some(INT));
                     self.read(&name, pc, &state, inst.c(), Some(INT));
                     next[inst.a() as usize] = Abst::Val(INT);
+                    successors.push(index + 1);
+                }
+                // Both operands are strings and so is the result. That is what
+                // lets the VM's arm read two handles out of the arena without
+                // asking what they hold, and it is the whole of what stops a
+                // hand-written `CONCAT r0, r1, r2` over two integers.
+                Op::Concat => {
+                    self.read(&name, pc, &state, inst.b(), Some(STR));
+                    self.read(&name, pc, &state, inst.c(), Some(STR));
+                    next[inst.a() as usize] = Abst::Val(STR);
                     successors.push(index + 1);
                 }
                 Op::Lt | Op::Le | Op::Gt | Op::Ge => {
