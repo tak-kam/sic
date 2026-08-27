@@ -147,6 +147,11 @@ Each is recorded where the decision was made, with the reason:
   fold is still a recursion, and still costs a frame per element
 - No package registry, no dynamic loading (§11, §33)
 - No pruning or retention for recorded runs (`docs/design/runs.md`)
+- No typed shape on a capability grant. A grant may come to say `answers json` or
+  `answers jsonl`, which the broker can check because parsing needs no type system;
+  `answers jsonl of T` would need sum types, optional fields and open records at once,
+  and cargo's own JSONL - the case that motivated it - needs all three
+  (`docs/design/answers.md`)
 - No second discharge for a trust label. A person is the only thing that turns a
   model's answer into one a capability may write or run, and a discharge whose
   argument is evidence waits on a capability that can look at a labelled value

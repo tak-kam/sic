@@ -300,6 +300,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |
 | [output.md](docs/design/output.md) | reading what a program said, and what that makes the value |
+| [answers.md](docs/design/answers.md) | what shape a program answers in, and what a grant may claim about it |
 | [git.md](docs/design/git.md) | `git`, and when a program deserves a capability |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [checking.md](docs/design/checking.md) | whether a label may be discharged by evidence instead of a person |
