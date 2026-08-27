@@ -938,6 +938,7 @@ impl Checker {
                 }
             }
             Stmt::If(if_stmt) => self.check_if(if_stmt),
+            Stmt::For(for_stmt) => self.check_for(for_stmt),
             Stmt::Expr { expr, .. } => {
                 self.check_expr(expr);
             }
@@ -952,6 +953,59 @@ impl Checker {
                 self.expect_type(Types::STR, erased, message.span, "this message");
             }
         }
+    }
+
+    /// `for x in xs { ... }`.
+    ///
+    /// The binding is a local like any other, scoped to the body, so it leaves
+    /// no name behind after the loop. There is nothing to check about how many
+    /// times the body runs: the count is `len(xs)` and the list cannot change
+    /// while it is being walked, because nothing in the language mutates.
+    fn check_for(&mut self, for_stmt: &ForStmt) {
+        let iter_ty = self.check_expr(&for_stmt.iter);
+        let element = match self.element_type(iter_ty) {
+            Some(element) => element,
+            None if self.types.is_error(iter_ty) => Types::ERROR,
+            None => {
+                // Named the way E0351 names it: what a list of these would
+                // hold, rather than where the value came from.
+                let found = self.types.name(self.types.untrusted(iter_ty));
+                self.error(
+                    "E0354",
+                    format!("{found} cannot be walked with `for`"),
+                    for_stmt.iter.span,
+                    "only a `List<T>` can be walked",
+                );
+                Types::ERROR
+            }
+        };
+        // The binding and the body share one scope, so the loop variable is
+        // gone at the closing brace and an inner `let` of the same name still
+        // shadows it.
+        self.scopes.push(Vec::new());
+        let slot = self.new_local(element);
+        self.declare(&for_stmt.var.name, slot);
+        self.res.insert(for_stmt.id, Res::Local(slot));
+        for stmt in &for_stmt.body.stmts {
+            self.check_stmt(stmt);
+        }
+        self.scopes.pop();
+    }
+
+    /// The type of one element of a list, or `None` when this is not a list.
+    ///
+    /// An element of a model's answer is still the model's answer, the same way
+    /// a field is. `xs[i]` and `for x in xs` reach an element by the same route,
+    /// so they agree about its provenance by sharing this rather than by both
+    /// remembering to. `docs/design/trust.md` §2a is what they agree with.
+    fn element_type(&mut self, base_ty: TypeId) -> Option<TypeId> {
+        let provenance = self.types.trust_of(base_ty).map(|(kind, _)| kind);
+        let base_ty = self.types.untrusted(base_ty);
+        let element = self.types.list_element(base_ty)?;
+        Some(match provenance {
+            Some(kind) => self.types.trust(kind, element),
+            None => element,
+        })
     }
 
     fn check_if(&mut self, if_stmt: &IfStmt) {
@@ -1828,17 +1882,10 @@ impl Checker {
         if self.types.is_error(base_ty) {
             return Types::ERROR;
         }
-        // An element of a model's answer is still the model's answer, the same
-        // way a field is.
-        let provenance = self.types.trust_of(base_ty).map(|(kind, _)| kind);
-        let base_ty = self.types.untrusted(base_ty);
-        match self.types.list_element(base_ty) {
-            Some(element) => match provenance {
-                Some(kind) => self.types.trust(kind, element),
-                None => element,
-            },
+        match self.element_type(base_ty) {
+            Some(element) => element,
             None => {
-                let found = self.types.name(base_ty);
+                let found = self.types.name(self.types.untrusted(base_ty));
                 self.error(
                     "E0351",
                     format!("{found} cannot be indexed"),

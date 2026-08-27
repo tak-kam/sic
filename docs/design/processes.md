@@ -241,8 +241,14 @@ bound, so it is checked rather than reasoned about.
 **There is no timeout, and this is the argument for not having one.**
 
 A sic program cannot run forever. Fuel is spent at the top of every
-instruction, v0.1 has no loops, and recursion stops at `MAX_FRAMES`. So the
-child always reaches either an ending or a read.
+instruction, recursion stops at `MAX_FRAMES`, and the one loop there is runs
+`len(xs)` times and cannot be told to run more. So the child always reaches
+either an ending or a read.
+
+Fuel is what carries that now. Before `for` existed the sentence had a second
+leg - a program with no backward jump ends whatever its fuel is - and the loop
+took it away, which is the point of it: what bounds a walk over a list is the
+run's own budget rather than the depth of the call stack.
 
 Which leaves two ways for it to be quiet for a long time:
 

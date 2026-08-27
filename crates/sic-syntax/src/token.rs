@@ -129,6 +129,8 @@ pub enum Keyword {
     Requires,
     Retry,
     Timeout,
+    For,
+    In,
     /// Reserved only. Using one produces a diagnostic.
     Reserved(&'static str),
 }
@@ -144,8 +146,6 @@ const RESERVED: &[&str] = &[
     "capability",
     "const",
     "enum",
-    "for",
-    "in",
     "loop",
     "match",
     "mut",
@@ -179,6 +179,8 @@ impl Keyword {
             "await" => Keyword::Await,
             "retry" => Keyword::Retry,
             "timeout" => Keyword::Timeout,
+            "for" => Keyword::For,
+            "in" => Keyword::In,
             other => {
                 let found = RESERVED.iter().find(|r| **r == other)?;
                 Keyword::Reserved(found)
@@ -205,6 +207,8 @@ impl Keyword {
             Keyword::Await => "await",
             Keyword::Retry => "retry",
             Keyword::Timeout => "timeout",
+            Keyword::For => "for",
+            Keyword::In => "in",
             Keyword::Reserved(s) => s,
         }
     }

@@ -705,7 +705,7 @@ impl Parser {
                     self.bump();
                     delegable = true;
                 }
-                TokenKind::Kw(Keyword::Reserved("in")) if dir.is_none() => {
+                TokenKind::Kw(Keyword::In) if dir.is_none() => {
                     self.bump();
                     match self.peek().clone() {
                         TokenKind::Str(text) => {
@@ -991,6 +991,7 @@ impl Parser {
             TokenKind::Kw(Keyword::Let) => Some(self.parse_let()),
             TokenKind::Kw(Keyword::Return) => Some(self.parse_return()),
             TokenKind::Kw(Keyword::If) => Some(Stmt::If(self.parse_if())),
+            TokenKind::Kw(Keyword::For) => Some(Stmt::For(self.parse_for())),
             TokenKind::LBrace => {
                 // A bare block is rejected in v0.1: what it is meant to scope is
                 // ambiguous while there is nothing to scope.
@@ -1123,7 +1124,7 @@ impl Parser {
         self.bump(); // `if`
         // `if Point { .. }` would be ambiguous with the body that follows, so a
         // struct literal is not allowed here. Parentheses make it legal again.
-        let cond = self.parse_condition();
+        let cond = self.parse_before_block();
         let then_block = self.parse_block();
         let else_branch = if self.eat(&TokenKind::Kw(Keyword::Else)) {
             if matches!(self.peek(), TokenKind::Kw(Keyword::If)) {
@@ -1144,6 +1145,48 @@ impl Parser {
         }
     }
 
+    /// `for IDENT in expr block`.
+    ///
+    /// The binding is a plain identifier: there is no pattern to destructure
+    /// with and no `mut` to ask for, so anything else in that position is a
+    /// mistake rather than a shape the grammar has to allow.
+    fn parse_for(&mut self) -> ForStmt {
+        let id = self.id();
+        let start = self.span().lo;
+        // A loop reaches another loop, and its body is read by `parse_block`,
+        // which counts its own level - but the header expression is read
+        // before that, so this is where the nesting has to be counted.
+        if !self.enter() {
+            let span = Span::empty(start);
+            return ForStmt {
+                id,
+                var: Ident {
+                    name: String::new(),
+                    span,
+                },
+                iter: self.error_expr(span),
+                body: error_block(self.id(), span),
+                span,
+            };
+        }
+        self.bump(); // `for`
+        let var = self.expect_ident("a loop variable");
+        self.expect(&TokenKind::Kw(Keyword::In), "in a `for` loop");
+        // `for x in Point { .. }` would be ambiguous with the body that
+        // follows, the same way an `if` condition is. Parentheses make a
+        // struct literal legal again.
+        let iter = self.parse_before_block();
+        let body = self.parse_block();
+        self.leave();
+        ForStmt {
+            id,
+            var,
+            iter,
+            body,
+            span: Span::new(start, self.prev_end()),
+        }
+    }
+
     /// Advances to a synchronization point. A `;` is consumed; every other
     /// synchronization point is left in place.
     ///
@@ -1157,7 +1200,9 @@ impl Parser {
                     return;
                 }
                 TokenKind::RBrace
-                | TokenKind::Kw(Keyword::Fn | Keyword::Let | Keyword::Return | Keyword::If) => {
+                | TokenKind::Kw(
+                    Keyword::Fn | Keyword::Let | Keyword::Return | Keyword::If | Keyword::For,
+                ) => {
                     return;
                 }
                 _ => {

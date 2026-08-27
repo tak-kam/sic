@@ -324,6 +324,40 @@ fn reserved_word_as_identifier() {
 }
 
 #[test]
+fn for_over_a_list() {
+    let src = "fn f() {\n    for x in xs {\n        log info x;\n    }\n}\n";
+    assert_eq!(
+        ok(src),
+        "\
+(module
+  (fn f
+    (block
+      (for x xs
+        (block
+          (log info x))))))
+"
+    );
+}
+
+/// `for x in Point { .. }` would be the body and a struct literal reading the
+/// same `{`, which is the ambiguity an `if` condition already has. The header
+/// is read the same way, so parentheses are what makes a literal legal again.
+#[test]
+fn a_struct_literal_in_a_for_header_needs_parentheses() {
+    ok("fn f() { for x in (Point { a: 1 }).xs { log info x; } }");
+    let src = "fn f() { for x in Point { a: 1 } { log info x; } }";
+    assert!(!codes(src).is_empty(), "the bare literal must not parse");
+}
+
+/// `for` and `in` mean something now. The other three still do not.
+#[test]
+fn while_loop_and_mut_are_still_reserved() {
+    assert!(codes("fn f() { let while = 1; }").contains(&"E0210"));
+    assert!(codes("fn f() { let loop = 1; }").contains(&"E0210"));
+    assert!(codes("fn f() { let mut = 1; }").contains(&"E0210"));
+}
+
+#[test]
 fn bare_block_statement_is_rejected() {
     assert!(codes("fn f() { { let x = 1; } }").contains(&"E0203"));
 }

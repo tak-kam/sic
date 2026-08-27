@@ -43,9 +43,10 @@ impl Parser {
         self.expr_bp(0)
     }
 
-    /// Parses the condition of an `if`, where a `{` starts the body rather than
-    /// a struct literal.
-    pub(super) fn parse_condition(&mut self) -> Expr {
+    /// Parses the expression in a statement header - the condition of an `if`,
+    /// the list of a `for` - where a `{` starts the body rather than a struct
+    /// literal.
+    pub(super) fn parse_before_block(&mut self) -> Expr {
         self.no_struct += 1;
         let expr = self.expr_bp(0);
         self.no_struct -= 1;

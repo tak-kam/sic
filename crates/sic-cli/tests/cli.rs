@@ -2218,6 +2218,269 @@ mod records_and_lists {
     }
 }
 
+/// `for` over a list.
+///
+/// The loop exists because iteration was spelled as recursion, and a recursion
+/// costs a frame per element: `MAX_FRAMES` is 1024, so a walk over a list
+/// longer than that failed at run time, having already done whatever it did
+/// before reaching the element that broke it. A loop costs no frame at all, so
+/// what bounds a walk becomes the run's own fuel. See issue #66.
+mod loops {
+    use super::*;
+
+    /// A JSON array of `n` integers, and the program that walks it.
+    ///
+    /// `from_json` rather than a list literal: `MAKE_LIST` puts every element
+    /// in a register of its own and there are 256 of them, so a literal cannot
+    /// state a list of the size this is about.
+    fn walk_of(n: usize, tail: &str) -> String {
+        let mut doc = String::from("[");
+        for i in 0..n {
+            if i > 0 {
+                doc.push(',');
+            }
+            doc.push_str(&i.to_string());
+        }
+        doc.push(']');
+        format!(
+            "fn main() -> Int {{\n\
+             \x20   let xs: List<Int> = from_json(\"{doc}\");\n\
+             \x20   {tail}\n\
+             }}\n"
+        )
+    }
+
+    /// The body runs once for each element, in order.
+    ///
+    /// What it says is the only thing there is to count: a loop cannot add
+    /// anything up, because there is no assignment and so nothing in the body
+    /// can carry a value to the next element.
+    #[test]
+    fn the_body_runs_once_for_each_element_in_order() {
+        let src = write_temp(
+            "for-order.sic",
+            "fn main() -> Int {\n\
+             \x20   let xs = [\"first\", \"second\", \"third\"];\n\
+             \x20   for x in xs {\n\
+             \x20       log warn x;\n\
+             \x20   }\n\
+             \x20   return len(xs);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "3");
+        let said: Vec<&str> = stderr.lines().filter(|l| l.starts_with("warn: ")).collect();
+        assert_eq!(
+            said,
+            ["warn: first", "warn: second", "warn: third"],
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The whole motivation, and the failure it replaces.
+    ///
+    /// Two thousand elements is not an unusual number - `git.status()` on a
+    /// dirty checkout of a large repository passes 1024 without trying. The
+    /// same list folded by a recursion is the program this is for, and it is
+    /// here so that what it does is a fact this test states rather than a claim
+    /// the issue made.
+    #[test]
+    fn a_list_longer_than_the_call_stack_is_walked_to_the_end() {
+        let looped = walk_of(
+            2000,
+            "for x in xs {\n\
+             \x20       log info \"one\";\n\
+             \x20   }\n\
+             \x20   return len(xs);",
+        );
+        let src = write_temp("for-2000.sic", &looped);
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "2000");
+        assert_eq!(stderr.lines().filter(|l| *l == "info: one").count(), 2000);
+        std::fs::remove_file(src).ok();
+
+        let recursed = format!(
+            "fn total(xs: List<Int>, i: Int) -> Int {{\n\
+             \x20   if i >= len(xs) {{ return 0; }}\n\
+             \x20   return xs[i] + total(xs, i + 1);\n\
+             }}\n{}",
+            walk_of(2000, "return total(xs, 0);")
+        );
+        let src = write_temp("for-2000-recursed.sic", &recursed);
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("call stack too deep"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The count is `len(xs)`, taken once when the loop starts, so an empty
+    /// list runs the body no times rather than once.
+    #[test]
+    fn an_empty_list_runs_the_body_no_times() {
+        let src = write_temp(
+            "for-empty.sic",
+            "fn main() -> Int {\n\
+             \x20   let xs: List<Int> = [];\n\
+             \x20   for x in xs {\n\
+             \x20       log error \"the body ran\";\n\
+             \x20   }\n\
+             \x20   return 7;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "7");
+        assert!(!stderr.contains("the body ran"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The binding is scoped to the body, like a `let`, so the name is gone at
+    /// the closing brace.
+    #[test]
+    fn the_loop_variable_does_not_outlive_the_body() {
+        let src = write_temp(
+            "for-scope.sic",
+            "fn main() -> Int {\n\
+             \x20   let xs = [1, 2];\n\
+             \x20   for x in xs {\n\
+             \x20       log info \"one\";\n\
+             \x20   }\n\
+             \x20   return x;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("E0300"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A capability call in a loop body runs once per element and appears in
+    /// the plan, which already said it cannot bound how often a site runs. That
+    /// sentence was written for a call behind an `if` and needed nothing added
+    /// for a call inside a loop.
+    #[test]
+    fn a_capability_call_in_a_loop_body_runs_and_is_in_the_plan() {
+        let src = write_temp(
+            "for-cap.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [];\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let names = [\"a\", \"b\", \"c\"];\n\
+             \x20   for name in names {\n\
+             \x20       let r = process.run(\"/bin/echo\", []);\n\
+             \x20       log info name;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(
+            stderr.lines().filter(|l| l.starts_with("info: ")).count(),
+            3
+        );
+
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("process.run"), "{stdout}");
+        assert!(
+            stdout.contains("depends on the path taken"),
+            "the plan still says it cannot bound a site: {stdout}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The bytecode a loop produces is a backward `JUMP`, and it verifies.
+    ///
+    /// `decode` then `verify` is what stands between a `.sicb` on a disk and
+    /// the VM, so a loop going through `sic verify` here is the end-to-end half
+    /// of the claim that the verifier needed nothing added. The other half is
+    /// in `sic-verify`, over the instructions themselves.
+    #[test]
+    fn the_bytecode_a_loop_produces_verifies() {
+        let src = write_temp(
+            "for-verify.sic",
+            "fn main() -> Int {\n\
+             \x20   let xs = [1, 2, 3];\n\
+             \x20   for x in xs {\n\
+             \x20       log debug \"one\";\n\
+             \x20   }\n\
+             \x20   return len(xs);\n\
+             }\n",
+        );
+        let out =
+            std::env::temp_dir().join(format!("sic-test-{}-for-verify.sicb", std::process::id()));
+        let (_, stderr, code) = sic(&[
+            "compile",
+            src.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+
+        let (stdout, stderr, code) = sic(&["verify", out.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("verified"), "{stdout}");
+        // A loop that left a block nothing reaches behind would say so here.
+        assert!(!stdout.contains("unreachable"), "{stdout}");
+        assert!(!stderr.contains("unreachable"), "{stderr}");
+
+        let (stdout, stderr, code) = sic(&["disasm", out.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout
+                .lines()
+                .any(|l| l.contains("JUMP  ") && l.contains('-')),
+            "a loop is a backward jump: {stdout}"
+        );
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(out).ok();
+    }
+
+    /// Only a list can be walked. A `String` has a length, which makes it the
+    /// case worth naming.
+    #[test]
+    fn walking_something_that_is_not_a_list_is_refused() {
+        let src = write_temp(
+            "for-not-a-list.sic",
+            "fn main() -> Int {\n\
+             \x20   for c in \"abc\" {\n\
+             \x20       log info \"one\";\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(stderr.contains("E0354"), "{stderr}");
+        assert!(stderr.contains("cannot be walked"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `while`, `loop` and `mut` are still reserved, and saying so here is what
+    /// stops `for` from being read as "loops arrived". A `while` needs
+    /// something to change between two visits to its condition, and nothing in
+    /// this language changes.
+    #[test]
+    fn while_loop_and_mut_are_still_reserved() {
+        for (name, word) in [
+            ("for-kw-while.sic", "while"),
+            ("for-kw-loop.sic", "loop"),
+            ("for-kw-mut.sic", "mut"),
+        ] {
+            let src = write_temp(name, &format!("fn main() {{ let x = {word}; }}\n"));
+            let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+            assert_eq!(code, 1, "{word}");
+            assert!(stderr.contains("E0210"), "{word}: {stderr}");
+            std::fs::remove_file(src).ok();
+        }
+    }
+}
+
 /// agents.
 mod agents {
     use super::*;

@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 651 tests.
+Last updated at 667 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -45,6 +45,7 @@ in the source, so it is the same on every platform - four of them are
 | - | This repository's own development loop, written in sic: it plans, runs, checkpoints at the model call, and reads back with `sic explain`. Seven things bent it on the way, each now an issue | `workflows/ci.sic`, `docs/design/self-hosting.md` |
 | 26 | `log <level> <expr>;` - the journal keeps the level and the digest, the run's values file keeps the text, and stderr shows it as it happens | `docs/design/logging.md` |
 | - | `--interactive`: a run that stops for an answer asks the terminal instead of leaving it for whoever comes along later, and keeps asking for as long as it keeps stopping - the checkpoint is written first either way, so the worst case of an interactive run is a non-interactive one | `docs/design/interactive.md` |
+| - | `for x in xs { ... }`: the only loop, over a list and nothing else - no assignment, so no induction variable and no way to write one that does not end, and no frame per element, which is what a list longer than the 1024-frame call stack needed. It lowers to a counter, `GET_INDEX` and the backward `JUMP` the bytecode already encoded, so no instruction was added and the verifier's fixed point already handled the edge | `docs/design/v0.1.md` §2 |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 | - | What a trusted value may **decide**, as against what it may reach: a branch is not an effect, because the manifest is the unit of approval - and `len` takes the label off, which is a channel from a model to a branch and is accepted with reasons rather than by accident | `docs/design/trust.md` §2a |
@@ -132,6 +133,10 @@ Each is recorded where the decision was made, with the reason:
 - No `parallel { }` block - it would be sugar over `spawn` and `await`
 - No cancellation, no backoff, no preemption (`docs/design/concurrency.md`)
 - No option or nullable types, so every field of a record is required
-- No iteration: v0.1 has no loops, and recursion is how a program repeats
+- No `while`, no `break`, no `continue`, no ranges and no iterators. A `for` over a
+  list needs none of them, and a `while` needs something to change between two visits
+  to its condition, which nothing in this language does (issue #66)
+- No assignment, so a loop body performs effects rather than accumulating a value: a
+  fold is still a recursion, and still costs a frame per element
 - No package registry, no dynamic loading (§11, §33)
 - No pruning or retention for recorded runs (`docs/design/runs.md`)

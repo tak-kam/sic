@@ -395,6 +395,74 @@ fn a_loop_converges() {
     assert_ok(&p);
 }
 
+/// The shape a `for` loop lowers to: a length, a counter, `GET_INDEX` and a
+/// backward jump.
+///
+/// Nothing was added to the verifier for a loop, and this is the claim. The
+/// data flow reaches the head from two places - the entry and the back edge -
+/// and the counter has to come out of that merge as an `Int` on both, or
+/// `GET_INDEX` would be reading a register the verifier knows nothing about.
+#[test]
+fn the_shape_a_for_loop_lowers_to_is_accepted() {
+    // r0: the list (parameter)  r1: the element  r2: the length
+    // r3: the counter           r4: the test     r5: the constant one
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        6,
+        vec![Const::I64(0), Const::I64(1)],
+        vec![
+            Inst::abc(Op::Len, 2, 0, 0),
+            Inst::abx(Op::LoadConst, 3, 0),
+            Inst::abc(Op::Lt, 4, 3, 2), // the head, jumped back to
+            Inst::asbx(Op::JumpIfNot, 4, 4),
+            Inst::abc(Op::GetIndex, 1, 0, 3),
+            Inst::abx(Op::LoadConst, 5, 1),
+            Inst::abc(Op::AddI64, 3, 3, 5),
+            Inst::asbx(Op::Jump, 0, -6),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    // `List<Int>`, which the section does not hold by default.
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    p.funcs[0].params = vec![p.types.len() as u32 - 1];
+    assert_ok(&p);
+}
+
+/// The element is written inside the loop, so at the head it is written on one
+/// path and not the other. That is the merge rule working, not a loop being
+/// special: reading it before the body wrote it is refused.
+#[test]
+fn the_element_is_not_readable_at_the_head_of_the_loop() {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        6,
+        vec![Const::I64(0), Const::I64(1)],
+        vec![
+            Inst::abc(Op::Len, 2, 0, 0),
+            Inst::abx(Op::LoadConst, 3, 0),
+            Inst::abc(Op::AddI64, 2, 2, 1), // reads the element at the head
+            Inst::abc(Op::Lt, 4, 3, 2),
+            Inst::asbx(Op::JumpIfNot, 4, 4),
+            Inst::abc(Op::GetIndex, 1, 0, 3),
+            Inst::abx(Op::LoadConst, 5, 1),
+            Inst::abc(Op::AddI64, 3, 3, 5),
+            Inst::asbx(Op::Jump, 0, -7),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    p.types.push(TypeDesc::List(index_of(TypeDesc::Int)));
+    p.funcs[0].params = vec![p.types.len() as u32 - 1];
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("r1 is read before it is written")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
 // ---- capabilities ----
 
 /// A program with one capability: `process.exec(String) -> Int`.
