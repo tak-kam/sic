@@ -92,15 +92,44 @@ fn tests() -> Exit {
 // It reports rather than refuses. A tree with uncommitted work in it is the
 // normal case while somebody is working, and a workflow that stopped there
 // would be refusing to test the thing it was written to test.
+// A test result that is not tied to a state of the repository is a fact about
+// nothing. This puts both halves of that state in the journal before anything
+// runs, so `sic explain` on a recorded run says which commit it was about and
+// what was not in it.
+//
+// It names the files rather than counting them, which is what #66 bought. A
+// count answers "is this a test of HEAD"; the names answer "of what, then",
+// and that is the question somebody reading the record a week later has.
+//
+// It reports rather than refuses. A tree with uncommitted work in it is the
+// normal case while somebody is working, and a workflow that stopped there
+// would be refusing to test the thing it was written to test.
 fn what_is_being_tested() -> Int {
-    log info git.rev_parse("HEAD");
-    return len(git.status());
+    log info "testing " + git.rev_parse("HEAD");
+    let dirty = git.status();
+    for entry in dirty {
+        log warn "not committed: " + entry;
+    }
+    return len(dirty);
+}
+
+// A build that did not compile and a test that failed are different failures,
+// and until #68 this program could not tell them apart - it held everything
+// cargo printed and could answer one question about it, how long it was.
+//
+// The string is cargo's own, and the workflow is pinned to it: if that wording
+// changes the branch goes the other way and the diagnosis says so rather than
+// silently becoming wrong. That is worth saying out loud, because a workflow
+// that matches on another program's output has taken on a dependency the
+// manifest cannot express.
+fn ran_but_failed(output: Observed<String>) -> Bool {
+    return contains(output, "test result: FAILED");
 }
 
 fn main() -> Observed<String> {
     let uncommitted = what_is_being_tested();
     if uncommitted > 0 {
-        log warn "there is uncommitted work, so this is not a test of HEAD";
+        log warn "this is not a test of HEAD";
     }
     log info "running the tests";
     let r = tests();
@@ -110,7 +139,15 @@ fn main() -> Observed<String> {
         log info "they passed";
         return r.output;
     }
-    log warn "they failed, asking the agent why";
+    // Which of the two failures it was decides what the agent is asked. Asking
+    // "why did these tests fail" about output that is a compiler error wastes
+    // the one model call this program is budgeted for, on a question whose
+    // premise is false.
+    if ran_but_failed(r.output) {
+        log warn "tests failed, asking the agent why";
+    } else {
+        log warn "it did not build, asking the agent why";
+    }
     let d = diagnose(r.output);
     // This is what #58 was for. The binding used to go nowhere: a model's
     // answer is `LLM<String>` and this function had already promised a

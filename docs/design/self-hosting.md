@@ -237,6 +237,35 @@ It reports rather than refuses. A tree with uncommitted work in it is the
 normal case while somebody is working, and a workflow that stopped there would
 be refusing to test the thing it was written to test.
 
+## What the language gained, and what the workflow does with it
+
+Three of the seven things that bent this program are now in the language, and
+the workflow uses each where it earns its place rather than to demonstrate it:
+
+**`for` over a list** (#66) names the uncommitted files instead of counting
+them. A count answers "is this a test of HEAD"; the names answer "of what,
+then", which is the question somebody reading the record a week later has.
+
+**`contains`** (#68) tells a build that did not compile apart from a test that
+failed. Until it existed, this program held everything cargo printed and could
+answer exactly one question about it - how long it was - so it asked the agent
+"why did these tests fail" about output that was sometimes a compiler error,
+spending the one model call it is budgeted for on a question whose premise was
+false.
+
+That is also the first place this workflow takes on a dependency the manifest
+cannot express: it matches on `test result: FAILED`, which is cargo's wording
+and not a promise to anybody. If that changes, the branch goes the other way
+and the diagnosis says so - visibly wrong rather than quietly wrong - and the
+comment in the source says which it is.
+
+**`+` on `String`** (#69) puts the commit and the file name in the log line
+rather than beside it, so `sic explain` reads as sentences.
+
+What is still missing is what #66 found: a `for` loop cannot fold, because
+nothing in the language assigns. Every use above performs an effect per
+element, which is the half a loop can do.
+
 ## What this is not
 
 **Not a replacement for `.github/workflows/ci.yml`.** CI runs on a machine with
