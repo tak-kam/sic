@@ -3539,6 +3539,41 @@ mod trust {
         std::fs::remove_file(src).ok();
     }
 
+    /// `approve` changes the label rather than removing it: `HumanApproved<T>`
+    /// is refused as an operand like any other. What a person's approval buys
+    /// is reach - the value may now go to a capability that changes something
+    /// - not arithmetic. The first draft of `trust.md` §2a said "a label
+    /// leaves a value only through `approve`", and this test is why that
+    /// sentence is no longer there.
+    #[test]
+    fn an_approval_buys_reach_not_arithmetic() {
+        let src = write_temp(
+            "trust-approved-operand.sic",
+            "type Diagnosis { cause: String, severity: Int }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   human.approve \"use it\";\n\
+             }\n\
+             \n\
+             agent diagnose { input: String, output: Diagnosis, budget: 1 }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d = diagnose(\"why?\");\n\
+             \x20   let ok = approve(\"use this?\", d);\n\
+             \x20   if ok.severity > 5 {\n\
+             \x20       return 1;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0371"), "{stderr}");
+        assert!(stderr.contains("HumanApproved<Int>"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
     /// `len` takes a labelled value and answers a plain `Int`, so a model can
     /// steer a branch by the length of its own answer. That is deliberate, and
     /// `docs/design/trust.md` §2a argues it: a branch is not an effect, the

@@ -107,12 +107,25 @@ let clean: Int = d.severity + 0;   // if this compiled, the label is gone
 An operator takes a labelled value and answers an unlabelled one. The rule
 refuses that, everywhere, so that:
 
-> **A label leaves a value only through `approve`.**
+> **Once attached, a label never comes off.**
 
-That sentence is the whole of the trust system's guarantee, and it is worth
-stating in one line because the three rules in §2 are each a consequence of it.
+Not through `approve` either, and this is worth being precise about because the
+first draft of this section got it wrong: `approve` turns `LLM<T>` into
+`HumanApproved<T>`, which is still a label. E0371 refuses it as an operand just
+the same - `if approved.severity > 5` does not compile - and what changed is
+only which capabilities the value may now reach (§2, §3). A labelled value is
+**opaque to computation, whoever vouched for it**: capabilities may take it,
+fields and elements keep its label, and nothing hands the program back a plain
+value to compute with.
+
+That sentence is the whole of the trust system's guarantee, and the three rules
+in §2 are each a consequence of it. What a person's approval buys is reach, not
+arithmetic - and that is right, because the person approved *using* the value,
+not every conclusion a program might derive from it.
 
 ### `len` is the exception, deliberately
+
+The one place the program gets a computable value out of a labelled one:
 
 ```sic
 let said = llm.invoke("...");
@@ -156,7 +169,7 @@ section is what it has to answer.
 
 | claim | how |
 |---|---|
-| a labelled value is not an operand | E0371, with tests for `LLM<T>` and `HumanChosen<T>` |
+| a labelled value is not an operand, whoever vouched for it | E0371, with tests for `LLM<T>`, `HumanChosen<T>` and `HumanApproved<T>` |
 | a labelled value does not reach a changing capability | E0372 |
 | reading a field keeps the label | §2, tested |
 | `len` strips it, and that is on purpose | a test that says so, so that changing it is a decision rather than a regression |
