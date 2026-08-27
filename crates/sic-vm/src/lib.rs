@@ -438,12 +438,27 @@ impl<'a> Vm<'a> {
         }
     }
 
-    pub fn resume(&mut self, value: CapValue) -> Status {
+    /// The call that was outstanding, and the task that was waiting on it.
+    ///
+    /// Both ways a run comes back - an answer and a failure - start here, and
+    /// the order is the reason this is one procedure rather than two copies:
+    /// `answering` is taken before the state is read, so a second answer to one
+    /// call finds no task to give it to. Written out twice, that ordering was a
+    /// thing two functions agreed about by both remembering to.
+    fn the_call_that_was_outstanding(&mut self) -> Result<(usize, PendingCap), Status> {
         let Some(index) = self.answering.take() else {
-            return self.fail_now(FailKind::Internal("resumed while not suspended"));
+            return Err(self.fail_now(FailKind::Internal("resumed while not suspended")));
         };
         let TaskState::WaitingCap(pending) = self.tasks[index].state.clone() else {
-            return self.fail_now(FailKind::Internal("the answered task is not waiting"));
+            return Err(self.fail_now(FailKind::Internal("the answered task is not waiting")));
+        };
+        Ok((index, pending))
+    }
+
+    pub fn resume(&mut self, value: CapValue) -> Status {
+        let (index, pending) = match self.the_call_that_was_outstanding() {
+            Ok(found) => found,
+            Err(status) => return status,
         };
         self.journal.emit_for(
             TaskId(index as u64),
@@ -470,11 +485,9 @@ impl<'a> Vm<'a> {
     /// policy, and every attempt is an event, so an audit shows what actually
     /// happened rather than only what finally worked.
     pub fn resume_failed(&mut self, error: &CapError) -> Status {
-        let Some(index) = self.answering.take() else {
-            return self.fail_now(FailKind::Internal("resumed while not suspended"));
-        };
-        let TaskState::WaitingCap(pending) = self.tasks[index].state.clone() else {
-            return self.fail_now(FailKind::Internal("the answered task is not waiting"));
+        let (index, pending) = match self.the_call_that_was_outstanding() {
+            Ok(found) => found,
+            Err(status) => return status,
         };
         self.journal.emit_for(
             TaskId(index as u64),

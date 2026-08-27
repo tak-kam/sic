@@ -4,13 +4,13 @@ The longest functions in the tree are these:
 
 | lines | where | what it is |
 |---|---|---|
-| 357 | `sic-vm/src/lib.rs` `run_task` | one arm per opcode |
-| 347 | `sic-verify/src/lib.rs` `check_data_flow` | one arm per opcode |
-| 233 | `sic-ir/src/lower.rs` `expr` | one arm per expression kind |
+| 433 | `sic-vm/src/lib.rs` `run_task` | one arm per opcode |
+| 373 | `sic-verify/src/lib.rs` `check_data_flow` | one arm per opcode |
+| 256 | `sic-ir/src/lower.rs` `expr` | one arm per expression kind |
 | 210 | `sic-otel/src/traces.rs` `traces` | one arm per journal event |
+| 192 | `sic-verify/src/lib.rs` `check_structure` | one arm per opcode |
 | 190 | `sic-types/src/check.rs` `collect_capabilities` | one check per thing a grant may say |
 | 185 | `sic-otel/src/metrics.rs` `metrics` | one arm per journal event |
-| 184 | `sic-verify/src/lib.rs` `check_structure` | one arm per opcode |
 
 Six of the seven are a single exhaustive `match`, and they should stay that
 way. This document exists so that the next survey of the codebase finds the
@@ -18,7 +18,9 @@ argument rather than the line count.
 
 Line numbers are left out on purpose: a table of them is wrong by the next
 commit, and a document that carries a checkable fact it does not check is worse
-than one that does not carry it.
+than one that does not carry it. The counts drift too - four opcodes were added
+in 0.4.0 and `run_task` grew by 76 lines, every one of them an arm - so they
+are refreshed when this document is read rather than trusted between times.
 
 `collect_capabilities` is the seventh and is not a `match`. It is a loop over
 every grant in an `allow` block with one check per thing a grant may say - a
