@@ -114,6 +114,11 @@ pub enum Action {
     /// A document checked against a type.
     Verify {
         type_name: String,
+        /// The type describes part of the document rather than all of it, so
+        /// this is a weaker claim than the same line without it: the fields it
+        /// names were checked and anything else in the document was not
+        /// looked at.
+        open: bool,
     },
     Spawn {
         func: String,
@@ -301,6 +306,10 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                 }
                 Op::FromJson => Action::Verify {
                     type_name: program.type_name(inst.b() as u32),
+                    open: matches!(
+                        program.types.get(inst.b() as usize),
+                        Some(sic_bytecode::TypeDesc::Object { open: true, .. })
+                    ),
                 },
                 Op::Spawn => Action::Spawn {
                     func: program
@@ -423,7 +432,18 @@ pub fn render(plan: &Plan, source: &str) -> String {
                         }
                     }
                 }
-                Action::Verify { type_name } => out.push_str(type_name),
+                // The weaker claim is the one that is marked, which is the
+                // other way round from `(not pinned)` and for a reason: a
+                // grant that says nothing about a digest is the common case,
+                // so silence there had to be spelled out, while a type is
+                // closed unless it says otherwise. A reader who has never seen
+                // `..` reads a bare `VERIFY Msg` and is right about it.
+                Action::Verify { type_name, open } => {
+                    out.push_str(type_name);
+                    if *open {
+                        out.push_str("  (declared fields only)");
+                    }
+                }
                 Action::Spawn { func } => out.push_str(func),
                 Action::Await => {}
             }

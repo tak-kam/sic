@@ -108,11 +108,14 @@ impl Printer {
     }
 
     fn type_decl(&mut self, t: &TypeDecl) {
-        let fields: Vec<String> = t
+        let mut fields: Vec<String> = t
             .fields
             .iter()
             .map(|f| format!("({} {})", f.name.name, type_str(&f.ty)))
             .collect();
+        if t.open {
+            fields.push("..".to_string());
+        }
         self.line(&format!("(type {} {})", t.name.name, fields.join(" ")));
     }
 

@@ -246,7 +246,7 @@ impl Checker {
                 );
                 continue;
             }
-            let id = self.types.declare_object(decl.name.name.clone());
+            let id = self.types.declare_object(decl.name.name.clone(), decl.open);
             self.type_ids.insert(decl.name.name.clone(), id);
         }
 

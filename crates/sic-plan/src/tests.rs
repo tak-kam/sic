@@ -48,6 +48,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
     p.types.push(TypeDesc::Object {
         name: "Diagnosis".into(),
         fields: vec![("cause".into(), 4)],
+        open: false,
     });
     p
 }
@@ -157,9 +158,36 @@ fn a_validation_is_a_step() {
     assert_eq!(
         plan.functions[0].steps[1].action,
         Action::Verify {
-            type_name: "Diagnosis".into()
+            type_name: "Diagnosis".into(),
+            open: false,
         }
     );
+}
+
+/// A type that describes part of a document is a weaker claim than one that
+/// describes all of it, and a plan that printed them the same way would say a
+/// document was checked when only some of it was.
+#[test]
+fn an_open_type_says_so_in_the_plan() {
+    let mut p = program_with_capability(None);
+    p.code[2] = Inst::abc(Op::FromJson, 0, 5, 0);
+    p.code.push(Inst::abc(Op::Return, 0, 0, 0));
+    p.funcs[0].code_len = 4;
+    p.types[5] = TypeDesc::Object {
+        name: "Line".into(),
+        fields: vec![("reason".into(), 4)],
+        open: true,
+    };
+
+    let plan = plan(&p, digest());
+    assert_eq!(
+        plan.functions[0].steps[1].action,
+        Action::Verify {
+            type_name: "Line".into(),
+            open: true,
+        }
+    );
+    assert!(render(&plan, "main.sic").contains("Line  (declared fields only)"));
 }
 
 #[test]

@@ -53,6 +53,9 @@ pub enum TokenKind {
     Colon,
     Semi,
     Dot,
+    /// Only in a type body, where it says the type describes part of a
+    /// document rather than all of it.
+    DotDot,
     Arrow,
 
     Eof,
@@ -99,6 +102,7 @@ impl TokenKind {
             TokenKind::Colon => ":",
             TokenKind::Semi => ";",
             TokenKind::Dot => ".",
+            TokenKind::DotDot => "..",
             TokenKind::Arrow => "->",
             _ => "?",
         }

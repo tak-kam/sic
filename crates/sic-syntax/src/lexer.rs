@@ -411,6 +411,7 @@ impl<'a> Lexer<'a> {
             b',' => TokenKind::Comma,
             b':' => TokenKind::Colon,
             b';' => TokenKind::Semi,
+            b'.' if self.eat(b'.') => TokenKind::DotDot,
             b'.' => TokenKind::Dot,
             _ => {
                 // Rewind and advance by a whole character so the span covers one

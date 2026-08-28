@@ -30,6 +30,12 @@ impl ObjectId {
 pub struct ObjectDef {
     pub name: String,
     pub fields: Vec<(String, TypeId)>,
+    /// The type describes part of a document rather than all of it: written
+    /// `..` at the end of the body, and read only by `from_json`, which then
+    /// ignores a field the type does not declare. Everything else about a
+    /// record is unchanged - a value still holds exactly the declared fields,
+    /// in order. See `docs/design/agents.md` §8.
+    pub open: bool,
 }
 
 impl ObjectDef {
@@ -171,7 +177,7 @@ impl Types {
         // The one record the language declares. Its fields are set here rather
         // than resolved from source, so object 0 is always this and a module's
         // own types start at 1.
-        let exit = t.declare_object("Exit");
+        let exit = t.declare_object("Exit", false);
         t.set_object_fields(
             exit,
             vec![
@@ -218,12 +224,14 @@ impl Types {
     /// Declares a record type, before its fields are known.
     ///
     /// Two types may refer to each other's names, so the id has to exist before
-    /// either body is resolved.
-    pub fn declare_object(&mut self, name: impl Into<String>) -> ObjectId {
+    /// either body is resolved. `open` is known from the declaration's syntax
+    /// and needs nothing resolved, so it is settled here.
+    pub fn declare_object(&mut self, name: impl Into<String>, open: bool) -> ObjectId {
         let id = ObjectId(self.objects.len() as u32);
         self.objects.push(ObjectDef {
             name: name.into(),
             fields: Vec::new(),
+            open,
         });
         id
     }
@@ -357,32 +365,32 @@ impl Types {
         self.shape_at(id, &mut Vec::new())
     }
 
-    /// `open` holds the records being described further up, so a type that
+    /// `seen` holds the records being described further up, so a type that
     /// contains a list of itself names itself instead of recurring forever.
-    fn shape_at(&self, id: TypeId, open: &mut Vec<ObjectId>) -> String {
+    fn shape_at(&self, id: TypeId, seen: &mut Vec<ObjectId>) -> String {
         match self.get(id) {
             Type::Unit => "null".into(),
             Type::Bool => "boolean".into(),
             Type::Int => "integer".into(),
             Type::Float => "number".into(),
             Type::Str => "string".into(),
-            Type::List(inner) => format!("[{}]", self.shape_at(*inner, open)),
+            Type::List(inner) => format!("[{}]", self.shape_at(*inner, seen)),
             // Trust is a claim about where a value came from, which is not
             // something whoever answers can produce or would know what to do
             // with.
-            Type::Trust(_, inner) => self.shape_at(*inner, open),
+            Type::Trust(_, inner) => self.shape_at(*inner, seen),
             Type::Object(object) => {
                 let def = self.object(*object);
-                if open.contains(object) {
+                if seen.contains(object) {
                     return def.name.clone();
                 }
-                open.push(*object);
+                seen.push(*object);
                 let fields: Vec<String> = def
                     .fields
                     .iter()
-                    .map(|(name, ty)| format!("{name:?}: {}", self.shape_at(*ty, open)))
+                    .map(|(name, ty)| format!("{name:?}: {}", self.shape_at(*ty, seen)))
                     .collect();
-                open.pop();
+                seen.pop();
                 format!("{{{}}}", fields.join(", "))
             }
             // Neither can cross a capability boundary, so neither can be asked
@@ -442,7 +450,7 @@ mod tests {
         let strings = t.intern(Type::List(Types::STR));
         assert_eq!(t.shape(strings), "[string]");
 
-        let ticket = t.declare_object("Ticket");
+        let ticket = t.declare_object("Ticket", false);
         t.set_object_fields(
             ticket,
             vec![
@@ -466,7 +474,7 @@ mod tests {
     #[test]
     fn a_type_containing_itself_names_itself() {
         let mut t = Types::new();
-        let node = t.declare_object("Node");
+        let node = t.declare_object("Node", false);
         let node_ty = t.intern(Type::Object(node));
         let children = t.intern(Type::List(node_ty));
         t.set_object_fields(

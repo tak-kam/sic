@@ -156,9 +156,16 @@ pub enum TypeDesc {
     /// layout, and a verifier comparing names would be doing the type checker's
     /// work again. The names are here because validating a JSON document needs
     /// them: a document addresses fields by name.
+    ///
+    /// `open` is here for the same reason the names are, and only for that
+    /// reason: `FROM_JSON` runs against this section, so whether a document may
+    /// carry a field the type does not declare has to survive the compile. No
+    /// other instruction reads it - a value holds the declared fields and
+    /// nothing else, whichever way this flag points.
     Object {
         name: String,
         fields: Vec<(String, u32)>,
+        open: bool,
     },
 }
 

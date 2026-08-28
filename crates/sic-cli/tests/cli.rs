@@ -2778,6 +2778,244 @@ mod records_and_lists {
     }
 }
 
+/// A type that describes part of a document rather than all of it.
+///
+/// One validator has two jobs and they disagree. A model was told what its
+/// answer had to look like, so an answer carrying a field the type does not
+/// declare is an answer to a different question and refusing it is the whole
+/// value of the declaration. A machine protocol is the other way round: cargo's
+/// JSONL lines carry nine, five and two keys and share only `reason`, so a
+/// reader that refuses an undeclared field cannot read one line of it, and the
+/// day the protocol grows a field every reader breaks.
+///
+/// `..` is what a type says to be read the second way. It is opt-in, so the
+/// model case - the common one - keeps the refusal it depends on. See issue
+/// #76 and `docs/design/agents.md` §8.
+mod part_of_a_document {
+    use super::*;
+
+    /// The measured case: one `compiler-message` line, five keys, against a
+    /// type that declares the one key this program is reading.
+    #[test]
+    fn an_open_type_reads_a_protocol_it_did_not_design() {
+        let src = write_temp(
+            "open-cargo-line.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             \x20   ..\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"compiler-message\\\",\
+             \\\"package_id\\\":\\\"path+file:///w#sic@0.4.0\\\",\
+             \\\"manifest_path\\\":\\\"/w/Cargo.toml\\\",\
+             \\\"target\\\":{\\\"name\\\":\\\"sic\\\"},\
+             \\\"message\\\":{\\\"level\\\":\\\"error\\\"}}\";\n\
+             \x20   let line: Line = from_json(text);\n\
+             \x20   return line.reason;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "\"compiler-message\"");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The same document, one character of source different. A type is closed
+    /// unless it says otherwise, and that is what a model's answer is checked
+    /// against.
+    #[test]
+    fn without_the_marker_the_same_document_is_still_refused() {
+        let src = write_temp(
+            "closed-cargo-line.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"build-finished\\\",\\\"success\\\":true}\";\n\
+             \x20   let line: Line = from_json(text);\n\
+             \x20   return line.reason;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("does not fit the type"), "{stderr}");
+        assert!(stderr.contains("`Line` has no field `success`"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `..` is about what a document may carry beyond the type, not about what
+    /// the type asks for. A field the program reads has to be in the document,
+    /// or the read would have nothing to answer with.
+    #[test]
+    fn an_open_type_still_needs_the_fields_it_declares() {
+        let src = write_temp(
+            "open-missing-field.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             \x20   ..\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"success\\\":true}\";\n\
+             \x20   let line: Line = from_json(text);\n\
+             \x20   return line.reason;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("`Line` needs a field `reason`"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Each type says for itself. Openness reaching into a field's type would
+    /// mean a reader of `Target` could not tell what it accepts without
+    /// finding every type that mentions it, and the point of putting the
+    /// marker on the type was that a reader of the type can tell.
+    #[test]
+    fn openness_does_not_reach_a_nested_record() {
+        let src = write_temp(
+            "open-nested.sic",
+            "type Target {\n\
+             \x20   name: String,\n\
+             }\n\
+             type Line {\n\
+             \x20   reason: String,\n\
+             \x20   target: Target,\n\
+             \x20   ..\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"compiler-artifact\\\",\
+             \\\"target\\\":{\\\"name\\\":\\\"sic\\\",\\\"kind\\\":[\\\"lib\\\"]},\
+             \\\"fresh\\\":true}\";\n\
+             \x20   let line: Line = from_json(text);\n\
+             \x20   return line.target.name;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        // `fresh` was ignored by the open outer type and `kind` was not, and
+        // the message names which one and where.
+        assert!(
+            stderr.contains("target: `Target` has no field `kind`"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A label is about where a document came from, and `..` is about what the
+    /// document may contain. Neither has anything to say about the other, and
+    /// the way to keep that true is to check it: this is the refusal from
+    /// `trust.md` §2, over a type that describes part of a document.
+    #[test]
+    fn the_label_travels_through_an_open_type() {
+        let src = write_temp(
+            "open-keeps-the-label.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             \x20   ..\n\
+             }\n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   fs.write \"./out.txt\";\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let line: LLM<Line> = from_json(llm.invoke(\"why?\"));\n\
+             \x20   fs.write(\"./out.txt\", line.reason);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// An open type is a weaker claim about what was checked, so a plan that
+    /// printed it the same way would say a document was validated when part of
+    /// it was never looked at. `answers.md` §7 argues the plan must not make an
+    /// undeclared thing look checked; a partly-checked one is the same
+    /// argument.
+    #[test]
+    fn the_plan_says_when_only_part_of_a_document_was_checked() {
+        let open = write_temp(
+            "open-plan.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             \x20   ..\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let line: Line = from_json(\"{\\\"reason\\\":\\\"x\\\"}\");\n\
+             \x20   return line.reason;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", open.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains("VERIFY   Line  (declared fields only)"),
+            "{stdout}"
+        );
+        std::fs::remove_file(open).ok();
+
+        // And the closed type says nothing, because it has nothing to
+        // qualify: a bare `VERIFY` is the whole document, which is what a
+        // reader who has never seen `..` already assumes.
+        let closed = write_temp(
+            "closed-plan.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let line: Line = from_json(\"{\\\"reason\\\":\\\"x\\\"}\");\n\
+             \x20   return line.reason;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", closed.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("VERIFY   Line"), "{stdout}");
+        assert!(!stdout.contains("declared fields"), "{stdout}");
+        std::fs::remove_file(closed).ok();
+    }
+
+    /// What `approve` shows is the value, and the value of an open type is the
+    /// declared fields and nothing else - the rest of the document was never
+    /// built and cannot be shown. Worth a test rather than a sentence, because
+    /// it is the one place where `..` changes what a person sees: `success`
+    /// was in the document a program read and is not in front of whoever is
+    /// asked about it.
+    #[test]
+    fn a_person_is_shown_the_fields_the_type_declares() {
+        let src = write_temp(
+            "open-approve.sic",
+            "type Line {\n\
+             \x20   reason: String,\n\
+             \x20   ..\n\
+             }\n\
+             allow {\n\
+             \x20   human.approve \"a line\";\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"build-finished\\\",\\\"success\\\":true}\";\n\
+             \x20   let line: Line = from_json(text);\n\
+             \x20   let ok = approve(\"this line?\", line);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let checkpoint = write_temp("open-approve.sicc", "");
+        let (_, stderr, code) = sic(&[
+            "run",
+            src.to_str().unwrap(),
+            "--checkpoint",
+            checkpoint.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 3, "{stderr}");
+        assert!(
+            stderr.contains(r#"approving: {"reason":"build-finished"}"#),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(checkpoint).ok();
+    }
+}
+
 /// `for` over a list.
 ///
 /// The loop exists because iteration was spelled as recursion, and a recursion

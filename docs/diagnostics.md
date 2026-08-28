@@ -60,6 +60,7 @@ reason.
 | E0216 | `in` without a directory |
 | E0217 | `env` without `NAME: "value"` pairs |
 | E0218 | a `log` level that is not one of the four |
+| E0219 | `..` somewhere in a type body other than the end |
 
 ## E03xx — names, types and effects
 

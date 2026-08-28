@@ -45,6 +45,8 @@ type Diagnosis {
   handle.
 - Fields are ordered. The order is what the bytecode uses; the source uses
   names.
+- A body may end with `..`, which says the type describes part of a document
+  rather than all of it. Only `from_json` reads it; §8 argues it.
 
 ### Constructing one
 
@@ -300,6 +302,106 @@ spent rather than only when it runs out.
 - **No optional or nullable fields.** Every field of a type is required, so
   validation is a yes or no. Optionality is a type-system feature and belongs
   with the trust types of section 19.
+- **A record is closed.** A document carrying a field the type does not declare
+  does not fit it. That is the rule the rest of this section is about.
+
+### A type may say it describes part of a document
+
+The closed record is right about a model and wrong about a protocol, and one
+validator now has both jobs. A model was told what its answer had to look like,
+so an answer with a field the type does not declare is an answer to a different
+question, and refusing it is the whole value of the declaration. A machine
+protocol is the other way round: cargo's JSONL lines carry nine, five and two
+keys and share only `reason` (`docs/design/answers.md` §3), so no declared
+subset of them validates, and the day a protocol grows a field every reader that
+refused an unknown one breaks. Forward compatibility is the reason protocols are
+built that way, and a validator that cannot read them is not being strict, it is
+being unusable.
+
+So a type may say which of the two it is:
+
+```text
+type Line { reason: String, .. }
+```
+
+`from_json` then checks the fields the type declares and ignores the rest. **A
+type without the marker is unchanged**, and that is the default because the
+model case is the common one and its refusal is load-bearing.
+
+**The marker is on the type, not on the call.** The alternative was a mode on
+`from_json`, and it is more flexible; nothing has asked for the flexibility, and
+it costs the thing the marker is for. Whether a document may carry more than the
+type names is a property of what the type describes - `Diagnosis` is an answer
+somebody was asked for, `Line` is a message somebody else designed - and it does
+not change between two calls. On the call, two `from_json`s of the same type
+could disagree about it, a reader of the declaration could not tell which
+without finding every call, and `sic plan` would have to print the answer per
+call site rather than once. On the type it is one word, read where the type is.
+
+**Openness stops at the type that declares it.** A field whose type is a record
+is checked by that record's own rule, so an open `Line` holding a closed
+`Target` still refuses a document whose `target` carries an undeclared key, and
+the message names the path:
+
+```text
+error: the document does not fit the type: target: `Target` has no field `kind`
+```
+
+Reaching into nested types would mean a reader of `Target` could not tell what
+it accepts without finding every type that mentions it, which is the same thing
+that ruled out putting the marker on the call.
+
+**A value holds the declared fields and nothing else.** The rest of the document
+is read, checked to be well-formed JSON, and dropped: there is no way to get at
+it afterwards, and `..` is not a container. That is what makes this small enough
+to be worth having, and it is also why an open `Line` does not solve the sum
+type the same protocol needs (issue #77) - it tells a program which kind of line
+it has and gives it no way to read the rest.
+
+`TO_JSON` follows from that and needs no rule of its own: it writes the value,
+so an open type's value writes back as the fields it declares. The one place
+this is visible is `approve`, which shows a person the value rather than the
+document - a `Line` read out of `{"reason":"build-finished","success":true}` is
+shown as `{"reason":"build-finished"}`. That is honest about what the program
+has, and it is worth knowing that `..` is the one marker that puts something in
+a document a person approving will not see.
+
+**`sic plan` says so, because it is a weaker claim.** A validation of an open
+type checked part of a document and did not look at the rest, and a plan that
+printed it the same way as a closed one would make an unchecked thing look
+checked - which is the argument `answers.md` §7 makes about a grant that
+declares no shape at all.
+
+```text
+    1. VERIFY   Line  (declared fields only)   ; 8:22
+```
+
+The asymmetry with `(not pinned)` is deliberate and is not an oversight of the
+same rule. A grant that says nothing about a digest is the common case, so
+silence there had to be spelled out or a reader would read it as a pin; a type
+is closed unless it says otherwise, so a reader who has never seen `..` reads a
+bare `VERIFY Line` and is right about it. The negative is printed where silence
+would mislead, and here it does not.
+
+**The trust label is untouched.** `from_json` takes a document's label off to
+check the argument and puts it back on the result (#72), and that is about where
+the document came from, while `..` is about what the document may contain.
+Neither has anything to say about the other: `LLM<Line>` through an open type is
+still `LLM<Line>`, and `line.reason` still cannot decide what the next program
+runs. Said here rather than assumed, and checked by a test rather than said.
+
+The flag has to survive the compile, because `FROM_JSON` runs against the type
+section, so a record descriptor in the `.sicb` gained a byte and
+`VERSION_MINOR` went from 8 to 9. A new instruction has twice been judged not
+to need a bump - an old reader meets an unknown opcode and says so - but a
+changed section layout is the other case, where a reader that did not know would
+take the flag for the field count and decode a type section that happens to
+parse.
+
+Deliberately not in this: optional fields (#78), which are a different question
+about what a type requires rather than about what a document may carry; sum
+types (#77); any way to reach the fields that were ignored; and any change to
+the default.
 
 ---
 

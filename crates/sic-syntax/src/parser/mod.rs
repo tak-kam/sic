@@ -352,15 +352,40 @@ impl Parser {
 
     /// ```text
     /// type Point { x: Int, y: Int }
+    /// type Line { reason: String, .. }
     /// ```
+    ///
+    /// The `..` says the type describes part of a document rather than all of
+    /// it. It comes last because that is where it reads as "and the rest":
+    /// allowing it anywhere would make a reader look for it, and there is
+    /// nothing it could mean in the middle that it does not mean at the end.
     fn parse_type_decl(&mut self) -> TypeDecl {
         let id = self.id();
         let start = self.span().lo;
         self.bump(); // `type`
         let name = self.expect_ident("a type name");
         let mut fields = Vec::new();
+        let mut open = false;
         if self.expect(&TokenKind::LBrace, "to open a type body") {
             while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                if self.at(&TokenKind::DotDot) {
+                    let span = self.span();
+                    self.bump();
+                    open = true;
+                    self.eat(&TokenKind::Comma);
+                    if !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                        self.error(
+                            "E0219",
+                            "`..` has to be the last thing in a type body",
+                            span,
+                            "the fields the type declares come before it",
+                        );
+                        while !self.at(&TokenKind::RBrace) && !self.at_eof() {
+                            self.bump();
+                        }
+                    }
+                    break;
+                }
                 let before = self.pos;
                 fields.push(self.parse_field_decl());
                 if !self.eat(&TokenKind::Comma) {
@@ -376,6 +401,7 @@ impl Parser {
             id,
             name,
             fields,
+            open,
             span: Span::new(start, self.prev_end()),
         }
     }
