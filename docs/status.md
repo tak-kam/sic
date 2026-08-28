@@ -146,7 +146,11 @@ Each is recorded where the decision was made, with the reason:
   list needs none of them, and a `while` needs something to change between two visits
   to its condition, which nothing in this language does (issue #66)
 - No assignment, so a loop body performs effects rather than accumulating a value: a
-  fold is still a recursion, and still costs a frame per element
+  fold is still a recursion, and still costs a frame per element - measured, it stops
+  at about 1020, and the shape somebody writes instead shadows and answers zero
+  without a warning. `docs/design/loops.md` is the design that would change both, and
+  it argues for `mut` and `=` rather than a loop-bound accumulator: the narrow form
+  is assignment with a restriction bolted on, and it cannot write an agent loop
 - No package registry, no dynamic loading (§11, §33)
 - No pruning or retention for recorded runs (`docs/design/runs.md`)
 - No typed shape on a capability grant. A grant may come to say `answers json` or
