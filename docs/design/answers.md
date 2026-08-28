@@ -157,6 +157,13 @@ Any one of those is a type-system change with its own design document ahead of
 it. All three, taken to make a grant clause work, would be the general schema
 language the issue already refused, arrived at sideways.
 
+Two of the three have since been argued on their own: open records landed as
+`type Line { reason: String, .. }` (#76) and optional fields as
+`executable: String?` (#78), both in `agents.md` §8. That is the table working
+rather than the table being wrong - each was a change worth its own argument,
+and neither was made to serve a grant clause. The fourth reason below is what
+still stops the typed rung, and it was written to be the one that would.
+
 And there is a fourth reason, which is the one that would still hold if the
 other three were fixed. **The check would have to cross the broker boundary.**
 `sic-broker` depends on `sic-core` and `sic-json` and nothing else;

@@ -11,7 +11,7 @@ use sic_core::{AgentId, Answers, CapId, Diagnostic, FuncId, Label, LocalId, Node
 use sic_syntax::ast::*;
 
 use crate::cap::{self, CapEntry};
-use crate::ty::{ObjectId, TrustKind, Type, Types};
+use crate::ty::{Field, ObjectId, TrustKind, Type, Types};
 
 /// What a name in an expression refers to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -257,9 +257,9 @@ impl Checker {
             let Some(id) = self.type_ids.get(&decl.name.name).copied() else {
                 continue;
             };
-            let mut fields: Vec<(String, TypeId)> = Vec::new();
+            let mut fields: Vec<Field> = Vec::new();
             for field in &decl.fields {
-                if fields.iter().any(|(n, _)| *n == field.name.name) {
+                if fields.iter().any(|f| f.name == field.name.name) {
                     self.error(
                         "E0346",
                         format!("field `{}` is declared twice", field.name.name),
@@ -269,7 +269,24 @@ impl Checker {
                     continue;
                 }
                 let ty = self.resolve_type(&field.ty);
-                fields.push((field.name.name.clone(), ty));
+                // A `Unit?` field would have no way to tell the two apart: the
+                // value of an absent field is `null`, which is the only value a
+                // `Unit` field can hold. Refusing it is what makes "absent and
+                // `null` are the same thing" true of the value as well as of
+                // the document.
+                if field.optional && ty == Types::UNIT {
+                    self.error(
+                        "E0355",
+                        format!("field `{}` cannot be an optional `Unit`", field.name.name),
+                        field.span,
+                        "`null` is already the whole of what a `Unit` field holds",
+                    );
+                }
+                fields.push(Field {
+                    name: field.name.name.clone(),
+                    ty,
+                    optional: field.optional,
+                });
             }
             self.types.set_object_fields(id, fields);
         }
@@ -304,12 +321,20 @@ impl Checker {
 
     fn contains_object(
         &self,
-        fields: &[(String, TypeId)],
+        fields: &[Field],
         target: ObjectId,
         seen: &mut Vec<ObjectId>,
     ) -> bool {
-        for (_, ty) in fields {
-            let Some(object) = self.types.as_object(*ty) else {
+        for field in fields {
+            // An optional field breaks the cycle for a different reason than a
+            // list or a task does. Those are handles; this one is that every
+            // value of the type terminates, because the chain has to stop at a
+            // field that was not there. rustc's `Span` holds an `expansion`
+            // which holds a `Span`, and that is the shape this allows.
+            if field.optional {
+                continue;
+            }
+            let Some(object) = self.types.as_object(field.ty) else {
                 continue;
             };
             if object == target {
@@ -1072,7 +1097,11 @@ impl Checker {
                     "E0312",
                     "`null` has no type in v0.1",
                     e.span,
-                    "there is no optional type yet",
+                    "a field may be optional; a value is never",
+                );
+                self.note(
+                    "a document's `null` fits a `Unit` field, or a field written `T?`, and \
+                     nothing else",
                 );
                 Types::ERROR
             }
@@ -1102,6 +1131,7 @@ impl Checker {
                     self.check_field_access(base, name, e.span)
                 }
             }
+            ExprKind::Has { base } => self.check_has(base, e.span),
             ExprKind::Error => Types::ERROR,
         };
         self.node_types.insert(e.id, ty);
@@ -1826,17 +1856,33 @@ impl Checker {
     /// Recursive because a list of tasks is no more showable than a task, and
     /// a record's fields are declared in source where a future type could be.
     fn unshowable(&self, ty: TypeId) -> Option<String> {
+        self.unshowable_at(ty, &mut Vec::new())
+    }
+
+    /// `seen` holds the records already being walked. A type may reach itself
+    /// through an optional field, so the walk has to stop somewhere; a record
+    /// already on the path adds nothing, because whatever it holds has been
+    /// looked at.
+    fn unshowable_at(&self, ty: TypeId, seen: &mut Vec<ObjectId>) -> Option<String> {
         let ty = self.types.untrusted(ty);
         match self.types.get(ty) {
             Type::Task(_) | Type::Fn(_) => Some(self.types.name(ty)),
-            Type::List(element) => self.unshowable(*element),
-            Type::Object(object) => self
-                .types
-                .object(*object)
-                .fields
-                .clone()
-                .iter()
-                .find_map(|(_, field)| self.unshowable(*field)),
+            Type::List(element) => self.unshowable_at(*element, seen),
+            Type::Object(object) => {
+                if seen.contains(object) {
+                    return None;
+                }
+                seen.push(*object);
+                let found = self
+                    .types
+                    .object(*object)
+                    .fields
+                    .clone()
+                    .iter()
+                    .find_map(|field| self.unshowable_at(field.ty, seen));
+                seen.pop();
+                found
+            }
             _ => None,
         }
     }
@@ -1958,9 +2004,9 @@ impl Checker {
         let mut given: Vec<&str> = Vec::new();
         for field in fields {
             let found = self.check_expr(&field.value);
-            match declared.iter().find(|(n, _)| *n == field.name.name) {
-                Some((_, want)) => {
-                    self.expect_type(*want, found, field.value.span, "this field");
+            match declared.iter().find(|f| f.name == field.name.name) {
+                Some(want) => {
+                    self.expect_type(want.ty, found, field.value.span, "this field");
                 }
                 None => self.error(
                     "E0348",
@@ -1980,11 +2026,14 @@ impl Checker {
             given.push(&field.name.name);
         }
 
-        // Every field is required: there is no optional type, so a missing one
-        // would have to be filled with a value nobody chose.
+        // A required field has to be given: there is no value that would stand
+        // for a missing one, and inventing one is the thing this refuses. An
+        // optional field left out of the literal is not there, which is a
+        // choice the program made rather than a value it was handed.
         let missing: Vec<&str> = declared
             .iter()
-            .map(|(n, _)| n.as_str())
+            .filter(|f| !f.optional)
+            .map(|f| f.name.as_str())
             .filter(|n| !given.contains(n))
             .collect();
         if !missing.is_empty() {
@@ -2019,9 +2068,17 @@ impl Checker {
             return Types::ERROR;
         };
         match self.types.object(object).field(&name.name) {
-            Some((_, ty)) => match provenance {
-                Some(kind) => self.types.trust(kind, ty),
-                None => ty,
+            // An optional field reads as its own type. There is no third thing
+            // it could be, because nothing in this language holds a value that
+            // is sometimes there; what changes is that the read fails the run
+            // when the field was not in the document, exactly as `xs[i]` fails
+            // when the index is not in the list.
+            Some((_, field)) => match provenance {
+                Some(kind) => {
+                    let ty = field.ty;
+                    self.types.trust(kind, ty)
+                }
+                None => field.ty,
             },
             None => {
                 let type_name = self.types.object(object).name.clone();
@@ -2034,6 +2091,60 @@ impl Checker {
                 Types::ERROR
             }
         }
+    }
+
+    /// `a.executable?` - whether an optional field was in the document.
+    ///
+    /// The answer is a plain `Bool` even when the record carries a label, which
+    /// is the rule `len`, `contains` and `starts_with` are already covered by:
+    /// a question about a labelled value answers something that is not any
+    /// value the label was on, and no `Bool` reaches a capability. See
+    /// `docs/design/trust.md` §2a.
+    fn check_has(&mut self, base: &Expr, span: Span) -> TypeId {
+        let ExprKind::Field {
+            base: object_expr,
+            name,
+        } = &base.kind
+        else {
+            self.check_expr(base);
+            self.error(
+                "E0343",
+                "only a field can be asked whether it is there",
+                span,
+                "`?` follows a field access",
+            );
+            return Types::BOOL;
+        };
+        let field_ty = self.check_expr(base);
+        if self.types.is_error(field_ty) {
+            return Types::BOOL;
+        }
+        let Some(object_ty) = self.node_types.get(&object_expr.id).copied() else {
+            return Types::BOOL;
+        };
+        let object_ty = self.types.untrusted(object_ty);
+        let Some(object) = self.types.as_object(object_ty) else {
+            return Types::BOOL;
+        };
+        let def = self.types.object(object);
+        let optional = def
+            .field(&name.name)
+            .map(|(_, field)| field.optional)
+            .unwrap_or(true);
+        if !optional {
+            let type_name = def.name.clone();
+            self.error(
+                "E0343",
+                format!("field `{}` of `{type_name}` is always there", name.name),
+                span,
+                "only a field written `T?` can be missing",
+            );
+            self.note(
+                "a document either fits a type or does not, and a required field is part of \
+                 fitting it",
+            );
+        }
+        Types::BOOL
     }
 
     /// An empty list literal in a position whose type is already written down.

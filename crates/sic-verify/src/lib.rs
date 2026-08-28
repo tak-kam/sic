@@ -133,7 +133,7 @@ impl<'a> Verifier<'a> {
         for (i, desc) in p.types.iter().enumerate() {
             let referenced: Vec<u32> = match desc {
                 TypeDesc::Task(inner) | TypeDesc::List(inner) => vec![*inner],
-                TypeDesc::Object { fields, .. } => fields.iter().map(|(_, t)| *t).collect(),
+                TypeDesc::Object { fields, .. } => fields.iter().map(|f| f.ty).collect(),
                 _ => Vec::new(),
             };
             for inner in referenced {
@@ -405,7 +405,7 @@ impl<'a> Verifier<'a> {
                     };
                     ok &= self.window_fits(func, pc, inst.c(), fields.len(), "fields");
                 }
-                Op::GetField => {
+                Op::GetField | Op::GetOpt | Op::HasOpt => {
                     ok &= check_reg(self, inst.a(), "destination");
                     ok &= check_reg(self, inst.b(), "record");
                 }
@@ -705,21 +705,59 @@ impl<'a> Verifier<'a> {
                 }
                 Op::MakeObject => {
                     let fields = p.types[inst.b() as usize]
-                        .field_types()
+                        .fields()
                         .expect("checked in the structure pass");
-                    for (i, want) in fields.iter().enumerate() {
+                    for (i, field) in fields.iter().enumerate() {
                         let reg = inst.c() + i as u8;
-                        self.read(&name, pc, &state, reg, Some(*want));
+                        if !field.optional {
+                            self.read(&name, pc, &state, reg, Some(field.ty));
+                            continue;
+                        }
+                        // An optional field's slot holds the field's own type
+                        // or `null`, and those can never be the same, because
+                        // a `Unit` field cannot be optional (E0355).
+                        let found = self.read(&name, pc, &state, reg, None);
+                        if let Abst::Val(ty) = found {
+                            if ty != field.ty && ty != UNIT {
+                                let (found, want) = (p.type_name(ty), p.type_name(field.ty));
+                                self.error(
+                                    Some(&name),
+                                    Some(pc),
+                                    format!(
+                                        "r{reg} holds {found} where {want} or null is required"
+                                    ),
+                                );
+                            }
+                        }
                     }
                     next[inst.a() as usize] = Abst::Val(inst.b() as u32);
                     successors.push(index + 1);
                 }
-                Op::GetField => {
+                // Three instructions read a field, and what separates them is
+                // which fields they may name. `GET_FIELD` may not name an
+                // optional one, because it cannot fail and that one can;
+                // the other two may name nothing else, because there is
+                // nothing to ask about a field that is always there.
+                Op::GetField | Op::GetOpt | Op::HasOpt => {
+                    let want_optional = op != Op::GetField;
                     let record = self.read(&name, pc, &state, inst.b(), None);
                     let produced = match record {
                         Abst::Val(ty) => match p.types.get(ty as usize).and_then(|t| t.fields()) {
                             Some(fields) => match fields.get(inst.c() as usize) {
-                                Some((_, field)) => Some(*field),
+                                Some(field) if field.optional != want_optional => {
+                                    let how = if want_optional {
+                                        "is not optional"
+                                    } else {
+                                        "is optional"
+                                    };
+                                    self.error(
+                                        Some(&name),
+                                        Some(pc),
+                                        format!("field {} of {} {how}", inst.c(), p.type_name(ty)),
+                                    );
+                                    None
+                                }
+                                Some(field) => Some(if op == Op::HasOpt { BOOL } else { field.ty }),
                                 None => {
                                     self.error(
                                         Some(&name),

@@ -670,7 +670,7 @@ fn the_verifier_knows_what_a_field_produces() {
     );
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
-        fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        fields: vec![Field::new("value", index_of(TypeDesc::Int))],
         open: false,
     });
     assert_ok(&p);
@@ -692,7 +692,7 @@ fn a_field_of_the_wrong_type_is_rejected() {
     );
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
-        fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        fields: vec![Field::new("value", index_of(TypeDesc::Int))],
         open: false,
     });
     assert!(
@@ -720,11 +720,94 @@ fn a_field_that_does_not_exist_is_rejected() {
     );
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
-        fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        fields: vec![Field::new("value", index_of(TypeDesc::Int))],
         open: false,
     });
     assert!(
         errors(&p).iter().any(|m| m.contains("has no field 7")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// A record with one optional field, and the instruction that reads it. The
+/// caller says which read to use and whether the field is optional, so that
+/// every crossing of the two can be checked.
+fn optional_field_program(read: Op, optional: bool) -> Program {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        3,
+        vec![Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::MakeObject, 2, 5, 1),
+            Inst::abc(read, 0, 2, 0),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![Field {
+            name: "value".into(),
+            ty: index_of(TypeDesc::Int),
+            optional,
+        }],
+        open: false,
+    });
+    p
+}
+
+/// `GET_FIELD` cannot fail and an optional field can be missing, so the two
+/// must not meet. This is what makes the VM's check on `GET_OPT` the
+/// whole of the check: a plain read never reaches a slot that might be empty.
+#[test]
+fn a_plain_read_of_an_optional_field_is_rejected() {
+    let p = optional_field_program(Op::GetField, true);
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("field 0 of Wrapper is optional")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// And the other way: there is nothing to ask about a field that is always
+/// there, so asking is bytecode nothing could have compiled.
+#[test]
+fn asking_about_a_required_field_is_rejected() {
+    for read in [Op::GetOpt, Op::HasOpt] {
+        let p = optional_field_program(read, false);
+        assert!(
+            errors(&p)
+                .iter()
+                .any(|m| m.contains("field 0 of Wrapper is not optional")),
+            "{read:?}: {:?}",
+            errors(&p)
+        );
+    }
+}
+
+/// An optional field's slot holds the field's own type or `null`, and the
+/// verifier has to allow the second without allowing a third thing.
+#[test]
+fn an_optional_slot_takes_the_type_or_null() {
+    let mut p = optional_field_program(Op::HasOpt, true);
+    p.funcs[0].ret_type = index_of(TypeDesc::Bool);
+    assert_ok(&p);
+
+    // `null` in the slot is how a literal that left the field out is built.
+    p.consts[0] = Const::Unit;
+    assert_ok(&p);
+
+    // Anything else is the mismatch it would be for a required field, and the
+    // message says both of what would have been accepted.
+    p.consts[0] = Const::Bool(true);
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("holds Bool where Int or null is required")),
         "{:?}",
         errors(&p)
     );

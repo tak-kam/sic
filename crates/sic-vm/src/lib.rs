@@ -82,6 +82,10 @@ pub enum FailKind {
     TooManyTasks,
     /// A list index was outside the list.
     IndexOutOfRange,
+    /// An optional field was read and the document had not carried it. The
+    /// detail names the field. This is the same decision `IndexOutOfRange` is:
+    /// there is nothing to hand back, and a value nobody chose would be worse.
+    FieldNotThere,
     /// A document did not parse, or did not fit the type it was checked
     /// against. The detail says which and where.
     Schema,
@@ -113,6 +117,7 @@ impl FailKind {
             FailKind::CallStackTooDeep => "call stack too deep",
             FailKind::TooManyTasks => "too many tasks",
             FailKind::IndexOutOfRange => "the index is outside the list",
+            FailKind::FieldNotThere => "the field was not in the document",
             FailKind::Schema => "the document does not fit the type",
             FailKind::OutOfBudget => "the call site is out of budget",
             FailKind::TaskAlreadyAwaited => "this task has already been awaited",
@@ -1130,7 +1135,7 @@ impl<'a> Vm<'a> {
                         .types
                         .get(b)
                         .and_then(|t| t.fields())
-                        .map(<[(String, u32)]>::len)
+                        .map(<[sic_bytecode::Field]>::len)
                         .unwrap_or(0);
                     let fields: Vec<Value> = (0..field_count)
                         .map(|i| self.get(index, base + c + i))
@@ -1150,6 +1155,41 @@ impl<'a> Vm<'a> {
                         die!(FailKind::Internal("field index out of range"), None, None);
                     };
                     self.set(index, base + a, value);
+                }
+                // An optional field's slot holds `null` exactly when the
+                // document did not carry the field, because a `Unit` field
+                // cannot be optional. The verifier proved this instruction
+                // names an optional field, so the test is the whole check.
+                Op::GetOpt => {
+                    let Value::Object(handle) = self.get(index, base + b) else {
+                        die!(
+                            FailKind::Internal("field access on a non-object"),
+                            None,
+                            None
+                        );
+                    };
+                    let Some(value) = self.arena.object(handle).get(c).cloned() else {
+                        die!(FailKind::Internal("field index out of range"), None, None);
+                    };
+                    // There is nothing to hand back, and a default would be a
+                    // value nobody chose. The line names the field.
+                    if value == Value::Unit {
+                        die!(FailKind::FieldNotThere, None, None);
+                    }
+                    self.set(index, base + a, value);
+                }
+                Op::HasOpt => {
+                    let Value::Object(handle) = self.get(index, base + b) else {
+                        die!(
+                            FailKind::Internal("field access on a non-object"),
+                            None,
+                            None
+                        );
+                    };
+                    let Some(value) = self.arena.object(handle).get(c).cloned() else {
+                        die!(FailKind::Internal("field index out of range"), None, None);
+                    };
+                    self.set(index, base + a, Value::Bool(value != Value::Unit));
                 }
                 Op::MakeList => {
                     let elements: Vec<Value> =
@@ -1429,10 +1469,21 @@ impl<'a> Vm<'a> {
                 let type_name = name.clone();
                 let open = *open;
                 let mut values = Vec::with_capacity(declared.len());
-                for (field_name, field_type) in &declared {
-                    let field_name = field_name.clone();
-                    let Some((_, value)) = members.iter().find(|(n, _)| *n == field_name) else {
-                        // Every field is required, so a missing one is a
+                for field in &declared {
+                    let field_name = field.name.clone();
+                    let found = members.iter().find(|(n, _)| *n == field_name);
+                    // Absent and `null` are one case, not two. Every protocol
+                    // measured for this writes `null` where a value is missing
+                    // - cargo's `executable`, this journal's `parent` - and
+                    // this workspace's own journal reader already treats the
+                    // two alike. See `docs/design/agents.md` §8.
+                    let missing = matches!(found.map(|(_, v)| v), None | Some(Json::Null));
+                    if field.optional && missing {
+                        values.push(Value::Unit);
+                        continue;
+                    }
+                    let Some((_, value)) = found else {
+                        // A required field is required, so a missing one is a
                         // mismatch rather than a default.
                         return Err(at(
                             path,
@@ -1444,7 +1495,7 @@ impl<'a> Vm<'a> {
                         path.push('.');
                     }
                     path.push_str(&field_name);
-                    values.push(self.build_from_json(value, *field_type, path)?);
+                    values.push(self.build_from_json(value, field.ty, path)?);
                     path.truncate(mark);
                 }
                 // A closed type describes the whole document, so a field it
@@ -1452,7 +1503,7 @@ impl<'a> Vm<'a> {
                 // one describes part of a document, and the rest is somebody
                 // else's business: `..` in the source is what says which.
                 if !open {
-                    let field_names: Vec<&String> = declared.iter().map(|(n, _)| n).collect();
+                    let field_names: Vec<&String> = declared.iter().map(|f| &f.name).collect();
                     for (name, _) in members {
                         if !field_names.contains(&name) {
                             return Err(at(path, &format!("`{type_name}` has no field `{name}`")));
@@ -1516,9 +1567,21 @@ impl<'a> Vm<'a> {
                     return Err("a record with the wrong number of fields".to_string());
                 }
                 let mut members = Vec::with_capacity(fields.len());
-                for ((name, field_type), field) in fields.iter().zip(values) {
-                    let rendered = self.value_to_json(field, *field_type, depth + 1)?;
-                    members.push(format!("{}:{rendered}", sic_json::quoted(name)));
+                for (declared, field) in fields.iter().zip(values) {
+                    // An absent optional field is written `null` rather than
+                    // left out. Both would parse back to this same value, so
+                    // the round trip does not decide it; what does is that a
+                    // person reading an `approve` prompt should be able to see
+                    // that the program has no value for a field it declares,
+                    // and an omitted key is indistinguishable from a type that
+                    // never had one. It is also how every protocol this reads
+                    // writes it.
+                    let rendered = if declared.optional && *field == Value::Unit {
+                        "null".to_string()
+                    } else {
+                        self.value_to_json(field, declared.ty, depth + 1)?
+                    };
+                    members.push(format!("{}:{rendered}", sic_json::quoted(&declared.name)));
                 }
                 Ok(format!("{{{}}}", members.join(",")))
             }

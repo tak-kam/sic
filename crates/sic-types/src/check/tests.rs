@@ -200,6 +200,54 @@ fn a_type_containing_itself_is_rejected() {
     assert!(codes("type A { b: B }\ntype B { a: A }\nfn main() { }").contains(&"E0340"));
     // A list is a handle, so a cycle through one is finite.
     ok("type Tree { children: List<Tree> }\nfn main() { }");
+    // So is an optional field, for a different reason: every value of the type
+    // terminates, because the chain has to stop at a field that was not there.
+    ok("type Span { expansion: Expansion? }\ntype Expansion { span: Span }\nfn main() { }");
+    ok("type Loop { next: Loop? }\nfn main() { }");
+}
+
+/// The marker is on the field, and the only thing it changes about the field's
+/// type is that the document need not carry it: `a.executable` is a `String`,
+/// because nothing in this language holds a value that is sometimes there.
+#[test]
+fn an_optional_field_reads_as_its_own_type() {
+    let typed = ok("type A { x: Int?, y: Int }\n\
+        fn main() -> Int { let a = A { y: 1 }; return a.x + a.y; }");
+    assert_eq!(typed.fns[0].ret, Types::INT);
+}
+
+/// A literal may leave an optional field out, which is the program declining
+/// to give a value rather than being handed one it did not choose. A required
+/// field is unchanged.
+#[test]
+fn a_literal_may_leave_an_optional_field_out() {
+    ok("type A { x: Int?, y: Int }\nfn main() { let a = A { y: 1 }; }");
+    assert!(
+        codes("type A { x: Int?, y: Int }\nfn main() { let a = A { x: 1 }; }").contains(&"E0350")
+    );
+}
+
+/// There is nothing to ask about a field that is always there, and `?` on
+/// anything that is not a field access is not a question this language has.
+#[test]
+fn only_an_optional_field_can_be_asked_about() {
+    ok("type A { x: Int? }\nfn main() -> Bool { let a = A { }; return a.x?; }");
+    assert!(
+        codes("type A { x: Int }\nfn main() -> Bool { let a = A { x: 1 }; return a.x?; }")
+            .contains(&"E0343")
+    );
+    assert!(codes("fn main() -> Bool { let n = 1; return n?; }").contains(&"E0343"));
+}
+
+/// A `Unit` field already holds `null` and nothing else, so an optional one
+/// would have no way to tell the two apart. Refusing it is what makes "absent
+/// and `null` are the same thing" true of the value as well as the document.
+#[test]
+fn an_optional_unit_field_is_rejected() {
+    assert!(codes("type A { x: Unit? }\nfn main() { }").contains(&"E0355"));
+    // A required `Unit` field is untouched: it is how a program says a field
+    // is always `null`, and it worked before this.
+    ok("type A { x: Unit }\nfn main() { }");
 }
 
 #[test]

@@ -22,6 +22,30 @@ impl ObjectId {
     }
 }
 
+/// One field of a record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    pub ty: TypeId,
+    /// A document may leave this field out, or write `null` for it, and still
+    /// fit the type: written `?` after the field's type. Nothing else in the
+    /// language is optional, and no value of a "sometimes there" type exists -
+    /// reading the field answers `ty` and fails the run when it was not there.
+    /// See `docs/design/agents.md` §8.
+    pub optional: bool,
+}
+
+impl Field {
+    /// A required field, which is what a field is unless it says otherwise.
+    pub fn new(name: impl Into<String>, ty: TypeId) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            optional: false,
+        }
+    }
+}
+
 /// A user-defined record type.
 ///
 /// Fields are ordered: the source addresses them by name, the bytecode by
@@ -29,7 +53,7 @@ impl ObjectId {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ObjectDef {
     pub name: String,
-    pub fields: Vec<(String, TypeId)>,
+    pub fields: Vec<Field>,
     /// The type describes part of a document rather than all of it: written
     /// `..` at the end of the body, and read only by `from_json`, which then
     /// ignores a field the type does not declare. Everything else about a
@@ -39,11 +63,11 @@ pub struct ObjectDef {
 }
 
 impl ObjectDef {
-    pub fn field(&self, name: &str) -> Option<(usize, TypeId)> {
+    pub fn field(&self, name: &str) -> Option<(usize, &Field)> {
         self.fields
             .iter()
-            .position(|(n, _)| n == name)
-            .map(|i| (i, self.fields[i].1))
+            .position(|f| f.name == name)
+            .map(|i| (i, &self.fields[i]))
     }
 }
 
@@ -181,8 +205,16 @@ impl Types {
         t.set_object_fields(
             exit,
             vec![
-                ("code".to_string(), Self::INT),
-                ("output".to_string(), Self::OBSERVED_STR),
+                Field {
+                    name: "code".to_string(),
+                    ty: Self::INT,
+                    optional: false,
+                },
+                Field {
+                    name: "output".to_string(),
+                    ty: Self::OBSERVED_STR,
+                    optional: false,
+                },
             ],
         );
         assert_eq!(t.intern(Type::Object(exit)), Self::EXIT);
@@ -236,7 +268,7 @@ impl Types {
         id
     }
 
-    pub fn set_object_fields(&mut self, id: ObjectId, fields: Vec<(String, TypeId)>) {
+    pub fn set_object_fields(&mut self, id: ObjectId, fields: Vec<Field>) {
         self.objects[id.index()].fields = fields;
     }
 
@@ -385,10 +417,16 @@ impl Types {
                     return def.name.clone();
                 }
                 seen.push(*object);
+                // An optional field is marked, because the shape is what
+                // whoever answers is told and "you may leave this out" is part
+                // of what the declaration says.
                 let fields: Vec<String> = def
                     .fields
                     .iter()
-                    .map(|(name, ty)| format!("{name:?}: {}", self.shape_at(*ty, seen)))
+                    .map(|f| {
+                        let mark = if f.optional { "?" } else { "" };
+                        format!("{:?}{mark}: {}", f.name, self.shape_at(f.ty, seen))
+                    })
                     .collect();
                 seen.pop();
                 format!("{{{}}}", fields.join(", "))
@@ -454,8 +492,8 @@ mod tests {
         t.set_object_fields(
             ticket,
             vec![
-                ("title".into(), Types::STR),
-                ("severity".into(), Types::INT),
+                Field::new("title", Types::STR),
+                Field::new("severity", Types::INT),
             ],
         );
         let ticket_ty = t.intern(Type::Object(ticket));
@@ -470,6 +508,32 @@ mod tests {
         assert_eq!(t.shape(trusted), t.shape(ticket_ty));
     }
 
+    /// The shape is the one place optionality has to cross to somebody who is
+    /// not this program, so "you may leave this out" has to be in it. An
+    /// `agent` renders its output type for whoever answers, and a model told
+    /// `"detail": string` would be told the field is required.
+    #[test]
+    fn a_shape_says_which_fields_may_be_left_out() {
+        let mut t = Types::new();
+        let answer = t.declare_object("Answer", false);
+        t.set_object_fields(
+            answer,
+            vec![
+                Field::new("cause", Types::STR),
+                Field {
+                    name: "detail".into(),
+                    ty: Types::STR,
+                    optional: true,
+                },
+            ],
+        );
+        let answer_ty = t.intern(Type::Object(answer));
+        assert_eq!(
+            t.shape(answer_ty),
+            "{\"cause\": string, \"detail\"?: string}"
+        );
+    }
+
     /// A record may hold a list of itself, so the renderer has to stop.
     #[test]
     fn a_type_containing_itself_names_itself() {
@@ -479,7 +543,10 @@ mod tests {
         let children = t.intern(Type::List(node_ty));
         t.set_object_fields(
             node,
-            vec![("name".into(), Types::STR), ("children".into(), children)],
+            vec![
+                Field::new("name", Types::STR),
+                Field::new("children", children),
+            ],
         );
         assert_eq!(t.shape(node_ty), "{\"name\": string, \"children\": [Node]}");
     }

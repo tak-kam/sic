@@ -3016,6 +3016,324 @@ mod part_of_a_document {
     }
 }
 
+/// A field that is there in one message and not in the next.
+///
+/// `..` let a program ignore such a field; it gave it no way to read one. The
+/// measured case is cargo's `compiler-artifact`, whose `executable` is a path
+/// for a binary and `null` for a library - the same `reason`, the same shape,
+/// one field that is sometimes a value. See issue #78 and
+/// `docs/design/agents.md` §8.
+mod a_field_that_is_sometimes_there {
+    use super::*;
+
+    /// The whole feature in one program: the field is declared `String?`, the
+    /// three documents a protocol actually sends all fit, and the value is
+    /// read only where the program asked whether it was there.
+    fn artifact_program() -> String {
+        "type Artifact {\n\
+         \x20   reason: String,\n\
+         \x20   executable: String?,\n\
+         \x20   ..\n\
+         }\n\
+         fn path(line: String) -> String {\n\
+         \x20   let a: Artifact = from_json(line);\n\
+         \x20   if a.executable? {\n\
+         \x20       return a.executable;\n\
+         \x20   }\n\
+         \x20   return \"(a library)\";\n\
+         }\n\
+         fn main() -> String {\n\
+         \x20   let lib = \"{\\\"reason\\\":\\\"compiler-artifact\\\",\
+         \\\"executable\\\":null,\\\"fresh\\\":true}\";\n\
+         \x20   let bin = \"{\\\"reason\\\":\\\"compiler-artifact\\\",\
+         \\\"executable\\\":\\\"/t/sic\\\",\\\"fresh\\\":true}\";\n\
+         \x20   let gone = \"{\\\"reason\\\":\\\"compiler-artifact\\\"}\";\n\
+         \x20   return path(lib) + \" \" + path(bin) + \" \" + path(gone);\n\
+         }\n"
+        .to_string()
+    }
+
+    /// `null`, a value, and no key at all, in that order. The third is the one
+    /// that says absent and `null` are one case rather than two.
+    #[test]
+    fn null_a_value_and_a_missing_key_all_fit_one_type() {
+        let src = write_temp("optional-artifact.sic", &artifact_program());
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "\"(a library) /t/sic (a library)\"");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Reading a field that was not there fails the run at a named line, which
+    /// is the decision `xs[i]` made and `agents.md` §2 argued: there is no
+    /// option type to hand back, and a value nobody chose would be worse.
+    #[test]
+    fn reading_a_field_that_is_not_there_fails_the_run() {
+        let src = write_temp(
+            "optional-unguarded.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"x\\\",\\\"executable\\\":null}\";\n\
+             \x20   let a: Artifact = from_json(text);\n\
+             \x20   return a.executable;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("the field was not in the document"),
+            "{stderr}"
+        );
+        // The line is what names the field, the same way the index message
+        // leaves the list to the source.
+        assert!(stderr.contains("optional-unguarded.sic:8"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The marker is not a way to make a required field forgiving. A document
+    /// that leaves out a field the type asks for is the same mismatch it was.
+    #[test]
+    fn a_required_field_is_unchanged() {
+        let src = write_temp(
+            "optional-required-still-required.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let a: Artifact = from_json(\"{\\\"executable\\\":\\\"/t\\\"}\");\n\
+             \x20   return a.reason;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("`Artifact` needs a field `reason`"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A field that is optional is still checked when it is there. Validation
+    /// stays a yes or no; what changed is which documents fit.
+    #[test]
+    fn a_value_of_the_wrong_type_is_still_a_mismatch() {
+        let src = write_temp(
+            "optional-wrong-type.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"x\\\",\\\"executable\\\":7}\";\n\
+             \x20   let a: Artifact = from_json(text);\n\
+             \x20   return a.reason;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("executable: expected String, found an integer"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A record whose field is optional may be left out of a struct literal,
+    /// and that is not a default: nothing was put in the slot, and reading it
+    /// fails the way it does for a document that did not carry the field.
+    #[test]
+    fn a_literal_may_leave_an_optional_field_out() {
+        let src = write_temp(
+            "optional-literal.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             fn main() -> Bool {\n\
+             \x20   let a = Artifact { reason: \"built\" };\n\
+             \x20   let b = Artifact { reason: \"built\", executable: \"/t\" };\n\
+             \x20   return a.executable? || !b.executable?;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "false");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A required field left out of a literal is still E0350. The rule that
+    /// nothing is filled in with a value nobody chose has not moved.
+    #[test]
+    fn a_literal_may_not_leave_a_required_field_out() {
+        let src = write_temp(
+            "optional-literal-required.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             fn main() -> String {\n\
+             \x20   let a = Artifact { executable: \"/t\" };\n\
+             \x20   return a.reason;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0350"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// What `approve` shows is the value, and an absent optional field is
+    /// written `null` rather than left out. Both would parse back to the same
+    /// value; what decides it is that a person should be able to tell a field
+    /// the program has no value for from a field the type never had.
+    #[test]
+    fn a_person_is_shown_null_for_a_field_that_was_not_there() {
+        let src = write_temp(
+            "optional-approve.sic",
+            "type Artifact {\n\
+             \x20   reason: String,\n\
+             \x20   executable: String?,\n\
+             }\n\
+             allow {\n\
+             \x20   human.approve \"an artifact\";\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let text = \"{\\\"reason\\\":\\\"built\\\",\\\"executable\\\":null}\";\n\
+             \x20   let a: Artifact = from_json(text);\n\
+             \x20   let ok = approve(\"this artifact?\", a);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let checkpoint = write_temp("optional-approve.sicc", "");
+        let (_, stderr, code) = sic(&[
+            "run",
+            src.to_str().unwrap(),
+            "--checkpoint",
+            checkpoint.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 3, "{stderr}");
+        assert!(
+            stderr.contains(r#"approving: {"reason":"built","executable":null}"#),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(checkpoint).ok();
+    }
+
+    /// A label says where a document came from; `?` says whether one field of
+    /// it was there. Neither has anything to say about the other, so a model's
+    /// answer read through an optional field is still a model's answer.
+    #[test]
+    fn the_label_travels_through_an_optional_field() {
+        let src = write_temp(
+            "optional-keeps-the-label.sic",
+            "type Answer {\n\
+             \x20   cause: String,\n\
+             \x20   detail: String?,\n\
+             }\n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             \x20   fs.write \"./out.txt\";\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let a: LLM<Answer> = from_json(llm.invoke(\"why?\"));\n\
+             \x20   fs.write(\"./out.txt\", a.detail);\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Asking whether a labelled record carried a field answers a plain
+    /// `Bool`, which is the rule `len`, `contains` and `starts_with` are
+    /// already covered by: the answer is not any value the label was on, and
+    /// no `Bool` reaches a capability. `trust.md` §2a.
+    #[test]
+    fn asking_a_labelled_record_answers_a_plain_bool() {
+        let src = write_temp(
+            "optional-label-question.sic",
+            "type Answer {\n\
+             \x20   cause: String,\n\
+             \x20   detail: String?,\n\
+             }\n\
+             allow {\n\
+             \x20   llm.invoke \"m\";\n\
+             }\n\
+             fn main() -> Bool {\n\
+             \x20   let a: LLM<Answer> = from_json(llm.invoke(\"why?\"));\n\
+             \x20   return a.detail? && true;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("llm.invoke"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A type may now reach itself through an optional field, and the reason
+    /// is not the one that lets it reach itself through a list. A list is a
+    /// handle; this is that every value terminates, because the chain has to
+    /// stop at a field that was not there. rustc's diagnostic `span` holds an
+    /// `expansion` which holds a `span`, and that is the shape this reads.
+    #[test]
+    fn a_type_may_reach_itself_through_an_optional_field() {
+        let src = write_temp(
+            "optional-recursive.sic",
+            "type Span {\n\
+             \x20   line: Int,\n\
+             \x20   expansion: Expansion?,\n\
+             }\n\
+             type Expansion {\n\
+             \x20   span: Span,\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   let text = \"{\\\"line\\\":1,\\\"expansion\\\":\
+             {\\\"span\\\":{\\\"line\\\":2,\\\"expansion\\\":null}}}\";\n\
+             \x20   let s: Span = from_json(text);\n\
+             \x20   if s.expansion? {\n\
+             \x20       return s.expansion.span.line;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "2");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And a required cycle is still refused, because a value of it would have
+    /// no finite size. The relaxation above is about termination, not about
+    /// giving up the rule.
+    #[test]
+    fn a_required_cycle_is_still_refused() {
+        let src = write_temp(
+            "optional-recursive-required.sic",
+            "type Span {\n\
+             \x20   line: Int,\n\
+             \x20   expansion: Expansion,\n\
+             }\n\
+             type Expansion {\n\
+             \x20   span: Span,\n\
+             }\n\
+             fn main() -> Int {\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0340"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// `for` over a list.
 ///
 /// The loop exists because iteration was spelled as recursion, and a recursion

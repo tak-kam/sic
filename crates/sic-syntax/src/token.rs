@@ -56,6 +56,10 @@ pub enum TokenKind {
     /// Only in a type body, where it says the type describes part of a
     /// document rather than all of it.
     DotDot,
+    /// After a field's type, where it says the field is sometimes not there;
+    /// after a field access, where it asks whether it is. Both spellings are
+    /// about one field, which is why they are one token.
+    Question,
     Arrow,
 
     Eof,
@@ -103,6 +107,7 @@ impl TokenKind {
             TokenKind::Semi => ";",
             TokenKind::Dot => ".",
             TokenKind::DotDot => "..",
+            TokenKind::Question => "?",
             TokenKind::Arrow => "->",
             _ => "?",
         }

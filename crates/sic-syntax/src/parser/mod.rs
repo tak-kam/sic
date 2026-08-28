@@ -605,11 +605,16 @@ impl Parser {
         let start = self.span().lo;
         let name = self.expect_ident("a field name");
         self.expect(&TokenKind::Colon, "before a field type");
-        let ty = self.parse_type();
+        let ty = self.parse_type_inner(true);
+        // `?` is read here rather than inside `parse_type`, because this is the
+        // one place it means anything: a field of a record may be missing from
+        // a document, and no other position in the grammar has a document.
+        let optional = self.eat(&TokenKind::Question);
         FieldDecl {
             id,
             name,
             ty,
+            optional,
             span: Span::new(start, self.prev_end()),
         }
     }
@@ -1001,6 +1006,14 @@ impl Parser {
     }
 
     fn parse_type(&mut self) -> TypeExpr {
+        self.parse_type_inner(false)
+    }
+
+    /// `in_field` says whether a trailing `?` is the caller's to read. It is
+    /// only ever true directly under a record's field declaration - inside
+    /// `List<String?>` this recursion is not the field's own type, so the `?`
+    /// is refused there and the message says where it may go.
+    fn parse_type_inner(&mut self, in_field: bool) -> TypeExpr {
         let id = self.id();
         let start = self.span().lo;
         // `List<List<List<...>>>` recurses once per argument list.
@@ -1023,6 +1036,16 @@ impl Parser {
             self.expect(&TokenKind::Gt, "after the type arguments");
         }
         self.leave();
+        if !in_field && self.at(&TokenKind::Question) {
+            let span = self.span();
+            self.bump();
+            self.error(
+                "E0221",
+                "`?` may only follow the type of a field",
+                span,
+                "a value that is sometimes there is not a type this language has",
+            );
+        }
         TypeExpr {
             id,
             name,

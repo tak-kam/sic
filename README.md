@@ -214,7 +214,11 @@ also say it describes *part* of a document - `type Line { reason: String, .. }`
 - because an extra field in a model's answer means the model answered a
 different question, and an extra field in a machine protocol means the protocol
 has more in it than this program asked about. Those are opposite conventions
-and one validator now serves both.
+and one validator now serves both. A field may also say it is sometimes not
+there - `executable: String?` - which is the other half of the same
+disagreement: `a.executable?` asks whether the document carried it, and
+`a.executable` fails the run at a named line rather than inventing a value,
+which is the decision `xs[i]` already made.
 → [agents.md](docs/design/agents.md)
 
 **A list is walked, and a string can be asked what it holds.** `for x in xs`
@@ -338,7 +342,7 @@ Source → Lexer → Parser → AST → Type Checker → IR
        → Bytecode → Verifier → VM → Capability Broker
 ```
 
-Fourteen crates, no external dependencies, 32 instructions in a register VM that
+Fourteen crates, no external dependencies, 37 instructions in a register VM that
 only runs bytecode a verifier has accepted. Three boundaries are enforced by
 tests rather than left as intentions:
 

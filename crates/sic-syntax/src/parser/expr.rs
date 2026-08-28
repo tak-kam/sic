@@ -115,6 +115,13 @@ impl Parser {
                     lhs = self.parse_index(lhs);
                     continue;
                 }
+                TokenKind::Question if POSTFIX_BP > min_bp => {
+                    if !self.enter() {
+                        return lhs;
+                    }
+                    lhs = self.parse_has(lhs);
+                    continue;
+                }
                 _ => {}
             }
 
@@ -456,6 +463,22 @@ impl Parser {
                 let _ = keyword_span;
                 1
             }
+        }
+    }
+
+    /// `a.executable?`. The parser takes any expression, because refusing
+    /// anything else here would give "expected a field access" pointing at a
+    /// token; the checker knows which fields are optional and says so.
+    fn parse_has(&mut self, base: Expr) -> Expr {
+        let start = base.span.lo;
+        self.bump(); // `?`
+        let id = self.id();
+        Expr {
+            id,
+            kind: ExprKind::Has {
+                base: Box::new(base),
+            },
+            span: Span::new(start, self.prev_end()),
         }
     }
 

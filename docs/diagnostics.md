@@ -62,6 +62,7 @@ reason.
 | E0218 | a `log` level that is not one of the four |
 | E0219 | `..` somewhere in a type body other than the end |
 | E0220 | `answers` with a word that is not `json` or `jsonl` |
+| E0221 | `?` after a type that is not a record field's |
 
 ## E03xx — names, types and effects
 
@@ -117,6 +118,7 @@ reason.
 | E0340 | a type that contains itself |
 | E0341 | a field that does not exist, or a value with no fields |
 | E0342 | an empty list in a position that names no type for it |
+| E0343 | `?` asked of something that is not an optional field |
 | E0344 | a type defined twice |
 | E0345 | redefining a built-in type |
 | E0346 | a field declared twice |
@@ -128,6 +130,7 @@ reason.
 | E0352 | `len` of something with no length |
 | E0353 | `from_json` with nothing to say what type to produce |
 | E0354 | `for` over something that is not a list |
+| E0355 | an optional field whose type is `Unit` |
 
 ### Agents
 

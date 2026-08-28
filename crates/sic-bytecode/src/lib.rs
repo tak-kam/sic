@@ -12,4 +12,6 @@ pub mod program;
 pub use disasm::disassemble;
 pub use file::{DecodeError, MAGIC, VERSION_MAJOR, VERSION_MINOR, decode, encode};
 pub use inst::{Inst, Op};
-pub use program::{CapDecl, CapKind, Const, DebugInfo, FuncDef, PolicyEntry, Program, TypeDesc};
+pub use program::{
+    CapDecl, CapKind, Const, DebugInfo, Field, FuncDef, PolicyEntry, Program, TypeDesc,
+};

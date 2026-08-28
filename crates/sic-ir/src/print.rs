@@ -65,6 +65,12 @@ fn inst_str(kind: &InstKind) -> String {
         InstKind::GetField { dst, base, index } => {
             format!("%{} = field %{} .{index}", dst.0, base.0)
         }
+        InstKind::GetOpt { dst, base, index } => {
+            format!("%{} = field? %{} .{index}", dst.0, base.0)
+        }
+        InstKind::HasOpt { dst, base, index } => {
+            format!("%{} = has %{} .{index}", dst.0, base.0)
+        }
         InstKind::MakeList { dst, elements, .. } => {
             format!("%{} = list({})", dst.0, locals(elements))
         }
