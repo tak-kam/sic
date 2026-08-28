@@ -144,6 +144,13 @@ opcodes! {
     /// it could compute with: nothing in the language can spell it. Like
     /// `CONCAT` it allocates, so the VM charges fuel by the byte.
     ToJson = 34, "TO_JSON", ABC;
+    /// Reads an optional field, failing the run when the document did not
+    /// carry it. Separate from `GET_FIELD` because the two differ in whether
+    /// they can fail, and the verifier proves which fields each may name.
+    GetOpt = 35, "GET_OPT", ABC;
+    /// Whether an optional field was in the document. The one instruction that
+    /// answers a question about a value nothing else can ask.
+    HasOpt = 36, "HAS_OPT", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

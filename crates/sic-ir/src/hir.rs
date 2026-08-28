@@ -98,6 +98,22 @@ pub enum InstKind {
         base: LocalId,
         index: u32,
     },
+    /// Reads an optional field, failing the run when it was not there.
+    ///
+    /// A separate instruction from `GetField` rather than a flag on it: the
+    /// two differ in whether they can fail, and the verifier proves which
+    /// fields each may name. See `docs/design/agents.md` §8.
+    GetOpt {
+        dst: LocalId,
+        base: LocalId,
+        index: u32,
+    },
+    /// Whether an optional field was in the document.
+    HasOpt {
+        dst: LocalId,
+        base: LocalId,
+        index: u32,
+    },
     MakeList {
         dst: LocalId,
         ty: TypeId,

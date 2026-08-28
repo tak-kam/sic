@@ -118,6 +118,11 @@ pub struct FieldDecl {
     pub id: NodeId,
     pub name: Ident,
     pub ty: TypeExpr,
+    /// `?` after the field's type: a document may leave the field out, or write
+    /// `null` for it, and still fit. The flag is on the field rather than on
+    /// the type, because nothing in the language holds a value that is
+    /// sometimes there. See `docs/design/agents.md` §8.
+    pub optional: bool,
     pub span: Span,
 }
 
@@ -415,6 +420,12 @@ pub enum ExprKind {
     Field {
         base: Box<Expr>,
         name: Ident,
+    },
+    /// `a.executable?` - whether an optional field was in the document. The
+    /// operand is a field access and nothing else, which the checker enforces:
+    /// the question is about one field of one record.
+    Has {
+        base: Box<Expr>,
     },
     /// A hole produced by error recovery. Later layers stop analyzing here.
     Error,

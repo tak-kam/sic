@@ -165,6 +165,47 @@ fn the_marker_has_to_be_the_last_thing_in_the_body() {
 }
 
 #[test]
+fn a_field_may_say_it_is_sometimes_not_there() {
+    let out = ok("type Artifact {\n  reason: String,\n  executable: String?,\n}\nfn main() { }");
+    assert!(
+        out.contains("(type Artifact (reason String) (executable String?))"),
+        "{out}"
+    );
+    // And it composes with `..`, which is the shape a protocol reader has:
+    // some fields ignored, one sometimes missing.
+    let out = ok("type Artifact { reason: String, executable: String?, .. }\nfn main() { }");
+    assert!(
+        out.contains("(type Artifact (reason String) (executable String?) ..)"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_question_mark_belongs_to_a_field_and_nowhere_else() {
+    // A field may be optional; a value is never, so there is nowhere else in
+    // the grammar for the marker to go - not a `let`, not a parameter, not a
+    // return type, and not the element type of a list.
+    assert_eq!(
+        codes("fn main() { let x: String? = \"a\"; }"),
+        vec!["E0221"]
+    );
+    assert_eq!(codes("fn f(x: Int?) { }\nfn main() { }"), vec!["E0221"]);
+    assert_eq!(codes("fn f() -> Int? { }\nfn main() { }"), vec!["E0221"]);
+    assert_eq!(
+        codes("type T { xs: List<String?> }\nfn main() { }"),
+        vec!["E0221"]
+    );
+}
+
+#[test]
+fn asking_whether_a_field_is_there_is_postfix() {
+    // It binds like `.` and `[i]`, so `a.b?` is a question about `a.b` rather
+    // than about `a`.
+    assert_eq!(expr("a.b?"), "(has (. a b))");
+    assert_eq!(expr("!a.b?"), "(! (has (. a b)))");
+}
+
+#[test]
 fn a_field_access_is_still_two_tokens() {
     // `..` is one token now, and `a.b` had better not have become one.
     assert_eq!(expr("p.x"), "(. p x)");

@@ -165,9 +165,36 @@ pub enum TypeDesc {
     /// nothing else, whichever way this flag points.
     Object {
         name: String,
-        fields: Vec<(String, u32)>,
+        fields: Vec<Field>,
         open: bool,
     },
+}
+
+/// One field of a record, as the bytecode carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Field {
+    pub name: String,
+    /// Index into `Program::types`.
+    pub ty: u32,
+    /// A document may leave the field out, or write `null` for it, and still
+    /// fit the type.
+    ///
+    /// Like `open`, this is here because `FROM_JSON` runs against this section.
+    /// Unlike `open`, two instructions read it as well: `GET_OPT` and
+    /// `HAS_OPT` may only name a field with this set, and `GET_FIELD` may
+    /// only name one without - which is what the verifier proves.
+    pub optional: bool,
+}
+
+impl Field {
+    /// A required field, which is what a field is unless it says otherwise.
+    pub fn new(name: impl Into<String>, ty: u32) -> Self {
+        Self {
+            name: name.into(),
+            ty,
+            optional: false,
+        }
+    }
 }
 
 impl TypeDesc {
@@ -220,7 +247,7 @@ impl TypeDesc {
     }
 
     /// The fields of a record, if this is one.
-    pub fn fields(&self) -> Option<&[(String, u32)]> {
+    pub fn fields(&self) -> Option<&[Field]> {
         match self {
             TypeDesc::Object { fields, .. } => Some(fields),
             _ => None,
@@ -230,7 +257,7 @@ impl TypeDesc {
     /// The type of each field, in order.
     pub fn field_types(&self) -> Option<Vec<u32>> {
         self.fields()
-            .map(|fields| fields.iter().map(|(_, t)| *t).collect())
+            .map(|fields| fields.iter().map(|f| f.ty).collect())
     }
 }
 

@@ -1345,8 +1345,8 @@ fn record_program() -> Program {
     p.types.push(TypeDesc::Object {
         name: "Point".into(),
         fields: vec![
-            ("x".into(), index_of(TypeDesc::Int)),
-            ("y".into(), index_of(TypeDesc::Int)),
+            Field::new("x", index_of(TypeDesc::Int)),
+            Field::new("y", index_of(TypeDesc::Int)),
         ],
         open: false,
     });
@@ -1501,10 +1501,28 @@ fn json_program_with(document: &str, open: bool) -> Program {
     );
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
-        fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        fields: vec![Field::new("value", index_of(TypeDesc::Int))],
         open,
     });
     p.funcs[0].ret_type = index_of(TypeDesc::Int);
+    p
+}
+
+/// The same again with `value` written `Int?`, and `GET_OPT` in place of
+/// `GET_FIELD` - which is not a choice the compiler leaves open, because the
+/// verifier refuses each instruction on the other kind of field.
+fn optional_program(document: &str) -> Program {
+    let mut p = json_program(document);
+    p.types[5] = TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![Field {
+            name: "value".into(),
+            ty: index_of(TypeDesc::Int),
+            optional: true,
+        }],
+        open: false,
+    };
+    p.code[2] = Inst::abc(Op::GetOpt, 1, 1, 0);
     p
 }
 
@@ -1540,9 +1558,66 @@ fn a_mismatch_names_the_path_that_failed() {
 
 #[test]
 fn a_missing_field_is_a_mismatch_not_a_default() {
-    // Every field is required, so there is nothing to fill a missing one with
-    // that anybody chose.
+    // A required field is required, so there is nothing to fill a missing one
+    // with that anybody chose. A field written `T?` is the other half of this
+    // pair, below: it fits, and reading it still hands back no value.
     assert!(schema_error("{}").contains("needs a field `value`"));
+}
+
+/// `{}`, `{"value": null}` and `{"value": 7}` against the same type. The first
+/// two are one case rather than two, and that is the decision issue #78 turns
+/// on: every protocol measured for it writes `null` where a value is missing,
+/// and this workspace's own journal reader already treats the two alike.
+#[test]
+fn an_optional_field_fits_absent_null_and_a_value() {
+    let mut p = optional_program(r#"{"value": 7}"#);
+    assert_eq!(run(&p, &[]), Value::I64(7));
+
+    for document in ["{}", r#"{"value": null}"#] {
+        p.consts[0] = Const::Str(document.into());
+        // `HAS_OPT` rather than `GET_OPT`, so the run reaches the end.
+        p.code[2] = Inst::abc(Op::HasOpt, 1, 1, 0);
+        p.funcs[0].ret_type = index_of(TypeDesc::Bool);
+        assert_eq!(run(&p, &[]), Value::Bool(false), "{document}");
+    }
+}
+
+/// Reading one that was not there fails the run, which is the decision
+/// `GET_INDEX` already made: there is nothing to hand back, and a value nobody
+/// chose would be worse.
+#[test]
+fn reading_an_optional_field_that_is_not_there_fails_the_run() {
+    let p = optional_program(r#"{"value": null}"#);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    match vm.run(0, &[]) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::FieldNotThere),
+        other => panic!("expected the field to be missing, got {other:?}"),
+    }
+}
+
+/// A field that is optional is still checked when it is there. Validation is
+/// still a yes or no; what changed is which documents fit.
+#[test]
+fn an_optional_field_is_checked_when_it_is_there() {
+    let p = optional_program(r#"{"value": "seven"}"#);
+    let detail = schema_failure(p);
+    assert!(detail.contains("value: expected Int"), "{detail}");
+}
+
+/// What `approve` shows is the value, and an absent optional field is written
+/// `null` rather than left out. Both parse back to this same value, so the
+/// round trip does not decide it: what does is that a person should be able to
+/// tell a field the program has no value for from one the type never had.
+#[test]
+fn an_absent_optional_field_is_shown_as_null() {
+    let mut p = optional_program(r#"{"value": null}"#);
+    p.code[2] = Inst::abc(Op::ToJson, 1, 5, 1);
+    p.funcs[0].ret_type = index_of(TypeDesc::Str);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Finished(Value::Str(handle)) = vm.run(0, &[]) else {
+        panic!("expected a string");
+    };
+    assert_eq!(vm.arena.str(handle), r#"{"value":null}"#);
 }
 
 #[test]
@@ -1583,7 +1658,7 @@ fn a_whole_number_fits_a_float_but_not_the_other_way() {
     // Change the field to a Float and read it back.
     p.types[5] = TypeDesc::Object {
         name: "Wrapper".into(),
-        fields: vec![("value".into(), index_of(TypeDesc::Float))],
+        fields: vec![Field::new("value", index_of(TypeDesc::Float))],
         open: false,
     };
     p.funcs[0].ret_type = index_of(TypeDesc::Float);

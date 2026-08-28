@@ -96,7 +96,9 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             Op::Await | Op::Len => format!("r{}, r{}", inst.a(), inst.b()),
             Op::MakeObject => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
             Op::FromJson | Op::ToJson => format!("r{}, t{}, r{}", inst.a(), inst.b(), inst.c()),
-            Op::GetField => format!("r{}, r{}, .{}", inst.a(), inst.b(), inst.c()),
+            Op::GetField | Op::GetOpt | Op::HasOpt => {
+                format!("r{}, r{}, .{}", inst.a(), inst.b(), inst.c())
+            }
             Op::MakeList => format!("r{}, r{}, {}", inst.a(), inst.b(), inst.c()),
             Op::GetIndex => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),
             _ => format!("r{}, r{}, r{}", inst.a(), inst.b(), inst.c()),

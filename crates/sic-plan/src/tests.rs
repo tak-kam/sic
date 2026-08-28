@@ -48,7 +48,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
     };
     p.types.push(TypeDesc::Object {
         name: "Diagnosis".into(),
-        fields: vec![("cause".into(), 4)],
+        fields: vec![Field::new("cause", 4)],
         open: false,
     });
     p
@@ -176,7 +176,7 @@ fn an_open_type_says_so_in_the_plan() {
     p.funcs[0].code_len = 4;
     p.types[5] = TypeDesc::Object {
         name: "Line".into(),
-        fields: vec![("reason".into(), 4)],
+        fields: vec![Field::new("reason", 4)],
         open: true,
     };
 

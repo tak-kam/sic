@@ -399,9 +399,287 @@ take the flag for the field count and decode a type section that happens to
 parse.
 
 Deliberately not in this: optional fields (#78), which are a different question
-about what a type requires rather than about what a document may carry; sum
-types (#77); any way to reach the fields that were ignored; and any change to
-the default.
+about what a type requires rather than about what a document may carry - the
+section below is where that one was taken; sum types (#77); any way to reach
+the fields that were ignored; and any change to the default.
+
+### A field may say it is sometimes not there
+
+`..` let a program **ignore** a field a protocol sometimes sends. It gave it no
+way to **read** one, and that is the rest of the same problem: the sentence
+above says every field of a type is required, so a document that leaves one out
+does not fit, and a program that wants the value has to declare a field that is
+not always there.
+
+**Half of the refusal has aged and half has not.** "Validation is a yes or no"
+is the good half and is untouched below: a document either fits a type or does
+not, and what changes is which documents fit rather than whether the question
+has an answer. What has aged is "optionality is a type-system feature and
+belongs with the trust types". Trust types landed and are *erased* before the
+bytecode (`trust.md` §4), because the rule they enforce is about which programs
+may be written. Optionality cannot be erased - a program has to do something
+different when the field is not there - so it is a different kind of feature
+than the one it was filed beside.
+
+#### What the protocols actually send, measured
+
+Every line below is from a run, not from an issue. Cargo 1.98 building this
+workspace with `--message-format=json`, and a second build of a throwaway crate
+with a `dead_code` warning so that a `compiler-message` appears:
+
+```text
+14 compiler-artifact   13 with "executable":null,  1 with a path
+ 1 compiler-message    7 keys whose value is null, in one line:
+                       message.spans[0].label
+                       message.spans[0].suggested_replacement
+                       message.spans[0].suggestion_applicability
+                       message.spans[0].expansion
+                       message.code.explanation
+                       message.children[0].code
+                       message.children[0].rendered
+```
+
+Three things follow, and the third is the one that decided the design.
+
+- **The motivating case is real.** A library's `compiler-artifact` and a
+  binary's are the same shape with the same `reason`, and one of them has a
+  path where the other has nothing. Thirteen against one, in an ordinary build.
+- **A field that is sometimes not there is not two arms of a sum type**, and
+  `alternatives.md` §10 measured why: no field's value separates the two, so
+  there is no discriminant, and a try-until-one-fits union was refused there
+  for reasons that have nothing to do with this. That is issue #78's question 2
+  answered, and it is answered *no*.
+- **The key is never absent. It is present and `null`.** Every one of those
+  fields is written, with `null` in it, in every line. This repository's own
+  journal is built the same way - `"parent":null` at the top of a trace - and
+  `crates/sic-journal/src/read.rs` already reads the two cases with one arm:
+
+  ```rust
+  let parent = match json.member("parent") {
+      Some(Json::Int(v)) => Some(SpanId(*v as u64)),
+      _ => None,
+  };
+  ```
+
+So the question a design here had to answer was not mainly "what does a program
+do with an absent field". It was "what does a program do with a `null`", and
+the two collapse - which §"`null` and absent are one case" below takes as a
+decision rather than as a convenience.
+
+Those seven are of every kind a field can be: strings, a record (`code`), and a
+record that is a cycle (`expansion`). That is what ruled out encoding an
+optional field as a list of at most one, which needs no new instruction and
+would have been the smaller change - `filenames: List<String>?` would then be a
+`List<List<String>>`, where `len` means presence rather than length and `[0]`
+means the list rather than an element. A trap, in the one protocol the feature
+was for.
+
+#### The declaration, and what a program may do with it
+
+```text
+type Artifact {
+    reason: String,
+    executable: String?,
+    ..
+}
+```
+
+Two operations, and between them they are the whole feature:
+
+```text
+if a.executable? {        ; whether the document carried it: a Bool
+    return a.executable;  ; the value, or the run fails here
+}
+```
+
+**`a.executable` has type `String`.** Not `String?`, not an option, not a
+one-element list. Nothing in this language holds a value that is sometimes
+there, and that is what keeps `Option<T>` out rather than smuggling it in under
+another name: `?` may be written after the type of a record's field and nowhere
+else - not on a `let`, a parameter, a return type, or inside `List<...>` -
+which is E0221, and a reader who meets one knows it is about a document.
+
+**Reading one that was not there fails the run, at a named line.** That is the
+decision this language has already made twice, and §2 wrote it down the first
+time:
+
+> Indexing is a postfix operator. An index out of range fails the run: there is
+> no option type to return instead, and a silent default would be worse.
+
+```text
+error: the field was not in the document
+ --> artifact.sic:8:12
+```
+
+What it costs honestly: nothing forces a program to ask before it reads, and
+the verifier cannot say it should have. What it does not cost is a value nobody
+chose, which is what `a_missing_field_is_a_mismatch_not_a_default` is a test
+about and what the sentence at the top of this section protects. The
+improvement that removes the cost is narrowing on the branch - "inside this
+`if`, the field is there" - and `alternatives.md` §3b measured what that takes:
+a per-edge state in the verifier's data-flow pass, a fact relating a `Bool` to
+the register it was about, and an invalidation rule. It is deferred here for
+the same reason it was deferred there.
+
+**The question is spelled `?` rather than a builtin**, and the reason is that a
+builtin taking `has(a.executable)` would have an argument it must not evaluate:
+the argument is the read that fails. A postfix operator asks about the field
+access it is written on, parses where `[i]` and `.f` parse, and reads in the
+one order a person would say it out loud. A keyword - `has a.executable` -
+reads as well and costs a reserved word, which every program using `has` as a
+name would pay; `?` was a lexer error before this.
+
+#### `null` and absent are one case
+
+A document may leave the key out, or write `null` for it. Both fit an optional
+field, and both produce the same value, and that is a decision rather than an
+oversight:
+
+| | |
+|---|---|
+| what the protocols do | write `null`; none of the measured lines omits a key |
+| what this repository does | `read.rs` above, in Rust, since before this |
+| what it would cost to split them | three states in a slot that holds two, and a second question a program could ask |
+| who has asked | nobody |
+
+The one protocol that means different things by them is JSON-RPC, where a
+message with no `id` is a notification and one with `"id":null` is not - and
+`crates/sic-cli/src/cmd/mcp.rs` distinguishes them, in Rust, today. A sic
+program cannot express that, and this section is where that is written down
+rather than discovered. The issue that wants it is the one that argues for a
+third state; it is not this one.
+
+**E0312 is untouched.** `let x = null;` is still refused, and the note now
+points at where a `null` does have somewhere to go rather than at "there is no
+optional type yet", which read as a promise. And it is worth recording that a
+document's `null` was already readable before this, narrowly and undocumented:
+`Unit` is a nameable type, so
+
+```text
+type A { reason: String, executable: Unit }
+```
+
+fits `{"reason":"...","executable":null}` and has done since phase 7a. That is
+why an optional `Unit` field is refused (E0355): the value of an absent
+optional field *is* `null`, so a `Unit?` would have no way to tell the two
+apart. Refusing it is what makes "absent and `null` are the same thing" true of
+the value and not only of the document - which is what lets the runtime carry
+this with no new value at all.
+
+#### A value holds `null` where a field was not there, and nothing was added
+
+The slot of an absent optional field holds `Value::Unit`. No variant was added
+to `Value`, the arena is unchanged, and the checkpoint format's own version
+does not move. The invariant that makes it work is the one E0355 enforces: a
+field's declared type is never `Unit` when the field is optional, so the two are
+always different values.
+
+Three instructions read a field where there was one, and the split is not for
+tidiness:
+
+```text
+GET_FIELD      a, b, c   ; may not name an optional field
+GET_OPT        a, b, c   ; may name nothing else; fails when the slot is null
+HAS_OPT        a, b, c   ; may name nothing else; answers a Bool
+```
+
+`GET_FIELD` cannot fail and an optional field can be missing, so the two must
+not meet, and **the verifier proves which fields each may name**. That is what
+makes the VM's one comparison the whole of the check rather than a guard that
+happens to be there: a plain read never reaches a slot that might be empty.
+`MAKE_OBJECT` gains the matching rule - an optional field's register holds the
+field's own type or `null`, and the message says both.
+
+#### A literal may leave an optional field out
+
+```text
+let a = Artifact { reason: "built" };
+```
+
+That is not a default and it is not a hole in the rule this section keeps:
+nothing was put in the slot, and reading it fails exactly as it does for a
+document that did not carry the field. The program declined to give a value; it
+was not handed one. A required field left out is still E0350.
+
+#### `TO_JSON` writes `null`, and that is what `approve` shows
+
+An absent optional field is written rather than omitted:
+
+```text
+approving: {"reason":"built","executable":null}
+```
+
+Both spellings would parse back to this same value, so the round trip does not
+decide it. What does is that a person is being shown what the program has, and
+an omitted key is indistinguishable from a type that never declared the field.
+`null` shows the field and shows it empty. It is also how every protocol this
+was built to read writes it, so a document sic produces and the documents it
+consumes agree.
+
+This is the second thing §8 has put in front of somebody approving that is not
+quite the document: `..` drops the fields the type did not declare, and `?`
+writes a key the document may not have carried. Both are the value rather than
+the document, which is the rule `TO_JSON` has always followed.
+
+#### A type may now reach itself through an optional field
+
+```text
+type Span { line: Int, expansion: Expansion? }
+type Expansion { span: Span }
+```
+
+That compiles, and §1's rule that a type may not contain itself is unchanged in
+what it is for. A list or a task breaks a cycle because both are handles; an
+optional field breaks it for a different reason, which is that **every value of
+the type terminates** - the chain has to stop at a field that was not there.
+`Option<Box<T>>` is the same argument in another language.
+
+It is worth having rather than a side effect worth mentioning, because it is
+the last of the four walls `alternatives.md` §1 measured against declaring
+rustc's diagnostic: `spans[].expansion` is a cycle through a record, and E0340
+refused it. What is left of that list is `$message_type`, which the lexer
+refuses and `..` already answers by not declaring the field.
+
+The one thing this required was a `seen` guard on `unshowable`, which walks a
+record's fields to decide whether `approve` can show it. Before this a record
+could not reach itself, so the walk terminated by construction; now it can, so
+it says so.
+
+#### What is not changed, and why each is worth saying
+
+**The trust label.** `from_json` takes a document's label off to check the
+argument and puts it back on the result (#72), and a field read carries it
+onward, so `LLM<Artifact>.executable` is `LLM<String>` and still cannot reach a
+capability that changes something. `a.executable?` answers a **plain** `Bool`,
+which is the rule `len`, `contains` and `starts_with` are already covered by
+(`trust.md` §2a): a question about a labelled value answers something that is
+not any value the label was on, and no `Bool` reaches a capability. Tested
+rather than asserted.
+
+**`sic plan`.** A `VERIFY Artifact` gains no qualifier, and the asymmetry with
+`(declared fields only)` is deliberate. An open type's line is qualified
+because the check *did not look* at the rest of the document. An optional field
+was looked at: the validator asked for it, found it absent or `null`, and that
+is a check that passed. The claim "this document fits `Artifact`" is exactly as
+strong as `Artifact` is, and a reader of the plan who reads the type sees the
+`?`.
+
+**The default.** A field is required unless it says otherwise, which is what a
+model's answer depends on.
+
+#### `VERSION_MINOR` moves to 11
+
+Every field of a record descriptor gained a byte. A reader that did not know
+would take the first field's flag for the second field's name length and decode
+a type section that happens to parse, which is the case 9 and 10 were bumped
+for. The two new opcodes are **not** that case and would not have justified a
+bump on their own: an old reader meets an unknown opcode and says so.
+
+Deliberately not in this: `Option<T>` as a type a program can name; optional
+function parameters or capability arguments, which are a question about calls
+rather than about documents; defaults of any kind; narrowing on a branch, so
+that a guarded read cannot fail (`alternatives.md` §3b prices it); a third
+state that tells an absent key from a `null` one; and sum types (#77).
 
 ---
 

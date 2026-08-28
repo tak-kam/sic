@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 739 tests.
+Last updated at 765 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -21,7 +21,7 @@ in the source, so it is the same on every platform - four of them are
 | 3 | No external crates | lexer, parser, types, IR, bytecode, verifier, VM, JSON, SHA-256, scheduler, journal all written by hand |
 | 4 | Recursive descent, Pratt for expressions | `sic-syntax` |
 | 5 | Source → AST → typed → IR → bytecode → verifier → VM | the whole pipeline runs |
-| 6, 7 | A register VM, 34 instructions | `sic-vm`, `sic-bytecode` |
+| 6, 7 | A register VM, 37 instructions | `sic-vm`, `sic-bytecode` |
 | 8 | Capability-based security | `docs/design/capabilities.md` |
 | 9 | VM and broker separated | a test fails if `sic-vm` depends on `sic-broker` |
 | 10 | Absolute paths, no PATH search, binary hash pinning, argument vectors pinned by prefix, output read back - and `process.run`, which reads it whether or not the program worked | `sic-broker`, `docs/design/arguments.md`, `docs/design/output.md` |
@@ -31,7 +31,7 @@ in the source, so it is the same on every platform - four of them are
 | 14 | An arena per run, no GC | `sic-vm/src/value.rs` |
 | 15 | Suspend, save, resume | `docs/design/durable-execution.md` |
 | 16 | Cooperative scheduling, `spawn` and `await` | `docs/design/concurrency.md` |
-| 18 | Structured output: parse, validate, typed value - and `type Line { reason: String, .. }`, a type that says it describes part of a document, because one validator serves a model's answer and a machine protocol and those disagree about a field nobody declared | `docs/design/agents.md` |
+| 18 | Structured output: parse, validate, typed value - and `type Line { reason: String, .. }`, a type that says it describes part of a document, because one validator serves a model's answer and a machine protocol and those disagree about a field nobody declared; a field may also say it is sometimes not there, `executable: String?`, which is the other half of the same disagreement - `a.executable?` asks and `a.executable` fails the run rather than inventing a value | `docs/design/agents.md` |
 | 20, 21 | The journal is the runtime's own account | `docs/design/v0.1.md` §10 |
 | 22, 23, 24, 25 | OTLP traces and metrics, `sic.` and GenAI attributes | `docs/design/observability.md` |
 | 27 | Secrets do not reach telemetry | the journal records digests, never values |
@@ -151,9 +151,9 @@ Each is recorded where the decision was made, with the reason:
 - No pruning or retention for recorded runs (`docs/design/runs.md`)
 - No typed shape on a capability grant. A grant may come to say `answers json` or
   `answers jsonl`, which the broker can check because parsing needs no type system;
-  `answers jsonl of T` would need sum types, optional fields and open records at once,
-  and cargo's own JSONL - the case that motivated it - needs all three
-  (`docs/design/answers.md`)
+  `answers jsonl of T` would need sum types on top of the optional fields and open
+  records that have since landed, and cargo's own JSONL - the case that motivated
+  it - needs all three (`docs/design/answers.md`)
 - No second discharge for a trust label. A person is the only thing that turns a
   model's answer into one a capability may write or run, and a discharge whose
   argument is evidence waits on a capability that can look at a labelled value
@@ -165,6 +165,6 @@ Each is recorded where the decision was made, with the reason:
   Finished`, needs an instruction - no change to the arena, the checkpoint or
   the verifier's lattice. It waits on open records, because measuring cargo's
   own stream one level down shows that two of its three arms cannot be written
-  as closed records at all, and because optional fields do not dissolve into it:
-  two messages with the same discriminant are not two arms
-  (`docs/design/alternatives.md`)
+  as closed records at all, and because optional fields did not dissolve into it:
+  two messages with the same discriminant are not two arms, so they were built
+  on their own argument (`docs/design/alternatives.md`, `docs/design/agents.md` §8)

@@ -413,6 +413,7 @@ impl<'a> Lexer<'a> {
             b';' => TokenKind::Semi,
             b'.' if self.eat(b'.') => TokenKind::DotDot,
             b'.' => TokenKind::Dot,
+            b'?' => TokenKind::Question,
             _ => {
                 // Rewind and advance by a whole character so the span covers one
                 // character rather than one byte.

@@ -10,4 +10,4 @@ pub mod ty;
 
 pub use cap::{BUILTIN_CAPS, CapEntry, CapSig, builtin};
 pub use check::{AgentInfo, Builtin, FnInfo, Res, Typed, check};
-pub use ty::{FnSig, FnSigId, ObjectDef, ObjectId, TrustKind, Type, Types};
+pub use ty::{Field, FnSig, FnSigId, ObjectDef, ObjectId, TrustKind, Type, Types};

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use sic_core::{BlockId, ConstIdx, LocalId, Span, TypeId};
 use sic_syntax::ast::*;
-use sic_types::{Res, Typed};
+use sic_types::{Res, Typed, Types};
 
 use crate::hir::*;
 
@@ -519,14 +519,25 @@ impl<'a> FnLower<'a> {
                 let mut slots: Vec<Option<LocalId>> = vec![None; declared.len()];
                 for field in fields {
                     let value = self.expr(&field.value);
-                    if let Some(position) = declared.iter().position(|(n, _)| *n == field.name.name)
+                    if let Some(position) = declared.iter().position(|f| f.name == field.name.name)
                     {
                         slots[position] = Some(value);
                     }
                 }
+                // An optional field the literal left out is not there, and
+                // "not there" is spelled the way a document spells it: `null`,
+                // which is the one value a field of any other type can never
+                // hold. Nothing was invented; the program declined to give one.
                 let values: Vec<LocalId> = slots
                     .into_iter()
-                    .map(|slot| slot.expect("the checker required every field"))
+                    .zip(declared.iter())
+                    .map(|(slot, field)| match slot {
+                        Some(value) => value,
+                        None => {
+                            debug_assert!(field.optional, "the checker required every field");
+                            self.constant(Const::Unit, Types::UNIT, e.span)
+                        }
+                    })
                     .collect();
                 let dst = self.temp(ty);
                 self.emit(
@@ -567,6 +578,39 @@ impl<'a> FnLower<'a> {
                 let Some(object) = self.typed.types.as_object(base_ty) else {
                     unreachable!("field access needs a record type");
                 };
+                let (index, field) = self
+                    .typed
+                    .types
+                    .object(object)
+                    .field(&name.name)
+                    .expect("the checker resolved this field");
+                let optional = field.optional;
+                let dst = self.temp(ty);
+                let index = index as u32;
+                let kind = if optional {
+                    InstKind::GetOpt { dst, base, index }
+                } else {
+                    InstKind::GetField { dst, base, index }
+                };
+                self.emit(kind, e.span);
+                dst
+            }
+            ExprKind::Has { base } => {
+                let ExprKind::Field {
+                    base: object_expr,
+                    name,
+                } = &base.kind
+                else {
+                    unreachable!("the checker required a field access");
+                };
+                let object_ty = self
+                    .typed
+                    .types
+                    .untrusted(self.typed.type_of(object_expr.id));
+                let object_reg = self.expr(object_expr);
+                let Some(object) = self.typed.types.as_object(object_ty) else {
+                    unreachable!("asking about a field needs a record type");
+                };
                 let (index, _) = self
                     .typed
                     .types
@@ -575,9 +619,9 @@ impl<'a> FnLower<'a> {
                     .expect("the checker resolved this field");
                 let dst = self.temp(ty);
                 self.emit(
-                    InstKind::GetField {
+                    InstKind::HasOpt {
                         dst,
-                        base,
+                        base: object_reg,
                         index: index as u32,
                     },
                     e.span,

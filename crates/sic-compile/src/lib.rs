@@ -228,12 +228,13 @@ impl TypeSection {
                 open: def.open,
             });
             self.index.insert(ty, position);
-            let declared: Vec<(String, sic_core::TypeId)> = def.fields.clone();
-            let fields: Vec<(String, u32)> = declared
+            let declared: Vec<sic_types::Field> = def.fields.clone();
+            let fields: Vec<Field> = declared
                 .into_iter()
-                .map(|(field_name, t)| {
-                    let index = self.intern(t, types);
-                    (field_name, index)
+                .map(|field| Field {
+                    name: field.name,
+                    ty: self.intern(field.ty, types),
+                    optional: field.optional,
                 })
                 .collect();
             let def = types.object(*object);
@@ -599,10 +600,17 @@ impl<'a> FnCompile<'a> {
                 let type_index = self.type_index(*ty);
                 self.emit(Inst::abc(Op::MakeObject, dst, type_index, base), span);
             }
-            InstKind::GetField { dst, base, index } => {
+            InstKind::GetField { dst, base, index }
+            | InstKind::GetOpt { dst, base, index }
+            | InstKind::HasOpt { dst, base, index } => {
+                let op = match inst.kind {
+                    InstKind::GetField { .. } => Op::GetField,
+                    InstKind::GetOpt { .. } => Op::GetOpt,
+                    _ => Op::HasOpt,
+                };
                 let (dst, base) = (self.reg(*dst), self.reg(*base));
                 match u8::try_from(*index) {
-                    Ok(field) => self.emit(Inst::abc(Op::GetField, dst, base, field), span),
+                    Ok(field) => self.emit(Inst::abc(op, dst, base, field), span),
                     Err(_) => self
                         .errors
                         .push(CompileError::new("a record can have at most 256 fields")),

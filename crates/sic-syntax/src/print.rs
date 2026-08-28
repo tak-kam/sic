@@ -114,7 +114,10 @@ impl Printer {
         let mut fields: Vec<String> = t
             .fields
             .iter()
-            .map(|f| format!("({} {})", f.name.name, type_str(&f.ty)))
+            .map(|f| {
+                let opt = if f.optional { "?" } else { "" };
+                format!("({} {}{})", f.name.name, type_str(&f.ty), opt)
+            })
             .collect();
         if t.open {
             fields.push("..".to_string());
@@ -297,6 +300,7 @@ pub fn expr_str(e: &Expr) -> String {
             format!("(index {} {})", expr_str(base), expr_str(index))
         }
         ExprKind::Field { base, name } => format!("(. {} {})", expr_str(base), name.name),
+        ExprKind::Has { base } => format!("(has {})", expr_str(base)),
         ExprKind::Error => "<error>".into(),
     }
 }

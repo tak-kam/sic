@@ -71,11 +71,17 @@ reasons are each a wall of their own:
   ```
 
   `children`, which is a list, is fine - `List<Self>` compiles today and was
-  checked. `expansion`, which is not, is not.
+  checked. `expansion`, which is not, is not. **Answered since, by #78**: an
+  optional field breaks the cycle too, because every value of the type
+  terminates at a field that was not there, so `expansion: Expansion?`
+  compiles.
 - **`executable`, `code.explanation`, `spans[].label`,
   `spans[].suggested_replacement` and `spans[].expansion` were all `null` in the
   measured lines.** `v0.1.md` E0312 refuses `null`, and `from_json` refuses a
-  field whose value is one.
+  field whose value is one. **Answered since, by #78**: a field written `T?`
+  fits a `null` and fits a document that leaves the key out, and reading one
+  that was not there fails the run rather than handing back a value nobody
+  chose (`agents.md` §8).
 
 So of the three arms, exactly one - `build-finished` - can be written as a
 closed record in `sic` as it stands, and it works today:
@@ -545,6 +551,12 @@ The whole ordering, then:
 | #76 open records | reading any JSONL protocol at all, cargo's included | nothing |
 | #77 this document | one declaration for a protocol, one parse per line, a checked relationship between the branch and the fields | #76, to be worth having |
 | #78 optional fields | a value that is genuinely sometimes absent - `executable`, `parent` | nothing, and not this |
+
+#76 and #78 have both landed since, in that order, and neither needed anything
+from this document. What #78 found that this one did not: the measured lines
+never omit a key, they write `null`, so the case is narrower than "absent"
+suggested - and `Unit` was already a nameable type that a document's `null`
+fitted, which is what let the whole feature arrive with no new runtime value.
 
 ---
 

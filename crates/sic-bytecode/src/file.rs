@@ -43,7 +43,13 @@ pub const VERSION_MAJOR: u16 = 0;
 /// for the one before. Two layouts must not share a number even when the
 /// number they would share was never released - that is the whole of what a
 /// version is for, and 9 is one commit old rather than free.
-pub const VERSION_MINOR: u16 = 10;
+/// Bumped from 10 for an optional field: every field of a record descriptor now
+/// carries a byte saying whether a document may leave it out, and a reader that
+/// did not know would take the first field's byte for the second field's name
+/// length. This is the same case as 9, one level further in - and note that the
+/// two new opcodes it arrived with are not: an old reader meets those as
+/// unknown instructions and says so.
+pub const VERSION_MINOR: u16 = 11;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -96,9 +102,10 @@ pub fn encode(p: &Program) -> Vec<u8> {
                 w.str(name);
                 w.u8(*open as u8);
                 w.u8(fields.len() as u8);
-                for (field_name, field_type) in fields {
-                    w.str(field_name);
-                    w.u32(*field_type);
+                for field in fields {
+                    w.str(&field.name);
+                    w.u32(field.ty);
+                    w.u8(field.optional as u8);
                 }
             }
             _ => {}
@@ -363,7 +370,10 @@ fn decode_types(body: &[u8]) -> Result<Vec<TypeDesc>> {
                 let field_count = r.u8()? as usize;
                 let mut fields = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
-                    fields.push((r.str()?, r.u32()?));
+                    let name = r.str()?;
+                    let ty = r.u32()?;
+                    let optional = r.u8()? != 0;
+                    fields.push(Field { name, ty, optional });
                 }
                 TypeDesc::Object { name, fields, open }
             }
@@ -604,7 +614,7 @@ mod tests {
                 TypeDesc::List(7),
                 TypeDesc::Object {
                     name: "Answer".into(),
-                    fields: vec![("text".into(), 4), ("score".into(), 2)],
+                    fields: vec![Field::new("text", 4), Field::new("score", 2)],
                     open: false,
                 },
                 // Both settings of the flag, because one of them encodes as a
@@ -612,8 +622,23 @@ mod tests {
                 // round-trip the other.
                 TypeDesc::Object {
                     name: "Line".into(),
-                    fields: vec![("reason".into(), 4)],
+                    fields: vec![Field::new("reason", 4)],
                     open: true,
+                },
+                // Both settings of the per-field flag, in one record and in
+                // that order, so a reader that dropped the byte would run the
+                // second field's name into the first field's flag.
+                TypeDesc::Object {
+                    name: "Artifact".into(),
+                    fields: vec![
+                        Field {
+                            name: "executable".into(),
+                            ty: 4,
+                            optional: true,
+                        },
+                        Field::new("reason", 4),
+                    ],
+                    open: false,
                 },
             ],
             funcs: vec![
