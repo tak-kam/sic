@@ -45,6 +45,16 @@ allow {
     // See `docs/design/git.md`.
     git.rev_parse "/PATH/TO/git" in "/PATH/TO/sic";
     git.status "/PATH/TO/git" in "/PATH/TO/sic";
+    // No `answers`, and that is a measurement rather than an omission. A grant
+    // can say `answers json` or `answers jsonl` and have the broker hold the
+    // program to it - but `cargo test` is not either. `--message-format=json`
+    // formats *the build*; the test harness is a second program cargo starts,
+    // and it appends prose to the same stream. Its own JSON mode is
+    // nightly-only. So a grant claiming `jsonl` here would be refused on every
+    // run where the tests actually ran, which is the run this workflow exists
+    // for. `sic plan` prints `(no declared shape)` on this line instead, which
+    // is the honest thing to say and is what `ran_but_failed` below depends on.
+    // See `docs/design/answers.md` §1 and §10.
     process.run "/PATH/TO/cargo" args ["test"]
         in "/PATH/TO/sic"
         env {
@@ -121,7 +131,11 @@ fn what_is_being_tested() -> Int {
 // changes the branch goes the other way and the diagnosis says so rather than
 // silently becoming wrong. That is worth saying out loud, because a workflow
 // that matches on another program's output has taken on a dependency the
-// manifest cannot express.
+// manifest cannot express. What the manifest can now do is say that it is not
+// expressing it: the grant above says nothing about the shape of what cargo
+// prints, and `sic plan` prints that absence. A comment is read by whoever
+// edits this file and a plan by whoever decides to run it, and those have never
+// been the same person.
 fn ran_but_failed(output: Observed<String>) -> Bool {
     return contains(output, "test result: FAILED");
 }

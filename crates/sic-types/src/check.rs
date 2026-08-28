@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sic_core::{AgentId, CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
+use sic_core::{AgentId, Answers, CapId, Diagnostic, FuncId, Label, LocalId, NodeId, Span, TypeId};
 use sic_syntax::ast::*;
 
 use crate::cap::{self, CapEntry};
@@ -504,6 +504,29 @@ impl Checker {
                 } else {
                     Vec::new()
                 };
+                // `answers` says what form the program's output takes, so it
+                // means something only where there is output to shape. The
+                // neighbour of E0334, and refused for the same reason: a
+                // clause accepted and ignored is a manifest that says
+                // something nothing enforces.
+                let answers = match &grant.answers {
+                    Some(clause) if !Answers::available_on(&full) => {
+                        self.error(
+                            "E0337",
+                            format!("`{full}` has no output to shape"),
+                            clause.span,
+                            "only `fs.read`, `process.capture` and `process.run` take `answers`",
+                        );
+                        self.note(
+                            "`process.exec` answers an `Int` and `fs.write` a `Unit`; a `git` \
+                             capability answers a value the broker built, and `llm.invoke` says \
+                             its shape on the `agent` instead",
+                        );
+                        Answers::Unsaid
+                    }
+                    Some(clause) => clause.shape,
+                    None => Answers::Unsaid,
+                };
                 let id = CapId(self.caps.len() as u32);
                 self.cap_ids.insert(full.clone(), id);
                 self.caps.push(CapEntry {
@@ -516,6 +539,7 @@ impl Checker {
                     delegable,
                     dir,
                     env,
+                    answers,
                     params: sig.params.to_vec(),
                     optional_tail: sig.optional_tail,
                     ret: sig.ret,

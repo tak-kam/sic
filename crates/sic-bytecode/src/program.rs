@@ -2,9 +2,10 @@
 
 use crate::inst::Inst;
 
-// The kind of an effect means the same thing to the compiler, the verifier, the
-// VM and the broker, so it is defined once in sic-core.
-pub use sic_core::CapKind;
+// The kind of an effect, and the shape a grant says its program answers in,
+// mean the same thing to the compiler, the verifier, the VM and the broker, so
+// both are defined once in sic-core.
+pub use sic_core::{Answers, CapKind};
 
 /// A decoded module. Producing one says nothing about whether it is safe to
 /// run; that is what `sic-verify` decides.
@@ -293,6 +294,11 @@ pub struct CapDecl {
     pub dir: String,
     /// The environment the child is given. Empty means none.
     pub env: Vec<(String, String)>,
+    /// What shape the grant says the program answers in. Here for the same
+    /// reason `repeatable` is: the broker enforces it, and `sic plan` reads
+    /// bytecode, so a reader deciding whether to run this is told what the
+    /// manifest claims about what comes back.
+    pub answers: Answers,
     /// Parameter types, as indices into `Program::types`.
     pub params: Vec<u32>,
     /// Result type, as an index into `Program::types`.

@@ -287,6 +287,37 @@ fn a_grant_may_pin_what_runs() {
     assert!(codes("allow { process.exec \"/x\" sha256; }\nfn main() { }").contains(&"E0211"));
 }
 
+/// `answers` is a fifth arm of the order-free clause loop, so it composes with
+/// the other four in any order - and the format is a bare identifier, so a word
+/// that is not one of the two is a diagnostic here rather than a string nothing
+/// refuses until a broker does.
+#[test]
+fn a_grant_may_say_what_shape_its_program_answers_in() {
+    let out = ok("allow { process.run \"/usr/bin/cargo\" answers jsonl; }\nfn main() { }");
+    assert!(out.contains("answers jsonl"), "{out}");
+    let out = ok(
+        "allow { process.run \"/usr/bin/cargo\" answers json in \"/srv\" repeatable; }\n\
+         fn main() { }",
+    );
+    assert!(out.contains("answers json"), "{out}");
+    assert!(out.contains("in \"/srv\""), "{out}");
+    assert!(out.contains("repeatable"), "{out}");
+    // The same clauses the other way round, because order-free means it.
+    let out = ok(
+        "allow { process.run \"/usr/bin/cargo\" repeatable in \"/srv\" answers json; }\n\
+         fn main() { }",
+    );
+    assert!(out.contains("answers json"), "{out}");
+
+    for bad in [
+        "allow { process.run \"/x\" answers jsonl1; }\nfn main() { }",
+        "allow { process.run \"/x\" answers \"json\"; }\nfn main() { }",
+        "allow { process.run \"/x\" answers; }\nfn main() { }",
+    ] {
+        assert!(codes(bad).contains(&"E0220"), "{bad}");
+    }
+}
+
 #[test]
 fn a_grant_may_omit_its_constraint() {
     let out = ok("allow { fs.read; }\nfn main() { }");

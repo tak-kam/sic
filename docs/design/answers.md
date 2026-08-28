@@ -584,6 +584,14 @@ the implementation issue does not have to choose, and they stay out of
 `docs/diagnostics.md` until something reports them, because the test in
 `sic-core` fails on a code that is listed and never produced.
 
+> **Corrected on implementation: the first one is `E0220`.** `E0219` was taken
+> between this document being written and being built, by `..` in a type body
+> other than the end - the open-record work, one commit earlier. Reserving a
+> code in prose does not reserve it in `docs/diagnostics.md`, and this is the
+> cost of that: a number picked by reading the index is stale as soon as
+> anything else lands. `E0337` was still free. The rest of the sentence holds,
+> and both codes are in the index now that something reports them.
+
 ---
 
 ## 12. Not in this
@@ -653,13 +661,41 @@ the implementation issue does not have to choose, and they stay out of
 
 | # | Unit | Done when |
 |---|------|-----------|
-| 1 | `answers json \| jsonl` in the grant, in the order-free clause loop, with `E0219` | a grant parses and reprints, and `answers jsonl1` is a diagnostic |
-| 2 | `E0337` for a capability with nothing to shape | `answers` on `process.exec` is refused at compile time |
-| 3 | The field in `CapGrant` and the byte in `CAPABILITIES` | a `.sicb` round-trips the clause and the verifier reads it |
-| 4 | The broker check for `json`, using `sic_json::parse` | a call whose output is not one JSON document fails, naming the offset |
-| 5 | The broker check for `jsonl`, line by line, blank lines skipped | a stream that stops being JSONL fails, naming the line, and a trailing newline does not |
-| 6 | stderr's tail in the failure message | a grant refused because the flag was rejected says what the program said |
-| 7 | The three plan renderings, including `(no declared shape)` | an undeclared grant reads as claiming nothing, and `sic plan workflows/ci.sic` says so |
+| 1 | ~~`answers json \| jsonl` in the grant, in the order-free clause loop, with `E0219`~~ | a grant parses and reprints, and `answers jsonl1` is a diagnostic |
+| 2 | ~~`E0337` for a capability with nothing to shape~~ | `answers` on `process.exec` is refused at compile time |
+| 3 | ~~The field in `CapGrant` and the byte in `CAPABILITIES`~~ | a `.sicb` round-trips the clause and the verifier reads it |
+| 4 | ~~The broker check for `json`, using `sic_json::parse`~~ | a call whose output is not one JSON document fails, naming the offset |
+| 5 | ~~The broker check for `jsonl`, line by line, blank lines skipped~~ | a stream that stops being JSONL fails, naming the line, and a trailing newline does not |
+| 6 | ~~stderr's tail in the failure message~~ | a grant refused because the flag was rejected says what the program said |
+| 7 | ~~The three plan renderings, including `(no declared shape)`~~ | an undeclared grant reads as claiming nothing, and `sic plan workflows/ci.sic` says so |
 
 Unit 7 is the one that pays for the motivating case. That is worth knowing
 before the order is chosen.
+
+**Done, in one commit, and four things are worth recording about how.**
+
+**The diagnostic is `E0220`.** §11 has the correction; the short version is
+that `E0219` was taken by other work between this document and its
+implementation, and a code reserved in prose is not reserved.
+
+**`VERSION_MINOR` moved to 10.** A byte in the middle of a `CAPABILITIES`
+entry is the case the version exists for: an old reader takes it for
+`repeatable` and every field after it for the one before, and the section
+still decodes. It had moved to 9 one commit earlier for an unrelated flag, and
+moving it twice before a release costs nothing, while two layouts sharing a
+number costs the guarantee the number is for.
+
+**Which capabilities take the clause lives in `sic-core`**, as
+`Answers::available_on`, rather than in the checker's `CapSig` table beside
+`accepts_pin`. Three crates ask the question - the checker refuses the clause,
+the broker performs it, and `sic plan` decides whether a grant that said
+nothing is one that could have said something - and the third is the reason:
+§7's rule that `(no declared shape)` must not appear where the clause was
+unavailable is a rule `sic-plan` has to be able to check, and `sic-plan` does
+not depend on `sic-types`. One list, in the crate everything depends on.
+
+**The broker's check runs in three places, not two.** §11 names `fs.read`,
+`process.capture` and `process.run` as the capabilities that take the clause,
+and all three now check it. `process.capture` was easy to overlook because §5
+argues entirely about `process.run`'s exit code; it refuses a non-zero exit
+already, so its `answers` check runs only on output it was going to return.

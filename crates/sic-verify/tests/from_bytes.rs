@@ -43,6 +43,7 @@ fn well_formed() -> Program {
             kind: CapKind::Exec,
             constraints: "/usr/bin/true".into(),
             pin: "a".repeat(64),
+            answers: Answers::Unsaid,
             repeatable: false,
             delegable: false,
             dir: String::new(),
@@ -138,6 +139,35 @@ fn assert_rejects(report: &VerifyReport, because: &str) {
         report.errors.iter().any(|f| f.message.contains(because)),
         "refused, but not for {because:?}: {:#?}",
         report.errors
+    );
+}
+
+/// The shape a grant claims its program answers in is one byte of the
+/// manifest, and a byte the format does not define is not a shape.
+///
+/// A decoder that took an unknown value for `Unsaid` would turn a file it does
+/// not understand into a manifest that claims less than the one that was
+/// written - which is the direction that lets a check be skipped by writing a 3.
+#[test]
+fn a_shape_the_format_does_not_define_is_refused() {
+    let refused = decode_corrupted(|bytes| {
+        // The byte after the pin, in the one capability entry `well_formed`
+        // has. Found rather than counted, so this does not have to be edited
+        // every time a field moves.
+        let entry = section_entry(bytes, section::CAPABILITIES);
+        let off = u32::from_le_bytes(bytes[entry + 4..entry + 8].try_into().unwrap()) as usize;
+        let len = u32::from_le_bytes(bytes[entry + 8..entry + 12].try_into().unwrap()) as usize;
+        let pin = "a".repeat(64);
+        let at = bytes[off..off + len]
+            .windows(pin.len())
+            .position(|w| w == pin.as_bytes())
+            .expect("the pin is in the section");
+        bytes[off + at + pin.len()] = 3;
+    })
+    .expect_err("a byte that is not a shape must not decode");
+    assert!(
+        refused.to_string().contains("unknown answer shape 3"),
+        "{refused}"
     );
 }
 

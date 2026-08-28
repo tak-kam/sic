@@ -26,6 +26,7 @@ fn program_with_capability(policy: Option<PolicyEntry>) -> Program {
             kind: CapKind::Read,
             constraints: "./a.txt".into(),
             pin: String::new(),
+            answers: sic_core::Answers::Unsaid,
             repeatable: false,
             delegable: false,
             dir: String::new(),
@@ -218,6 +219,7 @@ fn a_granted_but_uncalled_capability_is_named() {
         kind: CapKind::Exec,
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
         repeatable: false,
         delegable: false,
         dir: String::new(),
@@ -309,6 +311,7 @@ fn the_plan_tells_a_translated_grant_from_a_routed_one() {
             delegable: *name == "process.exec",
             dir: String::new(),
             env: Vec::new(),
+            answers: sic_core::Answers::Unsaid,
             called_from: Vec::new(),
         })
         .collect();
@@ -344,6 +347,7 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
             delegable: false,
             dir: String::new(),
             env: Vec::new(),
+            answers: sic_core::Answers::Unsaid,
             called_from: Vec::new(),
         },
         Grant {
@@ -356,6 +360,7 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
             delegable: false,
             dir: String::new(),
             env: Vec::new(),
+            answers: sic_core::Answers::Unsaid,
             called_from: Vec::new(),
         },
     ];

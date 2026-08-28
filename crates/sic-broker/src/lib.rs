@@ -12,7 +12,9 @@
 use std::path::{Component, Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use sic_core::{AgentAction, CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256};
+use sic_core::{
+    AgentAction, Answers, CapError, CapGrant, CapOutcome, CapRequest, CapValue, Sha256,
+};
 
 pub mod agent;
 // Driving an agent needs a unix socket and it needs tmux, and neither is a
@@ -54,6 +56,12 @@ const MAX_OUTPUT: usize = 1 << 20;
 /// How much of a file is hashed at a time. An executable can be large, and
 /// reading one into memory to check it would be its own problem.
 const HASH_CHUNK: usize = 64 * 1024;
+
+/// How much of stderr a refused `answers` claim carries back.
+///
+/// The end rather than the beginning: a usage error is the last thing a program
+/// says, and a warning it opened with is not why the claim failed.
+const STDERR_TAIL: usize = 400;
 
 #[derive(Debug)]
 pub struct Broker {
@@ -206,6 +214,9 @@ fn fs_read(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, CapErro
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| CapError::new(format!("cannot read `{}`: {e}", path.display())))?;
+    // A file has no stderr to explain itself with, so the offset is the whole
+    // of what there is to say.
+    check_answers(grant, &path.display().to_string(), &text, &[])?;
     Ok(CapOutcome::Value(CapValue::Str(text)))
 }
 
@@ -276,6 +287,7 @@ fn process_capture(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome,
             e.utf8_error().valid_up_to()
         ))
     })?;
+    check_answers(grant, &path.display().to_string(), &text, &out.stderr)?;
     Ok(CapOutcome::Value(CapValue::Str(text)))
 }
 
@@ -328,6 +340,12 @@ fn process_run(grant: &CapGrant, request: &CapRequest) -> Result<CapOutcome, Cap
             e.utf8_error().valid_up_to()
         ))
     })?;
+    // Regardless of the exit code. Checking only a program that succeeded
+    // would make the claim conditional on something the grant does not
+    // mention, and would exempt the run a reader most wants checked - and the
+    // two really are independent: a cargo build that fails under
+    // `--message-format=json` emits well-formed JSONL and exits 101.
+    check_answers(grant, &path.display().to_string(), &output, &out.stderr)?;
     Ok(CapOutcome::Value(CapValue::Exit {
         code: code as i64,
         output,
@@ -373,6 +391,76 @@ fn check_pin(grant: &CapGrant, path: &std::path::Path) -> Result<(), CapError> {
         )));
     }
     Ok(())
+}
+
+/// Checks what came back against the shape the grant said it would take.
+///
+/// The parsed value is thrown away. What the program receives is the text it
+/// would have received without the clause, and a program that wants a value
+/// still calls `from_json` - which is what keeps the whole mechanism inside
+/// this crate and leaves `CapValue` alone. See `docs/design/answers.md` §4.
+///
+/// Failing the call is deliberate and is argued against `output.md` §9 in §5 of
+/// that document: a non-zero exit is the program answering, and a malformed
+/// answer is the manifest having been wrong. `sic` fails on a false manifest
+/// everywhere else - a digest that does not match, an argument vector that does
+/// not start with what was pinned - and this belongs with those. Handing the
+/// program "it did not parse" instead would need a channel the program must
+/// remember to read, and a check nobody is obliged to read is not a check.
+///
+/// `said` is what the program wrote to stderr, which `process.run` otherwise
+/// drops entirely. When a claim about a program's answer turns out to be false,
+/// stderr is where the program almost certainly explained why - a rejected
+/// flag, a missing subcommand - and a message that withholds it is withholding
+/// the answer.
+fn check_answers(grant: &CapGrant, subject: &str, text: &str, said: &[u8]) -> Result<(), CapError> {
+    match grant.answers {
+        Answers::Unsaid => Ok(()),
+        Answers::Json => sic_json::parse(text).map(|_| ()).map_err(|e| {
+            CapError::new(format!(
+                "`{subject}` was granted `answers json` and did not answer JSON: {e}{}",
+                tail_of(said)
+            ))
+        }),
+        // Line by line, so `MAX_LEN` bounds a line and the caller's output cap
+        // bounds the stream. `str::lines` leaves no empty element for a
+        // trailing newline, and a blank line is skipped: every program that
+        // emits JSONL ends its last line with one, and a rule that refused the
+        // result would fail every grant on its first run.
+        Answers::Jsonl => {
+            for (index, line) in text.lines().enumerate() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                if let Err(e) = sic_json::parse(line) {
+                    return Err(CapError::new(format!(
+                        "`{subject}` was granted `answers jsonl` and line {} is not JSON: {} \
+                         (at byte {} of the line){}",
+                        index + 1,
+                        e.message,
+                        e.offset,
+                        tail_of(said)
+                    )));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+/// The end of what a program said on stderr, ready to be appended to a message.
+fn tail_of(stderr: &[u8]) -> String {
+    let said = String::from_utf8_lossy(stderr);
+    let said = said.trim();
+    if said.is_empty() {
+        return String::new();
+    }
+    let length = said.chars().count();
+    if length <= STDERR_TAIL {
+        return format!(": {said}");
+    }
+    let end: String = said.chars().skip(length - STDERR_TAIL).collect();
+    format!(": ...{end}")
 }
 
 fn exec_target(grant: &CapGrant, request: &CapRequest) -> Result<(PathBuf, Vec<String>), CapError> {

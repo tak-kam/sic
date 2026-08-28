@@ -4,7 +4,7 @@
 //! tables keyed by `NodeId` instead, which means type checking and IR lowering
 //! can evolve without reshaping the AST.
 
-use sic_core::{NodeId, Span};
+use sic_core::{Answers, NodeId, Span};
 
 #[derive(Debug, Clone)]
 pub struct Module {
@@ -162,6 +162,21 @@ pub struct CapGrant {
     /// The environment the child is given, from `env { NAME: "value" }`.
     /// Absent and empty mean the same thing: no environment at all.
     pub env: Vec<(Ident2, Ident2)>,
+    /// What shape the grant says the program answers in, from `answers json`.
+    /// Absent means the grant claims nothing about it, which is what every
+    /// grant claimed before this existed.
+    pub answers: Option<AnswersClause>,
+    pub span: Span,
+}
+
+/// The format a grant named, and where it named it.
+///
+/// The span is carried because the word is checked twice: the parser refuses
+/// one that is neither `json` nor `jsonl`, and the checker refuses either on a
+/// capability with no output to shape.
+#[derive(Debug, Clone)]
+pub struct AnswersClause {
+    pub shape: Answers,
     pub span: Span,
 }
 

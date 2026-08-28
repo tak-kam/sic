@@ -281,6 +281,46 @@ retryable. It is a property of the binary and not of `process.exec`:
 `/usr/bin/cargo` twice is a slow build, `/usr/bin/deploy` twice is an incident,
 and only the file that names the binary can tell those apart.
 
+### `answers`
+
+A grant may say what form the answer takes:
+
+```text
+allow {
+    fs.read "./manifest.json" answers json;
+
+    process.run "/usr/bin/cargo" args ["metadata", "--format-version", "1"]
+        answers json
+        in "/home/me/project";
+}
+```
+
+`json` says the whole output parses as one JSON document; `jsonl` says every
+non-blank line parses as one JSON value. The broker checks it and throws the
+parsed value away - the program still receives text and still calls `from_json`
+- and output that does not parse fails the call, naming the byte offset or the
+line. A grant that says nothing keeps meaning what it always meant, and
+`sic plan` prints `(no declared shape)` so that the silence is visible.
+
+Only the three capabilities that hand a program text it has to interpret take
+it: `fs.read`, `process.capture` and `process.run`. `process.exec` answers an
+`Int` and `fs.write` a `Unit`, a `git` capability answers a value the broker
+itself built, and `llm.invoke` declares the shape of an answer on the `agent`
+instead. Anywhere else it is `E0337`.
+
+The format is a bare identifier rather than a string, which is the one place
+this departs from `sha256 "..."`: a digest is unbounded data, and a format is
+one of two words, so `answers jsonl1` is `E0220` where it is written.
+
+This is not the pin that section above refuses on `fs.read`, and the difference
+is the whole of why one is refused and the other is not. **A pin says which
+bytes; `answers` says which grammar.** A grammar is checkable by somebody who
+does not know the contents in advance, which is what made the pin the wrong
+shape there and makes this the right one. The two are orthogonal where both are
+available: a pin fixes which program runs and allows anything at all on stdout,
+and `answers` fixes the grammar of the reply and allows a different program at
+that path tomorrow. Neither pins meaning. See `docs/design/answers.md`.
+
 ### A grant names a path, and the filesystem resolves it
 
 The sentence this section opens with - a path says where to look, not what is

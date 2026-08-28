@@ -5,7 +5,7 @@
 //! an effect the runtime has never heard of would make the manifest a
 //! suggestion instead of a contract.
 
-use sic_core::{CapKind, TypeId};
+use sic_core::{Answers, CapKind, TypeId};
 
 use crate::ty::Types;
 
@@ -213,6 +213,9 @@ pub struct CapEntry {
     /// The environment the child is given, from `env { .. }`. Empty means
     /// none, which is what every grant meant before this existed.
     pub env: Vec<(String, String)>,
+    /// What shape the grant says the program answers in, from `answers json`.
+    /// `Unsaid` is what every grant said before this existed.
+    pub answers: Answers,
     pub params: Vec<TypeId>,
     /// From the signature: whether the last parameter may be left off.
     pub optional_tail: bool,

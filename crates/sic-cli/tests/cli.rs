@@ -4317,6 +4317,9 @@ mod what_a_grant_may_say {
         /// Whether `delegable` means anything. It does only where the manifest
         /// has not already bounded the authority (E0329).
         takes_delegable: bool,
+        /// Whether the grant may say `answers json`, which means something
+        /// only where there is output for the program to interpret (E0337).
+        takes_answers: bool,
         reaches: Reaches,
     }
 
@@ -4326,6 +4329,7 @@ mod what_a_grant_may_say {
             takes_in: false,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: true,
             reaches: Reaches::ItsOwnTool,
         },
         Row {
@@ -4333,6 +4337,7 @@ mod what_a_grant_may_say {
             takes_in: false,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::ItsOwnTool,
         },
         Row {
@@ -4340,6 +4345,7 @@ mod what_a_grant_may_say {
             takes_in: false,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::ItIsTheAgent,
         },
         Row {
@@ -4347,6 +4353,7 @@ mod what_a_grant_may_say {
             takes_in: false,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::TheBroker,
         },
         Row {
@@ -4354,6 +4361,7 @@ mod what_a_grant_may_say {
             takes_in: false,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::TheBroker,
         },
         Row {
@@ -4361,6 +4369,7 @@ mod what_a_grant_may_say {
             takes_in: true,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::TheBroker,
         },
         Row {
@@ -4368,6 +4377,7 @@ mod what_a_grant_may_say {
             takes_in: true,
             takes_env: false,
             takes_delegable: false,
+            takes_answers: false,
             reaches: Reaches::TheBroker,
         },
         Row {
@@ -4375,6 +4385,7 @@ mod what_a_grant_may_say {
             takes_in: true,
             takes_env: true,
             takes_delegable: true,
+            takes_answers: true,
             reaches: Reaches::Not,
         },
         Row {
@@ -4382,6 +4393,7 @@ mod what_a_grant_may_say {
             takes_in: true,
             takes_env: true,
             takes_delegable: true,
+            takes_answers: true,
             reaches: Reaches::Not,
         },
         Row {
@@ -4389,6 +4401,7 @@ mod what_a_grant_may_say {
             takes_in: true,
             takes_env: true,
             takes_delegable: true,
+            takes_answers: false,
             reaches: Reaches::Not,
         },
     ];
@@ -4437,9 +4450,9 @@ mod what_a_grant_may_say {
             missing.is_empty(),
             "these capabilities exist and this table does not say what a grant on them \
              may say: {missing:?}. Adding a capability means deciding, in nine places \
-             across three crates, whether it takes `in`, `env` and `delegable` and how \
-             an agent reaches it - see #63. Say so here too, and the tests below check \
-             that what you said is what the binary does."
+             across three crates, whether it takes `in`, `env`, `delegable` and \
+             `answers` and how an agent reaches it - see #63. Say so here too, and \
+             the tests below check that what you said is what the binary does."
         );
         // And the other direction, so a removed capability does not leave a
         // row that quietly tests nothing.
@@ -4507,6 +4520,45 @@ mod what_a_grant_may_say {
             if !ok {
                 assert!(stderr.contains("E0329"), "{}: {stderr}", row.cap);
             }
+        }
+    }
+
+    /// `answers` says what form a program's output takes, so it means something
+    /// only where there is output to shape (E0337).
+    #[test]
+    fn answers_is_taken_by_exactly_the_capabilities_that_hand_back_text() {
+        for row in TABLE {
+            let (ok, stderr) = compiles(row.cap, "answers", " answers json");
+            assert_eq!(
+                ok, row.takes_answers,
+                "`{}` and `answers`: the table says {}, the binary says {}\n{stderr}",
+                row.cap, row.takes_answers, ok
+            );
+            if !ok {
+                assert!(stderr.contains("E0337"), "{}: {stderr}", row.cap);
+            }
+        }
+    }
+
+    /// And the plan says the same thing from the other side. A grant that could
+    /// have named a shape and did not is annotated with its own absence; one
+    /// that could not have is left alone, because a grant cannot fail to claim
+    /// something it was never offered.
+    #[test]
+    fn only_a_grant_that_could_name_a_shape_is_told_it_did_not() {
+        for row in TABLE {
+            let src = granting(row.cap, "no-shape", "");
+            let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+            std::fs::remove_file(src).ok();
+            assert_eq!(code, 0, "{stderr}");
+            let said = stdout
+                .lines()
+                .any(|l| l.contains(row.cap) && l.contains("(no declared shape)"));
+            assert_eq!(
+                said, row.takes_answers,
+                "`{}` and `(no declared shape)`: the table says {}, the plan says {}\n{stdout}",
+                row.cap, row.takes_answers, said
+            );
         }
     }
 
@@ -4590,6 +4642,7 @@ mod nothing_is_lost_in_transcription {
              \x20       sha256 \"{PIN}\"\n\
              \x20       in \"/thedirectory\"\n\
              \x20       env {{ THEVARIABLE: \"thevalue\" }}\n\
+             \x20       answers jsonl\n\
              \x20       repeatable delegable;\n\
              \x20   llm.invoke \"themodel\";\n\
              }}\n\
@@ -4618,6 +4671,7 @@ mod nothing_is_lost_in_transcription {
             ("the digest pin", &format!("sha256:{PIN}")),
             ("the directory", "in \"/thedirectory\""),
             ("the environment", "env THEVARIABLE"),
+            ("the declared shape", "answers JSON, one value per line"),
             ("repeatable", "repeatable"),
             ("delegable", "delegable"),
             ("the model", "\"themodel\""),
@@ -4666,6 +4720,343 @@ mod nothing_is_lost_in_transcription {
         assert!(line.contains(&PIN[..8]), "the pin did not cross: {line}");
 
         std::fs::remove_file(src).ok();
+    }
+}
+
+/// What shape a program answers in: `answers json` and `answers jsonl`.
+///
+/// A grant could already say which program runs, with what arguments, in what
+/// directory and with what environment, and said nothing at all about what came
+/// back. `docs/design/answers.md` is the argument for the two rungs that can be
+/// checked honestly, and this is the end of that: a source file, a manifest, a
+/// broker that refuses a claim that turned out to be false, and a plan a reader
+/// can check without running anything.
+mod what_shape_a_program_answers_with {
+    use super::*;
+
+    /// A file the test writes, and the program that reads it under a grant
+    /// saying which form its contents take. `fs.read` rather than a process,
+    /// because this is the half of the feature that has nothing to do with
+    /// which operating system the test runs on.
+    fn reading(named: &str, clause: &str, contents: &str) -> (std::path::PathBuf, String) {
+        let mut data = std::env::temp_dir();
+        data.push(format!("sic-test-{}-{named}.data", std::process::id()));
+        std::fs::write(&data, contents).expect("a writable temporary directory");
+        let path = data.to_string_lossy().replace('\\', "\\\\");
+        let src = write_temp(
+            &format!("{named}.sic"),
+            &format!(
+                "allow {{\n\
+             \x20   fs.read \"{path}\"{clause};\n\
+             }}\n\
+             \n\
+             fn main() -> String {{\n\
+             \x20   return fs.read(\"{path}\");\n\
+             }}\n"
+            ),
+        );
+        (src, data.to_string_lossy().into_owned())
+    }
+
+    /// The claim holds, so the run does. The text is what it always was: the
+    /// broker parses to check and throws the value away, so a program that
+    /// wants one still calls `from_json`.
+    #[test]
+    fn a_grant_that_claims_json_and_gets_it_changes_nothing() {
+        let (src, data) = reading("answers-json-ok", " answers json", "{\"ok\": true}");
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("{\\\"ok\\\": true}"), "{stdout}");
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// And the refusal, which is what the clause is for. The message names
+    /// where the parser stopped: "it is not JSON" about a megabyte of output
+    /// tells whoever has to fix it nothing.
+    #[test]
+    fn output_that_does_not_parse_fails_the_call_and_says_where() {
+        let (src, data) = reading("answers-json-bad", " answers json", "ok: true\n");
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("did not answer JSON"), "{stderr}");
+        assert!(stderr.contains("at byte"), "{stderr}");
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// One value per line, and the two things every real JSONL stream has: a
+    /// blank line somewhere in it and a newline at the end. A rule that refused
+    /// the empty final line would fail every grant on its first run.
+    #[test]
+    fn jsonl_takes_many_lines_a_blank_one_and_a_trailing_newline() {
+        let (src, data) = reading(
+            "answers-jsonl-ok",
+            " answers jsonl",
+            "{\"reason\": \"a\"}\n\n{\"reason\": \"b\"}\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// A stream that starts as JSONL and stops being it - which is what cargo
+    /// does the moment the build succeeds and the test harness starts printing
+    /// (`answers.md` §1). The line number is the point: it is what a reader can
+    /// go and look at.
+    #[test]
+    fn jsonl_fails_on_the_line_that_stops_being_json() {
+        let (src, data) = reading(
+            "answers-jsonl-bad",
+            " answers jsonl",
+            "{\"reason\": \"a\"}\n{\"reason\": \"b\"}\nrunning 1 test\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("line 3 is not JSON"), "{stderr}");
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// The same contents under a grant that says nothing, which runs. This is
+    /// not a default a program opts out of: a grant that claims nothing keeps
+    /// meaning what it always meant, and this is the test that fails if the
+    /// check ever runs on one that did not ask for it.
+    #[test]
+    fn a_grant_that_says_nothing_is_unchanged() {
+        let (src, data) = reading("answers-unsaid", "", "ok: true\n");
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("ok: true"), "{stdout}");
+
+        // And the plan says so, rather than saying nothing. Silence is
+        // ambiguous between "this grant claims nothing" and "this version does
+        // not print that", and the first is what a reader most needs.
+        let (plan, _, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0);
+        assert!(plan.contains("(no declared shape)"), "{plan}");
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// The clause is a manifest field, so it has to survive being written to a
+    /// `.sicb` and read back by something that did not compile it. That is the
+    /// journey `sic plan FILE.sicb` makes, and the one the broker makes on
+    /// every run.
+    #[test]
+    fn the_clause_survives_the_bytecode() {
+        let (src, data) = reading("answers-roundtrip", " answers jsonl", "{}\n");
+        let mut out = std::env::temp_dir();
+        out.push(format!(
+            "sic-test-{}-answers-roundtrip.sicb",
+            std::process::id()
+        ));
+        let (_, stderr, code) = sic(&[
+            "compile",
+            src.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+
+        let (plan, stderr, code) = sic(&["plan", out.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            plan.contains("answers JSON, one value per line"),
+            "the shape did not survive the bytecode:\n{plan}"
+        );
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(out).ok();
+        std::fs::remove_file(data).ok();
+    }
+
+    /// A format is one of two words, so a third is a diagnostic where it is
+    /// written rather than a string that means nothing to anybody until a
+    /// broker refuses it on the first run. That is the whole reason the clause
+    /// takes a bare identifier and `sha256` takes a string.
+    #[test]
+    fn a_word_that_is_not_a_format_is_refused_where_it_is_written() {
+        let src = write_temp(
+            "answers-e0220.sic",
+            "allow {\n\
+             \x20   process.run \"/usr/bin/true\" answers jsonl1;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0220"), "{stderr}");
+        assert!(stderr.contains("jsonl1"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// And a capability with nothing to shape refuses it too: `process.exec`
+    /// answers an `Int`, and a clause accepted and ignored would be a manifest
+    /// saying something nothing enforces.
+    #[test]
+    fn answers_on_a_capability_with_no_output_is_refused() {
+        let src = write_temp(
+            "answers-e0337.sic",
+            "allow {\n\
+             \x20   process.exec \"/usr/bin/true\" answers json;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0337"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The three renderings, on one plan, because what a reader has to be able
+    /// to do is tell them apart at a glance.
+    #[test]
+    fn a_plan_tells_the_three_promises_apart() {
+        let src = write_temp(
+            "answers-three.sic",
+            "allow {\n\
+             \x20   fs.read \"./manifest.json\" answers json;\n\
+             \x20   process.capture \"/usr/bin/true\" args [] answers jsonl;\n\
+             \x20   process.run \"/usr/bin/true\" args [];\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let m = fs.read(\"./manifest.json\");\n\
+             \x20   let c = process.capture(\"/usr/bin/true\", []);\n\
+             \x20   let r = process.run(\"/usr/bin/true\", []);\n\
+             \x20   return r.code + len(m) + len(c);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+
+        let line = |cap: &str| {
+            stdout
+                .lines()
+                .find(|l| l.trim_start().starts_with(cap))
+                .unwrap_or_else(|| panic!("no line for {cap}:\n{stdout}"))
+                .to_string()
+        };
+        assert!(line("fs.read").contains("answers JSON"), "{stdout}");
+        assert!(
+            line("process.capture").contains("answers JSON, one value per line"),
+            "{stdout}"
+        );
+        assert!(
+            line("process.run").contains("(no declared shape)"),
+            "{stdout}"
+        );
+        // Beside the pin, because `sha256` says which program runs and this
+        // says what comes back - the two claims about the program itself.
+        let run = line("process.run");
+        let pin = run.find("(not pinned)").expect(&run);
+        let shape = run.find("(no declared shape)").expect(&run);
+        assert!(pin < shape, "the shape is not beside the pin: {run}");
+        assert!(shape < run.find("  in ").expect(&run), "{run}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The motivating case, and it is smaller than the issue expected. cargo
+    /// has no machine format for the fact `ran_but_failed` reads - `--format
+    /// json` on the test harness is nightly-only - so the workflow keeps its
+    /// `contains`, and what this feature buys it is one word in the plan.
+    ///
+    /// That is worth having. The workflow's comment already says it depends on
+    /// cargo's wording; a comment is read by whoever edits the file, a plan by
+    /// whoever decides to run it, and those have never been the same person.
+    #[test]
+    fn the_development_loop_says_it_claims_nothing_about_what_cargo_prints() {
+        let (stdout, stderr, code) = sic(&["plan", "workflows/ci.sic"]);
+        assert_eq!(code, 0, "{stderr}");
+        let line = stdout
+            .lines()
+            .find(|l| l.contains("process.run") && l.contains("[exec]"))
+            .unwrap_or_else(|| panic!("the workflow grants cargo:\n{stdout}"));
+        assert!(line.contains("(no declared shape)"), "{line}");
+    }
+
+    /// End to end through a real program rather than a file, because the check
+    /// runs on what a child printed and that is a different path through the
+    /// broker.
+    #[cfg(unix)]
+    #[test]
+    fn a_program_is_held_to_what_the_grant_says_it_answers() {
+        let ok = write_temp(
+            "answers-echo-ok.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [\"{}\"] answers json;\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   return process.run(\"/bin/echo\", [\"{}\"]).output;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", ok.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        std::fs::remove_file(ok).ok();
+
+        let bad = write_temp(
+            "answers-echo-bad.sic",
+            "allow {\n\
+             \x20   process.run \"/bin/echo\" args [\"running 1 test\"] answers json;\n\
+             }\n\
+             \n\
+             fn main() -> Observed<String> {\n\
+             \x20   return process.run(\"/bin/echo\", [\"running 1 test\"]).output;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", bad.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("did not answer JSON"), "{stderr}");
+        std::fs::remove_file(bad).ok();
+    }
+
+    /// A grant refused because the program rejected its flag says what the
+    /// program said. stderr is where a program explains a usage error, and
+    /// `process.run` otherwise drops it entirely - so without this the message
+    /// would name a byte offset and withhold the reason.
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_claim_carries_what_the_program_said() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut program = std::env::temp_dir();
+        program.push(format!("sic-test-{}-answers-flag.sh", std::process::id()));
+        std::fs::write(
+            &program,
+            "#!/bin/sh\necho \"error: unexpected argument '--message-format' found\" >&2\nexit 2\n",
+        )
+        .expect("a writable temporary directory");
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let path = program.to_string_lossy();
+        let src = write_temp(
+            "answers-flag.sic",
+            &format!(
+                "allow {{\n\
+             \x20   process.run \"{path}\" args [] answers json;\n\
+             }}\n\
+             \n\
+             fn main() -> Observed<String> {{\n\
+             \x20   return process.run(\"{path}\", []).output;\n\
+             }}\n"
+            ),
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(
+            stderr.contains("unexpected argument '--message-format'"),
+            "the failure withheld what the program said:\n{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+        std::fs::remove_file(program).ok();
     }
 }
 

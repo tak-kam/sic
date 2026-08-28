@@ -153,9 +153,13 @@ Calling one the module did not grant is a compile error, so the manifest of a
 compiled module is complete by construction. `process.exec` takes an absolute
 path, never searches `PATH`, can pin the binary's sha256, and can pin what its
 arguments must start with - a grant on `tmux` that cannot say which pane is a
-grant to drive every pane on the machine.
+grant to drive every pane on the machine. A grant that reads something back can
+also say what form the answer takes - `answers json`, `answers jsonl` - and the
+broker holds the program to it, so a workflow that parses another program's
+output says so in a plan instead of finding out on the day the wording changes.
 → [capabilities.md](docs/design/capabilities.md),
-[arguments.md](docs/design/arguments.md)
+[arguments.md](docs/design/arguments.md),
+[answers.md](docs/design/answers.md)
 
 **Granting git is closer to granting arbitrary execution than it looks.**
 `core.pager`, `diff.external` and an alias are command lines in a config file;

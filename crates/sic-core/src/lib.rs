@@ -14,8 +14,8 @@ pub mod span;
 pub use authority::{Authority, Reach, Refused, Rule, authority_of, reach_of};
 pub use bin::{BinError, Reader, Writer};
 pub use cap::{
-    AgentAction, CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue, answer_from_bytes,
-    answer_to_bytes,
+    AgentAction, Answers, CapError, CapGrant, CapKind, CapOutcome, CapRequest, CapValue,
+    answer_from_bytes, answer_to_bytes,
 };
 pub use diag::{Diagnostic, Label, Severity};
 pub use hash::{Digest, Sha256};
