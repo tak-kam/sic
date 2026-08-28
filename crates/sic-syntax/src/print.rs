@@ -84,6 +84,9 @@ impl Printer {
             if let Some(pin) = &g.sha256 {
                 parts.push(format!("sha256 {:?}", pin.text));
             }
+            if let Some(answers) = &g.answers {
+                parts.push(format!("answers {}", answers.shape.word()));
+            }
             if let Some(dir) = &g.dir {
                 parts.push(format!("in {:?}", dir.text));
             }

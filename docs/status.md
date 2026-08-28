@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 713 tests.
+Last updated at 739 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -57,6 +57,7 @@ in the source, so it is the same on every platform - four of them are
 | - | `"a" + "b"`: the first thing a program can do that makes a value bigger than the ones it was given, and so the first that allocates without a capability being called. `CONCAT` is charged a fuel per byte of its result before the string is built, which makes the instruction budget a bound on the arena - at most `fuel` bytes joined in a whole run - and leaves `sic plan` saying exactly what it said before. A label is contagious across it, on either side, because `"" + tainted` is laundering with an extra character; two different labels are refused, because a value comes from one place | `docs/design/v0.1.md` §6, `docs/design/trust.md` §2a |
 | - | `approve` shows the person the value. It renders it with `TO_JSON` - the inverse of `FROM_JSON`, an instruction no syntax can name, so the language still has no way to get a plain `String` out of a labelled value - and passes it to `human.approve` beside the question. The whole document crosses rather than a digest or a first screenful, and the bound is the run's own budget, because rendering is charged by the byte the way `CONCAT` is. `sic explain` needed no change: the question a person was asked is already recorded beside their answer, and the value is in the question | `docs/design/trust.md` §3 |
 | - | And every field of a grant survives the journey from bytecode to a plan, checked with a value per field that could not have come from any other - the transcriptions between the three structs a grant is declared in are hand-written, and several of its fields are `String`, so the copy that takes the wrong one compiles | `crates/sic-cli/tests/cli.rs` |
+| - | `answers json` and `answers jsonl` on a grant: what form a program's output takes, checked by the broker on the bytes and printed by `sic plan` - so that a workflow reading another program's answer says which kind of dependency it has taken. Output that does not parse fails the call naming the line, and carries what the program said on stderr, because a false manifest is not data. There is no typed rung: measuring cargo's own stream shows the lines are a sum of shapes agreeing on one field, which would need sum types, optional fields and open records - and the check would have to cross the broker boundary into a crate with no type system. A grant that says nothing is printed as `(no declared shape)` rather than left looking checked | `docs/design/answers.md` |
 
 **§9, as separate processes.** On unix `sic run` starts a child, `sic vm`, and
 that child is the interpreter: it opens no file and starts no program, and every

@@ -1,4 +1,4 @@
-use sic_core::{CapGrant, CapKind, CapOutcome, CapRequest, CapValue};
+use sic_core::{Answers, CapGrant, CapKind, CapOutcome, CapRequest, CapValue};
 
 use super::*;
 
@@ -14,7 +14,16 @@ fn grant(name: &str, kind: CapKind, constraint: &str) -> CapGrant {
         delegable: false,
         dir: String::new(),
         env: Vec::new(),
+        // The default, and the one that changes nothing: a grant that says
+        // nothing about the shape of an answer gets the text it always got.
+        answers: Answers::Unsaid,
     }
+}
+
+/// The same grant, with a claim about the shape of what comes back.
+fn answering(mut grant: CapGrant, answers: Answers) -> CapGrant {
+    grant.answers = answers;
+    grant
 }
 
 /// The same grant, with the word that hands it to the agent as well.
@@ -1524,4 +1533,229 @@ fn what_the_agent_was_told_is_digested() {
     assert_ne!(before, after);
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ---- what shape a program answers in ----
+//
+// The broker is the only thing that sees the bytes, so it is the only thing
+// that can check what a grant claims about them. It parses and throws the
+// result away: what the program receives is the text it would have received
+// without the clause. See `docs/design/answers.md` §4.
+
+/// The cheap rung, and the one a program can use today: the whole output is one
+/// JSON document, and the broker says so before the program sees a byte of it.
+#[cfg(unix)]
+#[test]
+fn a_grant_that_claims_json_gets_json_or_an_error() {
+    let _serialized = scripts_lock();
+    let good = script("answers-json.sh", "#!/bin/sh\necho '{\"reason\":\"ok\"}'\n");
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &good),
+        Answers::Json,
+    )]);
+    match call_settled(&mut broker, &request(0, "process.run", &[&good])) {
+        Ok(CapOutcome::Value(CapValue::Exit { code, output })) => {
+            assert_eq!(code, 0);
+            // The text, unchanged. The parsed value is thrown away, and a
+            // program that wants one still calls `from_json`.
+            assert_eq!(output, "{\"reason\":\"ok\"}\n");
+        }
+        other => panic!("expected an exit, got {other:?}"),
+    }
+    std::fs::remove_file(&good).ok();
+}
+
+/// And the other half, which is the whole reason for it. A manifest that said
+/// JSON and got prose was wrong, so the call fails - and the message names
+/// where the parser stopped, because "it is not JSON" about a megabyte of
+/// output is not an answer.
+#[cfg(unix)]
+#[test]
+fn output_that_is_not_one_document_fails_the_call_and_names_the_offset() {
+    let _serialized = scripts_lock();
+    let bad = script("answers-json-bad.sh", "#!/bin/sh\necho 'test result: ok'\n");
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &bad),
+        Answers::Json,
+    )]);
+    let err = call_settled(&mut broker, &request(0, "process.run", &[&bad])).unwrap_err();
+    assert!(err.message.contains("did not answer JSON"), "{err}");
+    assert!(err.message.contains("at byte"), "{err}");
+    std::fs::remove_file(&bad).ok();
+}
+
+/// One value per line, blank lines skipped and the trailing newline every
+/// program writes tolerated. A rule that refused the empty last line would fail
+/// every grant on its first run.
+#[cfg(unix)]
+#[test]
+fn a_grant_that_claims_jsonl_tolerates_a_blank_line_and_a_trailing_newline() {
+    let _serialized = scripts_lock();
+    let good = script(
+        "answers-jsonl.sh",
+        "#!/bin/sh\nprintf '{\"reason\":\"a\"}\\n\\n{\"reason\":\"b\"}\\n'\n",
+    );
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &good),
+        Answers::Jsonl,
+    )]);
+    match call_settled(&mut broker, &request(0, "process.run", &[&good])) {
+        Ok(CapOutcome::Value(CapValue::Exit { code, .. })) => assert_eq!(code, 0),
+        other => panic!("expected an exit, got {other:?}"),
+    }
+    std::fs::remove_file(&good).ok();
+}
+
+/// A stream that starts as JSONL and stops being it, which is exactly what
+/// cargo does when the build succeeds and the test harness starts printing.
+/// The line number is the point: a reader told "line 3" can go and look at it.
+#[cfg(unix)]
+#[test]
+fn a_stream_that_stops_being_jsonl_fails_and_names_the_line() {
+    let _serialized = scripts_lock();
+    let bad = script(
+        "answers-jsonl-bad.sh",
+        "#!/bin/sh\nprintf '{\"reason\":\"a\"}\\n{\"reason\":\"b\"}\\nrunning 1 test\\n'\n",
+    );
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &bad),
+        Answers::Jsonl,
+    )]);
+    let err = call_settled(&mut broker, &request(0, "process.run", &[&bad])).unwrap_err();
+    assert!(err.message.contains("line 3 is not JSON"), "{err}");
+    assert!(err.message.contains("of the line"), "{err}");
+    std::fs::remove_file(&bad).ok();
+}
+
+/// The two facts are independent, and cargo demonstrates it: a build failure
+/// under `--message-format=json` emits well-formed JSONL and exits 101. A
+/// non-zero exit with output the grant's claim fits is still an answer, which
+/// is the whole difference between `process.run` and `process.capture`.
+#[cfg(unix)]
+#[test]
+fn a_non_zero_exit_with_well_formed_output_is_still_an_answer() {
+    let _serialized = scripts_lock();
+    let failing = script(
+        "answers-exit.sh",
+        "#!/bin/sh\necho '{\"reason\":\"build-finished\",\"success\":false}'\nexit 101\n",
+    );
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &failing),
+        Answers::Jsonl,
+    )]);
+    match call_settled(&mut broker, &request(0, "process.run", &[&failing])) {
+        Ok(CapOutcome::Value(CapValue::Exit { code, output })) => {
+            assert_eq!(code, 101);
+            assert!(output.contains("build-finished"), "{output}");
+        }
+        other => panic!("expected an exit, got {other:?}"),
+    }
+    std::fs::remove_file(&failing).ok();
+}
+
+/// And the other way round: a zero exit does not excuse malformed output,
+/// because the claim is not conditional on the exit code. Checking only a
+/// program that succeeded would exempt the run a reader most wants checked.
+#[cfg(unix)]
+#[test]
+fn a_zero_exit_does_not_excuse_output_the_grant_promised_would_parse() {
+    let _serialized = scripts_lock();
+    let bad = script(
+        "answers-zero.sh",
+        "#!/bin/sh\necho 'nothing to report'\nexit 0\n",
+    );
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &bad),
+        Answers::Json,
+    )]);
+    let err = call_settled(&mut broker, &request(0, "process.run", &[&bad])).unwrap_err();
+    assert!(err.message.contains("did not answer JSON"), "{err}");
+    std::fs::remove_file(&bad).ok();
+}
+
+/// When a claim about a program's answer turns out to be false, stderr is where
+/// the program almost certainly said why - a rejected flag, a missing
+/// subcommand. `process.run` otherwise drops stderr entirely, so a message that
+/// withheld it would be withholding the answer.
+#[cfg(unix)]
+#[test]
+fn a_refused_claim_says_what_the_program_said_on_stderr() {
+    let _serialized = scripts_lock();
+    let bad = script(
+        "answers-stderr.sh",
+        "#!/bin/sh\necho \"error: unexpected argument '--message-format' found\" >&2\nexit 2\n",
+    );
+    let mut broker = Broker::new(vec![answering(
+        grant("process.run", CapKind::Exec, &bad),
+        Answers::Json,
+    )]);
+    let err = call_settled(&mut broker, &request(0, "process.run", &[&bad])).unwrap_err();
+    assert!(
+        err.message
+            .contains("unexpected argument '--message-format'"),
+        "{err}"
+    );
+    std::fs::remove_file(&bad).ok();
+}
+
+/// A grant that says nothing means what it always meant. This is not a default
+/// programs have to opt out of, and this is the test that fails if the check
+/// ever runs on a grant that did not ask for it.
+#[cfg(unix)]
+#[test]
+fn a_grant_that_says_nothing_takes_whatever_the_program_printed() {
+    let _serialized = scripts_lock();
+    let noisy = script("answers-unsaid.sh", "#!/bin/sh\necho 'not json at all'\n");
+    let mut broker = Broker::new(vec![grant("process.run", CapKind::Exec, &noisy)]);
+    match call_settled(&mut broker, &request(0, "process.run", &[&noisy])) {
+        Ok(CapOutcome::Value(CapValue::Exit { code, output })) => {
+            assert_eq!(code, 0);
+            assert_eq!(output, "not json at all\n");
+        }
+        other => panic!("expected an exit, got {other:?}"),
+    }
+    std::fs::remove_file(&noisy).ok();
+}
+
+/// `fs.read` hands a program text it has to interpret, so it takes the clause
+/// too - and the difference from the pin `capabilities.md` refuses on it is the
+/// one that matters: a pin says which bytes, and this says which grammar, which
+/// is checkable by somebody who does not know the contents in advance.
+#[test]
+fn a_file_read_can_be_claimed_to_be_json() {
+    let path = temp_path("answers.json");
+    std::fs::write(&path, "{\"a\": 1}").expect("a writable temporary directory");
+    let mut broker = Broker::new(vec![answering(
+        grant("fs.read", CapKind::Read, &path),
+        Answers::Json,
+    )]);
+    let read = broker.call(&request(0, "fs.read", &[&path]));
+    assert_eq!(
+        read,
+        Ok(CapOutcome::Value(CapValue::Str("{\"a\": 1}".into())))
+    );
+
+    std::fs::write(&path, "a: 1\n").expect("a writable temporary directory");
+    let err = broker.call(&request(0, "fs.read", &[&path])).unwrap_err();
+    assert!(err.message.contains("did not answer JSON"), "{err}");
+    std::fs::remove_file(&path).ok();
+}
+
+/// `process.capture` takes it as well, and the strictness a program inherits is
+/// `sic-json`'s: no trailing commas, no comments, no `NaN`, and a duplicate key
+/// is an error rather than last-wins. A JSON writer that emits `NaN` - Python's
+/// does by default - answers something this refuses, and that is the right
+/// refusal.
+#[cfg(unix)]
+#[test]
+fn a_captured_answer_is_held_to_the_strictness_the_parser_has() {
+    let _serialized = scripts_lock();
+    let nan = script("answers-nan.sh", "#!/bin/sh\necho '{\"score\": NaN}'\n");
+    let mut broker = Broker::new(vec![answering(
+        grant("process.capture", CapKind::Exec, &nan),
+        Answers::Json,
+    )]);
+    let err = call_settled(&mut broker, &request(0, "process.capture", &[&nan])).unwrap_err();
+    assert!(err.message.contains("did not answer JSON"), "{err}");
+    std::fs::remove_file(&nan).ok();
 }

@@ -75,6 +75,7 @@ pub fn manifest(program: &Program) -> Vec<CapGrant> {
             delegable: c.delegable,
             dir: c.dir.clone(),
             env: c.env.clone(),
+            answers: c.answers,
         })
         .collect()
 }

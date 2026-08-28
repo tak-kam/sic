@@ -439,6 +439,7 @@ fn exec_program() -> Program {
         kind: sic_core::CapKind::Exec,
         constraints: "/usr/bin/true".into(),
         pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
         repeatable: false,
         delegable: false,
         dir: String::new(),

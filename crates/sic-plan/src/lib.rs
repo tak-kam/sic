@@ -20,7 +20,7 @@ use sic_bytecode::inst::Op;
 use std::collections::HashMap;
 
 use sic_bytecode::program::Program;
-use sic_core::{CapGrant, CapKind, Digest};
+use sic_core::{Answers, CapGrant, CapKind, Digest};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
@@ -184,6 +184,10 @@ pub struct Grant {
     pub dir: String,
     /// The environment a call is given. Empty means none.
     pub env: Vec<(String, String)>,
+    /// What shape the grant says the program answers in. Printed either way,
+    /// wherever the clause was available: a grant that claims nothing is
+    /// annotated with its own absence rather than left looking checked.
+    pub answers: Answers,
     /// The files whose code calls it. Derived from the call sites rather than
     /// from a declaration, so it says where a grant is really used.
     pub called_from: Vec<String>,
@@ -349,6 +353,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
             delegable: c.delegable,
             dir: c.dir.clone(),
             env: c.env.clone(),
+            answers: c.answers,
             called_from: call_sites.remove(&c.name).unwrap_or_default(),
         })
         .collect();
@@ -478,6 +483,29 @@ pub fn render(plan: &Plan, source: &str) -> String {
             out.push_str("  (not pinned)");
         } else {
             out.push_str(&format!("  sha256:{}", grant.pin));
+        }
+        // Beside the pin, because `sha256` says which program runs and
+        // `answers` says what comes back, and those are the two claims about
+        // the program itself.
+        //
+        // The negative is printed, for the reason `(not pinned)` is: silence
+        // is ambiguous between "this grant claims nothing" and "this version
+        // does not print that", and the first is what a reader most needs to
+        // see. It is also what stops an undeclared grant from reading as a
+        // checked one.
+        //
+        // But only where the clause was available. A grant cannot fail to
+        // claim something it could not have claimed, so `process.exec` and
+        // `fs.write` say nothing here rather than saying nothing was said.
+        if Answers::available_on(&grant.name) {
+            // Prose rather than the keyword. The rest of the line is already
+            // prose, and the grammar is not what a reader of a plan is
+            // checking.
+            out.push_str(match grant.answers {
+                Answers::Unsaid => "  (no declared shape)",
+                Answers::Json => "  answers JSON",
+                Answers::Jsonl => "  answers JSON, one value per line",
+            });
         }
         // A child process depends on these whether or not the grant mentions
         // them, so the plan says which - a reader who is not told assumes the
@@ -744,6 +772,7 @@ fn agent_authority(manifest: &[Grant]) -> String {
             delegable: g.delegable,
             dir: g.dir.clone(),
             env: g.env.clone(),
+            answers: g.answers,
         })
         .collect();
 

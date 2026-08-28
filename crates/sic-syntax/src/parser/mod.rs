@@ -53,7 +53,7 @@ mod expr;
 /// one check instead of by four passes each remembering to use a work stack.
 pub const MAX_DEPTH: u32 = 256;
 
-use sic_core::{Diagnostic, Label, NodeId, Span};
+use sic_core::{Answers, Diagnostic, Label, NodeId, Span};
 
 use crate::ast::*;
 use crate::lexer::tokenize_at;
@@ -715,12 +715,22 @@ impl Parser {
         // what it can print is what the manifest says. See
         // `docs/design/capabilities.md`.
         //
-        // All four may come in any order, and each at most once.
+        // `answers json` and `answers jsonl` say what form the program's
+        // output takes, which is the one thing about a call the manifest could
+        // not say and the plan could not print. The format is a bare
+        // identifier and not a string - the one place this departs from
+        // `sha256 "..."` - because a digest is unbounded data and a format is
+        // one of two words, so `answers jsonl1` should be a diagnostic where it
+        // is written rather than a string that means nothing to anybody until
+        // the broker refuses it. See `docs/design/answers.md` §11.
+        //
+        // All five may come in any order, and each at most once.
         let mut repeatable = false;
         let mut delegable = false;
         let mut dir = None;
         let mut env = Vec::new();
         let mut saw_env = false;
+        let mut answers = None;
         loop {
             match self.peek().clone() {
                 TokenKind::Ident(name) if name == "repeatable" && !repeatable => {
@@ -755,6 +765,13 @@ impl Parser {
                     saw_env = true;
                     env = self.parse_grant_env();
                 }
+                TokenKind::Ident(name) if name == "answers" && answers.is_none() => {
+                    self.bump();
+                    answers = self.parse_grant_answers();
+                    if answers.is_none() {
+                        break;
+                    }
+                }
                 _ => break,
             }
         }
@@ -771,7 +788,53 @@ impl Parser {
             delegable,
             dir,
             env,
+            answers,
             span: Span::new(start, self.prev_end()),
+        }
+    }
+
+    /// `json` or `jsonl`, the two forms a grant can claim its program answers
+    /// in.
+    ///
+    /// There is no third, and a word that is neither is refused here rather
+    /// than carried to a broker that would refuse it on the first run. The two
+    /// are the rungs `docs/design/answers.md` §2 settled on; the typed rung
+    /// above them is refused by §3 with four reasons.
+    fn parse_grant_answers(&mut self) -> Option<AnswersClause> {
+        match self.peek().clone() {
+            TokenKind::Ident(word) => {
+                let span = self.bump().span;
+                match Answers::from_word(&word) {
+                    Some(shape) => Some(AnswersClause { shape, span }),
+                    None => {
+                        self.push(
+                            Diagnostic::error(
+                                "E0220",
+                                "`answers` takes `json` or `jsonl`",
+                                Label::new(
+                                    span,
+                                    format!("`{word}` is not a format the broker can check"),
+                                ),
+                            )
+                            .with_note(
+                                "`json` is the whole output as one document, `jsonl` is one \
+                                 value per line",
+                            ),
+                        );
+                        None
+                    }
+                }
+            }
+            other => {
+                let span = self.span();
+                self.error(
+                    "E0220",
+                    "`answers` takes `json` or `jsonl`",
+                    span,
+                    format!("found {}", other.describe()),
+                );
+                None
+            }
         }
     }
 

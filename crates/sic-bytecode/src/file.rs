@@ -37,7 +37,13 @@ pub const VERSION_MAJOR: u16 = 0;
 /// happens to decode. A new instruction has twice been judged not to need a
 /// bump, because an old reader meets it as an unknown opcode; a changed section
 /// layout is the other case, where the file decodes into something else.
-pub const VERSION_MINOR: u16 = 9;
+/// Bumped from 9 for `answers`: a manifest entry now carries the shape a grant
+/// says the program answers in, one byte after the pin, and a reader that did
+/// not know would take it for the `repeatable` flag and every field after it
+/// for the one before. Two layouts must not share a number even when the
+/// number they would share was never released - that is the whole of what a
+/// version is for, and 9 is one commit old rather than free.
+pub const VERSION_MINOR: u16 = 10;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -122,6 +128,9 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u8(c.kind as u8);
         w.str(&c.constraints);
         w.str(&c.pin);
+        // Next to the pin, because they are the two claims a grant makes about
+        // the program itself: which one runs, and what comes back.
+        w.u8(c.answers as u8);
         w.bool(c.repeatable);
         w.bool(c.delegable);
         w.str(&c.dir);
@@ -393,7 +402,7 @@ fn decode_funcs(body: &[u8]) -> Result<Vec<FuncDef>> {
 
 fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
     let mut r = Reader::new(body);
-    let n = r.count(19)?;
+    let n = r.count(20)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         let name = r.str()?;
@@ -402,6 +411,9 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             .ok_or_else(|| DecodeError::new(format!("unknown capability kind {raw}")))?;
         let constraints = r.str()?;
         let pin = r.str()?;
+        let raw = r.u8()?;
+        let answers = Answers::from_u8(raw)
+            .ok_or_else(|| DecodeError::new(format!("unknown answer shape {raw}")))?;
         let repeatable = r.bool()?;
         let delegable = r.bool()?;
         let dir = r.str()?;
@@ -427,6 +439,7 @@ fn decode_caps(body: &[u8]) -> Result<Vec<CapDecl>> {
             kind,
             constraints,
             pin,
+            answers,
             repeatable,
             delegable,
             dir,
@@ -517,6 +530,7 @@ mod tests {
                 kind: CapKind::Exec,
                 constraints: "/usr/bin/true".into(),
                 pin: "a".repeat(64),
+                answers: Answers::Unsaid,
                 repeatable: false,
                 delegable: false,
                 dir: String::new(),
@@ -626,6 +640,12 @@ mod tests {
                     kind: CapKind::Exec,
                     constraints: "/usr/bin/git".into(),
                     pin: "b".repeat(64),
+                    // Both shapes a grant can name, one per entry, because
+                    // the third encodes as a zero byte and a writer that
+                    // forgot the field entirely would still round-trip that
+                    // one. What the checker allows on a given name is a
+                    // different question from what the format carries.
+                    answers: Answers::Jsonl,
                     repeatable: false,
                     delegable: false,
                     dir: String::new(),
@@ -639,6 +659,7 @@ mod tests {
                     kind: CapKind::Read,
                     constraints: "./data.txt".into(),
                     pin: String::new(),
+                    answers: Answers::Json,
                     repeatable: false,
                     delegable: false,
                     dir: String::new(),

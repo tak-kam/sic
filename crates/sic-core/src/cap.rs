@@ -39,6 +39,77 @@ impl CapKind {
     }
 }
 
+/// What shape a grant says a program answers in.
+///
+/// A format, and not a type. `sic-broker` depends on `sic-core` and `sic-json`
+/// and nothing else, so the only claim it can check is the grammar of what came
+/// back - which is the whole of what `docs/design/answers.md` §3 decided this
+/// may be, and the reason the mechanism fits in one crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum Answers {
+    /// The grant says nothing, which is what every grant said before this
+    /// existed: the output is text, and the program does what it can with it.
+    #[default]
+    Unsaid = 0,
+    /// The whole output parses as one JSON document.
+    Json = 1,
+    /// Every non-blank line parses as one JSON value.
+    Jsonl = 2,
+}
+
+impl Answers {
+    pub fn from_u8(v: u8) -> Option<Answers> {
+        Some(match v {
+            0 => Answers::Unsaid,
+            1 => Answers::Json,
+            2 => Answers::Jsonl,
+            _ => return None,
+        })
+    }
+
+    /// The word a grant writes, or nothing for a grant that says nothing. This
+    /// is the source's spelling and not a plan's: `sic plan` prints prose,
+    /// because the grammar is not what a reader of a plan is checking.
+    pub fn word(self) -> &'static str {
+        match self {
+            Answers::Unsaid => "",
+            Answers::Json => "json",
+            Answers::Jsonl => "jsonl",
+        }
+    }
+
+    /// The word, read back. Anything else is a diagnostic where it was
+    /// written, which is why the clause takes a bare identifier rather than a
+    /// string: a format is one of two words, and `answers jsonl1` should not
+    /// have to reach a broker to mean nothing.
+    pub fn from_word(word: &str) -> Option<Answers> {
+        match word {
+            "json" => Some(Answers::Json),
+            "jsonl" => Some(Answers::Jsonl),
+            _ => None,
+        }
+    }
+
+    /// Whether a grant on this capability may say what shape its answer takes.
+    ///
+    /// Only the ones that hand a program text it has to interpret.
+    /// `process.exec` answers an `Int` and `fs.write` a `Unit`, so there is no
+    /// output to shape; `git.status` and `git.rev_parse` answer values the
+    /// broker itself built, and a shape declared over one of those would be the
+    /// program telling the broker about the broker. `llm.invoke` is out for a
+    /// better reason: an `agent` already declares the shape of a model's
+    /// answer, and two places to say one thing disagree the day somebody edits
+    /// one.
+    ///
+    /// One list, here, because three crates ask the question - the checker
+    /// refuses the clause, the broker performs it, and `sic plan` decides
+    /// whether a grant that did not say is one that could have.
+    pub fn available_on(cap: &str) -> bool {
+        matches!(cap, "fs.read" | "process.capture" | "process.run")
+    }
+}
+
 /// A value passed to or returned from a capability.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CapValue {
@@ -130,6 +201,13 @@ pub struct CapGrant {
     /// The environment the child is given. Empty means none, which is what
     /// every grant meant before this existed.
     pub env: Vec<(String, String)>,
+    /// What shape the grant says the program answers in, from `answers json`.
+    ///
+    /// The broker needs it because it is the only thing that sees the bytes,
+    /// and it throws the parsed value away: what the program receives is the
+    /// text it would have received without the clause. See
+    /// `docs/design/answers.md` §4.
+    pub answers: Answers,
 }
 
 /// What the VM asks the broker to do.

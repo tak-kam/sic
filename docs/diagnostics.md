@@ -61,6 +61,7 @@ reason.
 | E0217 | `env` without `NAME: "value"` pairs |
 | E0218 | a `log` level that is not one of the four |
 | E0219 | `..` somewhere in a type body other than the end |
+| E0220 | `answers` with a word that is not `json` or `jsonl` |
 
 ## E03xx — names, types and effects
 
@@ -107,6 +108,7 @@ reason.
 | E0334 | `in` or `env` on a capability that starts no process |
 | E0335 | `in` with a relative path |
 | E0336 | `env` on a `git` grant, which decides its own |
+| E0337 | `answers` on a capability with no output to shape |
 
 ### Records and lists
 
