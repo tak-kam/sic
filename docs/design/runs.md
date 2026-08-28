@@ -113,6 +113,24 @@ rather than what the program did. A run that waited two days for a person is the
 same run as one answered immediately, and a replay that called those different
 would report a difference nobody can act on.
 
+A logged line *is* in the comparison, and it is compared as a digest. It is the
+program talking, so which lines it wrote is a fact about the path it took - and
+`docs/design/harness.md` found that the programs which log are the programs a
+harness is made of, so leaving them out would give the check almost nothing to
+say about the programs it exists for. What made that awkward is §2: the file
+holds the digest of a message and the VM emits the text, which are two spellings
+of one thing, and comparing them made every replay of every program that logs
+report a difference - issue #82, unnoticed because nothing here replayed a run
+that logged. The replayed event is put in the form the file keeps before the two
+are compared. Comparing the digests is also what keeps the rule intact:
+establishing that two runs said the same thing never requires either side to
+produce what was said, and the report names two digests rather than two
+sentences.
+
+```console
+  seq 3: recorded logged info sha256:2cf24dba, replayed logged info sha256:82e35a63
+```
+
 Two ways a replay can legitimately end early:
 
 - **The run was suspended.** The recorded answers stop where the run stopped;

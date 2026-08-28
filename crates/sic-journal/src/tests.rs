@@ -126,3 +126,57 @@ fn digests_distinguish_argument_vectors() {
         digest_values(&[CapValue::List(vec!["a".into(), "b".into()])])
     );
 }
+
+/// The one event a journal file does not hold as the VM emitted it, and so
+/// the one thing anything comparing the two forms has to know.
+///
+/// `sic replay` compares a journal read back off a disk with the events a
+/// second run of the same bytecode produced. Every other event survives that
+/// round trip, so this is where the two forms meet.
+#[test]
+fn a_logged_message_is_recorded_as_its_digest() {
+    let emitted = EventKind::Logged {
+        level: LogLevel::Warn,
+        message: "they failed, asking".into(),
+    };
+    assert_eq!(
+        *emitted.as_recorded(),
+        EventKind::Logged {
+            level: LogLevel::Warn,
+            message: Digest::of(b"they failed, asking").to_string(),
+        }
+    );
+
+    // And it is what the file says, because one function writes both. A
+    // reader and a writer that disagreed here made every replay of every
+    // program that logs report a difference - issue #82.
+    let line = json::event_to_json(&Event {
+        seq: 0,
+        run: RunId(0),
+        task: TaskId(0),
+        span: SpanId(0),
+        parent: None,
+        kind: emitted,
+    });
+    assert!(
+        line.contains(&Digest::of(b"they failed, asking").to_string()),
+        "{line}"
+    );
+    assert!(!line.contains("they failed"), "{line}");
+}
+
+/// Every other event is already what the file holds, so putting one in the
+/// file's form is the identity and borrows rather than copies.
+#[test]
+fn nothing_else_changes_on_the_way_into_a_journal() {
+    let completed = EventKind::CapabilityCompleted {
+        cap: "fs.read".into(),
+        result: Digest::of(b"a"),
+        attempt: 1,
+    };
+    assert!(matches!(
+        completed.as_recorded(),
+        std::borrow::Cow::Borrowed(_)
+    ));
+    assert_eq!(*completed.as_recorded(), completed);
+}

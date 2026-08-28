@@ -106,7 +106,7 @@ pub fn event_to_json(event: &Event) -> String {
             field_str(
                 &mut out,
                 "message",
-                &sic_core::Digest::of(message.as_bytes()).to_string(),
+                &crate::recorded_message(message),
                 false,
             );
         }

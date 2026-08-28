@@ -677,6 +677,15 @@ pub fn replay(prefix: &str) -> ExitCode {
 /// record how a run was carried out (in how many sittings the answers arrived)
 /// rather than what the program did. A run that stopped twice for a person is
 /// the same run as one that was answered immediately.
+///
+/// A logged line *is* in the comparison, by the same test: it is the program
+/// talking, and which lines it wrote is a fact about the path it took. Every
+/// workflow here logs, so dropping it would leave the check with almost
+/// nothing to say about the programs it was built for - `docs/design/harness.md`
+/// found that the programs which log are the programs a harness is made of.
+/// Comparing the digests is what makes that possible without the journal's
+/// rule bending: neither side has to produce the text to establish that the
+/// two runs said the same thing.
 fn compare(recorded: &[TimedEvent], replayed: &[sic_journal::Event]) -> Vec<String> {
     let original: Vec<&sic_journal::Event> = recorded
         .iter()
@@ -697,12 +706,17 @@ fn compare(recorded: &[TimedEvent], replayed: &[sic_journal::Event]) -> Vec<Stri
             ));
             break;
         };
-        if recorded_event.kind != replayed_event.kind {
+        // One side was read out of `journal.jsonl` and the other has just come
+        // out of the VM, so the replayed event is put in the form the file
+        // keeps before the two are compared. Today that is a logged message,
+        // which reaches a file as its digest.
+        let replayed_kind = replayed_event.kind.as_recorded();
+        if recorded_event.kind != *replayed_kind {
             differences.push(format!(
                 "seq {}: recorded {}, replayed {}",
                 recorded_event.seq,
                 describe(&recorded_event.kind),
-                describe(&replayed_event.kind)
+                describe(&replayed_kind)
             ));
             break;
         }
@@ -737,6 +751,15 @@ fn describe(kind: &EventKind) -> String {
         }
         EventKind::RunCompleted { result } => format!("completed with {}", short(result)),
         EventKind::RunFailed { error } => format!("failed: {error}"),
+        // A difference report with the same word on both sides is no report,
+        // which is what this said for every logged event until #82. What both
+        // sides hold here is a level and a digest, so both are printed.
+        EventKind::Logged { level, message } => match Digest::parse(message) {
+            Some(digest) => format!("logged {} {}", level.name(), short(&digest)),
+            // Not a digest, so not an entry out of a journal file: the text as
+            // the VM emitted it, which is what a person reading this wants.
+            None => format!("logged {} {message:?}", level.name()),
+        },
         other => other.name().to_string(),
     }
 }

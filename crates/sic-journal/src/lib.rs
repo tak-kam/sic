@@ -224,6 +224,41 @@ impl EventKind {
             EventKind::Logged { .. } => "logged",
         }
     }
+
+    /// The event as a journal file records it.
+    ///
+    /// Writing a `Logged` event to `journal.jsonl` deliberately loses
+    /// something: the message becomes its digest, because a file is the run's
+    /// account and an account holds digests. Reading that line back therefore
+    /// gives an event whose message *is* the digest, and comparing it with the
+    /// event the VM emitted - which holds the text - compares two spellings of
+    /// one thing. Anything holding both puts the VM's side in this form first;
+    /// `sic replay` is the one that does, and `docs/design/runs.md` §4 says
+    /// why it compares logs at all.
+    ///
+    /// Every other event survives the round trip unchanged, so for all of them
+    /// this is the identity. Call it on an event as the VM emitted it: an
+    /// entry already read out of a file is in this form and digesting it again
+    /// would be digesting a digest.
+    pub fn as_recorded(&self) -> std::borrow::Cow<'_, EventKind> {
+        match self {
+            EventKind::Logged { level, message } => std::borrow::Cow::Owned(EventKind::Logged {
+                level: *level,
+                message: recorded_message(message),
+            }),
+            other => std::borrow::Cow::Borrowed(other),
+        }
+    }
+}
+
+/// What a journal line holds in place of a logged message.
+///
+/// One function rather than two because a writer and a reader that disagreed
+/// about this would make every replay of every program that logs report a
+/// difference - which is exactly what happened while `json.rs` was the only
+/// place that knew.
+pub(crate) fn recorded_message(message: &str) -> String {
+    Digest::of(message.as_bytes()).to_string()
 }
 
 /// Where events go. Implementations that write to a file or a socket live

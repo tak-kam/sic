@@ -6317,6 +6317,129 @@ mod recorded_runs {
         std::fs::remove_dir_all(store).ok();
     }
 
+    /// A program that logs is a program `sic replay` can still say something
+    /// about.
+    ///
+    /// `journal.jsonl` holds a logged message as its digest, because a journal
+    /// records digests and never values; the event the VM emits holds the
+    /// text. Comparing the two spellings made every replay of every program
+    /// that logs report a difference, and every workflow in this repository
+    /// logs - so the determinism check was unavailable to exactly the programs
+    /// it was built for. That nothing here replayed a run that logged is why
+    /// it survived; this is that run. Issue #82.
+    #[test]
+    fn a_replay_of_a_run_that_logged_matches() {
+        let store = temp_store("logreplay");
+        let src = write_temp(
+            "logreplay.sic",
+            "fn main() -> Int { log info \"hello\"; return 1; }\n",
+        );
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // The line reached a person as it happened, and the file it was
+        // recorded in still does not hold it.
+        assert!(stderr.contains("info: hello"), "{stderr}");
+
+        let dir = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let journal = std::fs::read_to_string(dir.join("journal.jsonl")).unwrap();
+        assert!(journal.contains("\"event\":\"logged\""), "{journal}");
+        assert!(!journal.contains("hello"), "{journal}");
+
+        let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+        assert_eq!(code, 0, "stdout: {stdout} stderr: {stderr}");
+        assert!(stdout.contains("events matched"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// And when the log lines really did change, the report says which line
+    /// and how - rather than `recorded logged, replayed logged`, which was the
+    /// second half of #82 and is a bug on its own: a difference with the same
+    /// word on both sides tells a reader nothing.
+    ///
+    /// Two digests rather than two sentences. The comparison never needs the
+    /// text, so neither does the report, and the rule that makes a journal
+    /// safe to hand to somebody holds all the way to the terminal.
+    #[test]
+    fn a_replay_that_differs_in_a_log_line_says_which_line() {
+        let store = temp_store("logdiffers");
+        let src = write_temp(
+            "logdiffers.sic",
+            "fn main() -> Int { log info \"hello\"; return 1; }\n",
+        );
+        // The same program in every respect but what it says about itself, so
+        // the logged event is the only thing that can differ.
+        let other = write_temp(
+            "logdiffers-other.sic",
+            "fn main() -> Int { log info \"goodbye\"; return 1; }\n",
+        );
+
+        let (_, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 0);
+
+        let dir = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        let other_bytecode = other.with_extension("sicb");
+        let (_, _, code) = sic(&[
+            "compile",
+            other.to_str().unwrap(),
+            "-o",
+            other_bytecode.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0);
+        std::fs::copy(&other_bytecode, dir.join("program.sicb")).unwrap();
+
+        let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+        assert_eq!(code, 1, "{stdout}");
+
+        let line = stdout
+            .lines()
+            .find(|l| l.contains("recorded"))
+            .unwrap_or_else(|| panic!("a difference should be reported: {stdout}"));
+        let (recorded, replayed) = line
+            .split_once(", replayed ")
+            .unwrap_or_else(|| panic!("both sides should be named: {line}"));
+        let recorded = recorded
+            .split_once("recorded ")
+            .unwrap_or_else(|| panic!("the recorded side should be named: {line}"))
+            .1;
+        assert!(recorded.starts_with("logged info sha256:"), "{line}");
+        assert!(replayed.starts_with("logged info sha256:"), "{line}");
+        // The whole point: the two sides are not the same string.
+        assert_ne!(recorded, replayed, "{line}");
+        // And neither of them is what either program said.
+        assert!(
+            !stdout.contains("hello") && !stdout.contains("goodbye"),
+            "{stdout}"
+        );
+
+        for path in [src, other, other_bytecode] {
+            std::fs::remove_file(path).ok();
+        }
+        std::fs::remove_dir_all(store).ok();
+    }
+
     #[test]
     fn a_run_that_was_not_recorded_leaves_nothing_behind() {
         // Recording is opt-in, and a run that was not asked to keep anything does
