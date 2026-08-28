@@ -205,8 +205,22 @@ call, another runs. No OS threads, no async runtime.
 
 **Agents with typed output.** An agent is a model call and a validation. What
 comes back is text; what the program gets is a value that fit a declared type,
-and a run fails at the model boundary rather than three steps later.
+and a run fails at the model boundary rather than three steps later. A type may
+also say it describes *part* of a document - `type Line { reason: String, .. }`
+- because an extra field in a model's answer means the model answered a
+different question, and an extra field in a machine protocol means the protocol
+has more in it than this program asked about. Those are opposite conventions
+and one validator now serves both.
 → [agents.md](docs/design/agents.md)
+
+**A list is walked, and a string can be asked what it holds.** `for x in xs`
+has no frame per element, so a list longer than the call stack can be walked -
+which recursion could not do. `==`, `contains`, `starts_with` and `+` are the
+whole of what a program may do to a string, and each was added because a
+workflow could not otherwise ask a question it needed: is this the branch we
+deploy from, did the build print a warning, is this path inside that directory.
+Joining is charged a fuel per byte, so the instruction budget bounds the arena.
+→ [v0.1.md](docs/design/v0.1.md), [alternatives.md](docs/design/alternatives.md)
 
 **A model call answered by an agent CLI.** `sic run p.sic --llm tmux:claude`
 puts the prompt in front of a real coding agent in a tmux pane and reads the
