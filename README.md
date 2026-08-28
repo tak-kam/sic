@@ -304,6 +304,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [git.md](docs/design/git.md) | `git`, and when a program deserves a capability |
 | [decisions.md](docs/design/decisions.md) | `choose`, and recording what was not chosen |
 | [checking.md](docs/design/checking.md) | whether a label may be discharged by evidence instead of a person |
+| [alternatives.md](docs/design/alternatives.md) | a value that is one of several shapes, and how a program takes one apart without pattern matching |
 | [upgrade.md](docs/design/upgrade.md) | `sic upgrade`: fetch, verify, swap |
 | [extraction.md](docs/design/extraction.md) | why the longest functions are the right length |
 | [self-hosting.md](docs/design/self-hosting.md) | writing this repository's own development loop in sic, and the seven things that bent it |
