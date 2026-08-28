@@ -157,3 +157,12 @@ Each is recorded where the decision was made, with the reason:
   argument is evidence waits on a capability that can look at a labelled value
   and answer a fact about it - which no capability in the table does
   (`docs/design/checking.md`)
+- No sum types. A value that is one of several shapes is designed rather than
+  built: the discriminating field a protocol already carries is the runtime tag,
+  so `l.reason` is a field read at position 0 and only the extraction, `l as
+  Finished`, needs an instruction - no change to the arena, the checkpoint or
+  the verifier's lattice. It waits on open records, because measuring cargo's
+  own stream one level down shows that two of its three arms cannot be written
+  as closed records at all, and because optional fields do not dissolve into it:
+  two messages with the same discriminant are not two arms
+  (`docs/design/alternatives.md`)
