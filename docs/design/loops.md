@@ -114,16 +114,21 @@ fn main() -> Int {
 }
 ```
 
-It compiles with no error and no warning, and it prints `0`.
+It compiled with no error and no warning, and it printed `0`. Issue #81 came
+out of this measurement and is closed: a `let` in a nested block whose
+initializer reads the binding it hides is now E0313, so the program above is
+refused rather than run. `docs/design/v0.1.md` §2 has that rule and its
+argument.
 
-`let` shadows, in the same block as well as a nested one - `let x = 1; let x =
-2; return x;` answers `2` - so the shape somebody reaches for when they want to
-accumulate is spelled with a keyword that already means something else, and
-means it silently. There is no unused-binding warning to catch it.
+That is the bug stopped, not the feature built. `let` still shadows, in the
+same block as well as a nested one - `let x = 1; let x = 2; return x;` answers
+`2`, which is what it reads like and is left alone - and the shape somebody
+reaches for when they want to accumulate is still not writable at all. E0313
+turns a wrong answer into a diagnostic with nothing to point at yet.
 
 A language that has no assignment is a defensible position. A language in which
 the assignment somebody writes compiles into a different program is not, and
-that is where this one is.
+that is where this one was.
 
 ### The agent loop cannot be written
 
@@ -639,9 +644,11 @@ come from.
   memory; a loop that waits for a person on every iteration makes it a fact
   about how long a run may live.
 - **`let` shadows in the same block with no warning** (§2). Independent of
-  everything here: `let x = 1; let x = 2;` is legal and silent. Whether that is
-  right is a separate decision, but it is what makes the accumulator bug
-  invisible, and it will keep making other things invisible.
+  everything here: `let x = 1; let x = 2;` is legal and silent. E0313 (issue
+  #81) took the accumulator out of that set - a nested `let` that reads what it
+  hides is refused - and deliberately left this one, because the answer matches
+  the reading. What would report it is an unused-binding warning, which is
+  another rule about another thing and does not exist.
 
 ---
 

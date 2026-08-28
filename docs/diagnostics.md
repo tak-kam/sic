@@ -82,6 +82,7 @@ reason.
 | E0310 | a type name that is not one, or the wrong number of type arguments |
 | E0311 | binding a value of type `Unit` |
 | E0312 | `null`, which has no type in v0.1 |
+| E0313 | a `let` in a nested block that hides a binding its own initializer reads |
 
 ### Capabilities
 

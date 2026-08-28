@@ -137,6 +137,25 @@ struct FnState {
     span: Span,
 }
 
+/// A name in scope, and where it was bound.
+struct Binding {
+    name: String,
+    slot: LocalId,
+    /// Where the name was written, for a diagnostic that has to point at it.
+    span: Span,
+}
+
+/// A binding a `let` in a nested block is about to hide, while that `let`'s
+/// initializer is being checked.
+#[derive(Clone, Copy)]
+struct Hiding {
+    slot: LocalId,
+    /// Where the hidden binding was bound.
+    declared: Span,
+    /// Whether the initializer read it. That read is the whole rule.
+    read: bool,
+}
+
 struct Checker {
     types: Types,
     diags: Vec<Diagnostic>,
@@ -155,7 +174,13 @@ struct Checker {
     agent_ids: HashMap<String, AgentId>,
 
     // State for the function currently being checked.
-    scopes: Vec<Vec<(String, LocalId)>>,
+    scopes: Vec<Vec<Binding>>,
+    /// The binding a `let` initializer now being checked would hide, and
+    /// whether the initializer has read it yet. `None` anywhere else.
+    ///
+    /// A `let` initializer cannot contain another `let` - there are no block
+    /// expressions - so one of these is enough for the whole function.
+    hiding: Option<Hiding>,
     locals: Vec<TypeId>,
     ret_ty: Option<TypeId>,
     ret_annotated: bool,
@@ -180,6 +205,7 @@ impl Checker {
             agents: Vec::new(),
             agent_ids: HashMap::new(),
             scopes: Vec::new(),
+            hiding: None,
             locals: Vec::new(),
             ret_ty: None,
             ret_annotated: false,
@@ -855,7 +881,7 @@ impl Checker {
         self.scopes = vec![Vec::new()];
         for (i, p) in decl.params.iter().enumerate() {
             let slot = LocalId(i as u32);
-            self.declare(&p.name.name, slot);
+            self.declare(&p.name.name, slot, p.name.span);
             self.res.insert(p.id, Res::Local(slot));
         }
 
@@ -893,24 +919,92 @@ impl Checker {
         self.scopes.clear();
     }
 
-    fn declare(&mut self, name: &str, slot: LocalId) {
+    fn declare(&mut self, name: &str, slot: LocalId, span: Span) {
         self.scopes
             .last_mut()
             .expect("a scope must be open")
-            .push((name.to_string(), slot));
+            .push(Binding {
+                name: name.to_string(),
+                slot,
+                span,
+            });
     }
 
     /// Looks up a name in the innermost scope first, so an inner binding
     /// shadows an outer one.
     fn lookup(&self, name: &str) -> Option<LocalId> {
-        for scope in self.scopes.iter().rev() {
-            for (n, slot) in scope.iter().rev() {
-                if n == name {
-                    return Some(*slot);
+        self.lookup_scoped(name).map(|(_, b)| b.slot)
+    }
+
+    /// `lookup`, and how deep the scope it was found in is. Depth 0 is the
+    /// function's parameters; the body of the function is 1.
+    fn lookup_scoped(&self, name: &str) -> Option<(usize, &Binding)> {
+        for (depth, scope) in self.scopes.iter().enumerate().rev() {
+            for b in scope.iter().rev() {
+                if b.name == name {
+                    return Some((depth, b));
                 }
             }
         }
         None
+    }
+
+    /// The binding a `let` of `name` here would hide *and could be mistaken
+    /// for*: one from a block that encloses this one, parameters excluded.
+    ///
+    /// A binding in the same block is not one of these. `let s = trim(s);`
+    /// rebinds for the rest of a block a reader is already reading, and
+    /// nothing computed from the old value is thrown away. The dangerous
+    /// shape is the one that reaches out of the block it is in: whatever it
+    /// computes from the outer binding dies at the closing brace, so the
+    /// statement performs no lasting effect at all. See `check_let_hiding`.
+    ///
+    /// A parameter is excluded because the body of a function is a block of
+    /// its own, so `fn f(s: String) { let s = trim(s); ... }` would otherwise
+    /// be caught by a rule aimed at something else entirely - the parameter is
+    /// in scope for exactly the block that rebinds it, and issue #81 leaves
+    /// shadowing a parameter alone.
+    fn hidden_by_let(&self, name: &str) -> Option<Hiding> {
+        let innermost = self.scopes.len().checked_sub(1)?;
+        let (depth, binding) = self.lookup_scoped(name)?;
+        if depth == 0 || depth == innermost {
+            return None;
+        }
+        Some(Hiding {
+            slot: binding.slot,
+            declared: binding.span,
+            read: false,
+        })
+    }
+
+    /// Refuses a `let` in a nested block whose initializer reads the binding
+    /// it is about to hide.
+    ///
+    /// `docs/design/v0.1.md` §2 has the argument. In short: nothing in v0.1
+    /// assigns, so `let total = total + x;` inside a loop body binds a fresh
+    /// `total` per iteration and discards it at the closing brace. The outer
+    /// `total` is what the program returns, and it never moved. The program
+    /// compiles, answers wrongly, and reads like the thing it is not.
+    fn check_let_hiding(&mut self, name: &Ident, hiding: Option<Hiding>) {
+        let Some(hiding) = hiding.filter(|h| h.read) else {
+            return;
+        };
+        self.error(
+            "E0313",
+            format!("`{}` is bound again here from its own value", name.name),
+            name.span,
+            format!("a new `{}`, for this block only", name.name),
+        );
+        let last = self.diags.last_mut().expect("just pushed");
+        last.secondary.push(Label::new(
+            hiding.declared,
+            "this is what it reads, and it does not change",
+        ));
+        self.note("give the new binding another name if it is a different value");
+        self.note(
+            "nothing in v0.1 assigns, so a value that has to outlive the block \
+             is a recursive function's parameter",
+        );
     }
 
     fn new_local(&mut self, ty: TypeId) -> LocalId {
@@ -937,6 +1031,12 @@ impl Checker {
                 span,
             } => {
                 let annotated = ty.as_ref().map(|t| self.resolve_type(t));
+                // What this `let` would hide has to be known before the
+                // initializer is checked, because the initializer is where it
+                // would be read - and after it, because that is when the read
+                // has happened.
+                let hides = self.hidden_by_let(&name.name);
+                let outer = std::mem::replace(&mut self.hiding, hides);
                 let from_annotation = annotated.and_then(|want| self.empty_list_of(init, want));
                 let init_ty = match from_annotation {
                     Some(want) => want,
@@ -952,6 +1052,8 @@ impl Checker {
                         ty
                     }
                 };
+                let hiding = std::mem::replace(&mut self.hiding, outer);
+                self.check_let_hiding(name, hiding);
                 let slot_ty = match annotated {
                     Some(want) => {
                         self.expect_type(want, init_ty, init.span, "this initializer");
@@ -968,7 +1070,7 @@ impl Checker {
                     );
                 }
                 let slot = self.new_local(slot_ty);
-                self.declare(&name.name, slot);
+                self.declare(&name.name, slot, name.span);
                 self.res.insert(*id, Res::Local(slot));
             }
             Stmt::Return { value, span, .. } => {
@@ -1037,7 +1139,7 @@ impl Checker {
         // shadows it.
         self.scopes.push(Vec::new());
         let slot = self.new_local(element);
-        self.declare(&for_stmt.var.name, slot);
+        self.declare(&for_stmt.var.name, slot, for_stmt.var.span);
         self.res.insert(for_stmt.id, Res::Local(slot));
         for stmt in &for_stmt.body.stmts {
             self.check_stmt(stmt);
@@ -1140,6 +1242,13 @@ impl Checker {
 
     fn check_path(&mut self, node: NodeId, name: &Ident) -> TypeId {
         if let Some(slot) = self.lookup(&name.name) {
+            // The one place a local is read as a value, so the one place a
+            // `let` initializer can be caught reading what it will hide.
+            if let Some(hiding) = self.hiding.as_mut() {
+                if hiding.slot == slot {
+                    hiding.read = true;
+                }
+            }
             self.res.insert(node, Res::Local(slot));
             return self.locals[slot.index()];
         }
