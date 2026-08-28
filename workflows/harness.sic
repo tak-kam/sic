@@ -1,0 +1,99 @@
+// A harness, written in sic: a model call whose answer is validated, a retry
+// when it is not good enough, a budget that bounds the whole thing, a person
+// at the point that changes something, and a record that can be re-run.
+//
+// `docs/design/harness.md` is what this program is evidence for, and every
+// gap it hit is a section of that document rather than a workaround hidden
+// here.
+//
+//     sic plan workflows/harness.sic
+//     sic run  workflows/harness.sic --record
+//     sic attach <ID> --value '{"file":"...","change":"...","confidence":90}'
+//     sic explain <ID>
+//     sic recheck <ID> workflows/harness.sic
+//
+// **Every path in the `allow` block is a placeholder**, for the reason
+// `workflows/ci.sic` gives at length: a manifest names files on one machine.
+// `.gitignore` has `workflows/*.local.sic` for the copy with yours in it.
+type Fix {
+    file: String,
+    change: String,
+    // Per cent, and an `Int` rather than the `Float` every other agent in this
+    // repository declares a confidence as. No operator applies to a `Float`,
+    // so a gate written against one does not compile - `harness.md` §5.2.
+    confidence: Int,
+}
+
+allow {
+    process.run "/PATH/TO/build" in "/PATH/TO/project";
+    llm.invoke "claude-opus-4";
+    human.approve "applying the fix";
+    process.exec "/PATH/TO/apply";
+}
+
+// The four numbers a harness is bounded by, in the place a reader of the
+// program meets them. Three are enforced in three different places, which is
+// why they are three fields (`docs/design/authority.md` §8), and the fourth -
+// how many times the retry below may go round - is written in the program.
+agent propose {
+    input: String,
+    output: Fix,
+    budget: 3,          // model calls at this site, enforced by the VM
+    tools: 8,           // tool uses, enforced by the broker through the hook
+    deadline: 120000,   // per answer, enforced by the broker
+    memory: task,       // one conversation, so a retry needs no prompt
+}
+
+fn build() -> Exit {
+    return process.run("/PATH/TO/build", []);
+}
+
+// The retry, and the two things about it that are the finding rather than the
+// code. It is a recursion because nothing in the language assigns; and it asks
+// a literal rather than a prompt built out of the answer it is rejecting,
+// because the logs are `Observed<String>` and the answer is `LLM<String>` and
+// `+` refuses to join two provenances (E0375, and it is right to).
+//
+// `memory: task` is what makes the literal enough: the second call is asked in
+// a conversation that already holds the first answer, so "try again" means
+// what it says without the program having to quote anything back.
+fn propose_until_confident(logs: Observed<String>) -> LLM<Fix> {
+    let f = propose(logs);
+    if f.confidence > 70 {
+        return f;
+    }
+    return retry_proposal(2);
+}
+
+fn retry_proposal(tries: Int) -> LLM<Fix> {
+    let f = propose("that answer was not confident enough. Try again.");
+    if f.confidence > 70 {
+        return f;
+    }
+    if tries <= 1 {
+        // Out of tries, and the last answer is what there is. A harness that
+        // wanted to give up here rather than carry on has nothing to say so
+        // with: a failure is not a value in this language.
+        return f;
+    }
+    return retry_proposal(tries - 1);
+}
+
+// The point that changes something, and the only way to reach it. Passing the
+// model's answer straight to this does not compile.
+fn apply(fix: HumanApproved<Fix>) -> Int {
+    return process.exec("/PATH/TO/apply");
+}
+
+fn main() -> Int {
+    let r = build();
+    if r.code == 0 {
+        log info "nothing to fix";
+        return 0;
+    }
+    log warn "the build failed, asking for a fix";
+    let fix = propose_until_confident(r.output);
+    log info "proposed: " + fix.change;
+    let approved = approve("apply this fix?", fix);
+    return apply(approved);
+}
