@@ -599,9 +599,29 @@ impl<'a> Verifier<'a> {
                     next[inst.a() as usize] = Abst::Val(STR);
                     successors.push(index + 1);
                 }
+                // One instruction for each of the two types the VM knows an
+                // order for, so this is `EQ`'s rule over a smaller set: the
+                // operands must agree, and they must be a type an order
+                // exists on. A `Bool` and a `String` are equal or not and
+                // neither is less than the other, so `LT` over them is not an
+                // instruction the VM could execute and is refused here rather
+                // than discovered there.
                 Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    self.read(&name, pc, &state, inst.b(), Some(INT));
-                    self.read(&name, pc, &state, inst.c(), Some(INT));
+                    let l = self.read(&name, pc, &state, inst.b(), None);
+                    let r = self.read(&name, pc, &state, inst.c(), None);
+                    if let (Abst::Val(a), Abst::Val(b)) = (l, r) {
+                        if a != b {
+                            let (a, b) = (p.type_name(a), p.type_name(b));
+                            self.error(
+                                Some(&name),
+                                Some(pc),
+                                format!("cannot order {a} against {b}"),
+                            );
+                        } else if a != INT && a != FLOAT {
+                            let a = p.type_name(a);
+                            self.error(Some(&name), Some(pc), format!("{a} has no order"));
+                        }
+                    }
                     next[inst.a() as usize] = Abst::Val(BOOL);
                     successors.push(index + 1);
                 }
@@ -992,6 +1012,7 @@ enum Abst {
 const UNIT: u32 = 0;
 const BOOL: u32 = 1;
 const INT: u32 = 2;
+const FLOAT: u32 = 3;
 const STR: u32 = 4;
 
 type State = Vec<Abst>;

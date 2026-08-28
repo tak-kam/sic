@@ -19,8 +19,8 @@ type Fix {
     file: String,
     change: String,
     // Per cent, and an `Int` rather than the `Float` every other agent in this
-    // repository declares a confidence as. No operator applies to a `Float`,
-    // so a gate written against one does not compile - `harness.md` §5.2.
+    // repository declares a confidence as. That was forced until #85 gave
+    // `Float` its ordering; it is a choice about the question now.
     confidence: Int,
 }
 

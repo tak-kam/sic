@@ -1236,7 +1236,12 @@ impl Checker {
         // Both sides share the type `l` from here on.
         let ok = match op {
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => l == Types::INT,
-            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => l == Types::INT,
+            // Ordering is the whole of what a `Float` does. A threshold on a
+            // model's own confidence is the most common question anybody asks
+            // about an answer, and it was the one question the type it is
+            // declared with could not be asked. Equality is left out below,
+            // and arithmetic stays where §4 of `docs/design/v0.1.md` put it.
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => l == Types::INT || l == Types::FLOAT,
             // Equality is byte equality of the interned string: not case
             // folding, not normalization, not trimming. `"main" == "Main"` is
             // false. Ordering is left out, because `<` on strings needs a
@@ -1253,7 +1258,21 @@ impl Checker {
                 format!("no such operator for {name}"),
             );
             if l == Types::FLOAT {
-                self.note("v0.1 supports arithmetic and comparison on Int only");
+                match op {
+                    // Not an omission waiting to be filled in. Two floats are
+                    // equal by accident of rounding rather than by design, so
+                    // a program asking whether a confidence *is* `0.7` has a
+                    // bug whatever the language answers. Order it instead.
+                    BinOp::Eq | BinOp::Ne => self.note(
+                        "Float is ordered, not compared for equality: `<`, `<=`, `>` and `>=` \
+                         apply to it and `==` does not",
+                    ),
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => self.note(
+                        "v0.1 has arithmetic on Int only; Float is ordered with `<`, `<=`, `>` \
+                         and `>=`",
+                    ),
+                    _ => {}
+                }
             } else if l == Types::STR {
                 self.note("v0.1 joins String with `+`, and compares it with `==` and `!=`");
             }

@@ -48,6 +48,39 @@ type Diagnosis {
 - A body may end with `..`, which says the type describes part of a document
   rather than all of it. Only `from_json` reads it; §8 argues it.
 
+### What a confidence should be declared as
+
+`Float`, and since #85 that is advice rather than decoration.
+
+The type above has shown `confidence: Float` since this document was written,
+and until #85 nothing could be done with one: `Float` accepted no operator, so
+a program that wanted a threshold could not write it against the field it was
+about. What programs did instead is in `workflows/harness.sic`, which declares
+`confidence: Int` and asks the model for a percentage - a workaround that
+changed the question put to the model in order to fit the checker, which is the
+wrong way round.
+
+`Float` now orders (`v0.1.md` §4), so the threshold is written where it is
+read:
+
+```text
+let d = diagnose(logs);
+if d.confidence < 0.5 {
+    log warn "the model is not confident in this";
+}
+```
+
+The label does not stop it. A comparison answers a `Bool`, and a `Bool` is
+never one of the values it was given, so `d.confidence < 0.5` on an `LLM<Float>`
+is allowed by the rule `trust.md` §2a already had rather than by an exception
+made for this.
+
+A percentage in an `Int` is still a legitimate schema when per cent is what is
+being asked for. It is no longer the only one that compiles, and a schema
+should now be chosen for the question it puts to the model. What stays refused
+is `==` on a `Float`: a score is not a value a program can name exactly, and a
+threshold is the shape that question has anyway.
+
 ### Constructing one
 
 ```text
