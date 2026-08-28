@@ -159,11 +159,11 @@ bytecode sha256:...
     1. RUN      process.run     "/PATH/TO/build"   ; 48:12
 
   propose_until_confident
-    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run  at most 8 tool use(s)  120000ms per answer   ; 61:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 8 tool use(s)  120000ms per answer   ; 61:13
     2. VERIFY   Fix   ; 61:13
 
   retry_proposal
-    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run  at most 8 tool use(s)  120000ms per answer   ; 69:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 8 tool use(s)  120000ms per answer   ; 69:13
     2. VERIFY   Fix   ; 69:13
 
   apply
@@ -184,7 +184,10 @@ Capabilities:
   human.approve   [invoke]  "applying the fix"  (not pinned)
   process.exec    [exec]  "/PATH/TO/apply"  (not pinned)  in the directory `sic` is started in  with no environment
 
-At most 6 call(s) from budgeted sites, plus 3 site(s) with no budget.
+Budgets:
+  at most 3 llm.invoke calls in a run, from 2 sites: propose_until_confident 61:13, retry_proposal 69:13
+
+At most 3 call(s) from budgeted sites, plus 3 site(s) with no budget.
 ```
 
 Everything a harness is, before it runs: which model, how many times, how long
@@ -337,22 +340,26 @@ keeps its `Int`, because per cent is a fine thing to ask a model for - what
 changed is that it is now a choice about the question rather than the only
 schema that compiles.
 
-### 5.3 `budget: N` bounds a call site, and `agents.md` says both things
+### 5.3 `budget: N` bounded a call site, and `agents.md` said both things
 
-The harness declares one agent with `budget: 3`. Its plan ends:
+Written in the present tense of the exercise, and settled since - the note at
+the end of this section says how, and §4's transcript is already the plan
+afterwards.
+
+The harness declares one agent with `budget: 3`. Its plan ended:
 
 ```text
 At most 6 call(s) from budgeted sites, plus 3 site(s) with no budget.
 ```
 
 Because the retry is written as two functions - one asks with the logs, one
-asks again - the agent has two call sites, and **each gets its own allowance of
-three.** `sic explain` shows it plainly: two model calls, and both print
+asks again - the agent has two call sites, and **each got its own allowance of
+three.** `sic explain` showed it plainly: two model calls, and both printed
 `budget: 2 left`.
 
-The plan's total is honest, which matters; the plan's per-line wording is
+The plan's total was honest, which matters; the plan's per-line wording was
 `at most 3 in a run`, which is what a reader takes as the bound, and the bound
-is three *at that site*. And `agents.md` §6 states both readings in one
+was three *at that site*. And `agents.md` §6 stated both readings in one
 paragraph without noticing:
 
 > `budget` is a count of capability calls the agent may make in a whole run.
@@ -371,7 +378,13 @@ correction whichever way it is settled - the document to match the enforcement,
 or the enforcement to match the document.
 
 → separable, and it is one issue with two candidate answers rather than two
-issues.
+issues. **#84 settled it per agent**: the budget can only be written on the
+declaration, so a per-site bound is one the language gives no way to declare,
+and a number a person approves must not depend on how many places call the
+thing it is written on. The transcript in §4 above is the plan after that -
+one allowance of three, both sites named under it, and a total that agrees
+with the lines rather than doubling them. `agents.md` §6 carries the argument
+and what the other reading cost.
 
 ### 5.4 A retry cannot say why, and `memory: task` is the answer sic already had
 

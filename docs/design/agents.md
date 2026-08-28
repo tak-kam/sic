@@ -279,11 +279,55 @@ malformed value is first used.
 `input` is `String` in v0.1: building a prompt from a value would need a way to
 render one, which the language does not have yet.
 
-`budget` is a count of capability calls the agent may make in a whole run.
-Exceeding it fails the run. It is enforced by the VM, which keeps a count per
-call site: a budget is attached to a pc in the policy table, so the VM enforces
-it **without knowing that some call sites are agents**. The count travels in
-checkpoints, because otherwise resuming would hand the run a fresh allowance.
+`budget` is a count of capability calls the agent may make in a whole run, and
+the agent is the whole of it: an agent called from two places has two call
+sites and one allowance of `budget` between them. Exceeding it fails the run.
+
+It is enforced by the VM, which keeps a count per allowance rather than per
+call site. A policy entry says how many calls an allowance is worth and which
+allowance its site spends from, so the VM enforces the bound **without knowing
+that some call sites are agents** - it counts against the number the table
+gives it, and the compiler is what decides which sites share one. The count
+travels in checkpoints, because otherwise resuming would hand the run a fresh
+allowance.
+
+### It used to be per call site, and #84 settled it the other way
+
+The two readings are the same sentence for an agent called from one place and
+nothing alike for any other. Per site, `budget: 3` on an agent used twice
+enforced six; splitting one retry function into two doubled what a harness
+could spend, and neither the source, the declaration nor the plan's per-line
+text said so.
+
+What decides it is that **the budget can only be written on the declaration**.
+There is no syntax for a budget at a call site, so a per-site bound is one the
+language gives no way to say: to declare "three from here and three from
+there" you write one number and get six, and to declare "three in total" you
+write nothing that means it. The number a person approves would then be a
+number the shape of the program chose, which is what `harness.md` §2 means by
+a bound nobody approved - a refactor must not move a safety bound.
+
+The case for per site is that it is cheaper, and it is cheaper by less than it
+looks. Which sites share an allowance is settled at compile time and written
+into the policy table, so `sic plan` groups them by reading a word rather than
+by analysing a call graph, and the VM keys a counter by that word rather than
+by a pc. Per site is also said to be the right answer for a recursion; it is
+not a distinguishing case, because a recursive function that calls an agent is
+one site and both readings charge it the same.
+
+`VERSION_MINOR` moves to 12. A policy entry carries the allowance in a word
+after the budget, and a reader that did not know would take it for the
+conversation and every field after it for the one before - the case a section
+layout change is bumped for. The verifier refuses a file whose budget names no
+allowance, or whose two sites share one and disagree about how large it is,
+because the VM reads the size from whichever entry it reached.
+
+The cost is that a site's line in `sic plan` cannot say what the site's own
+bound is, because a site no longer has one. So the line says whose it is -
+`at most 3 in a run, shared by 2 sites` - and the plan prints each allowance
+once with the sites under it. A plan must not print a number that reads as the
+other reading, and the summary's arithmetic used to be the only place the truth
+appeared.
 
 Tokens and cost need the broker to report them, which needs a capability result
 richer than one value, and that is a later phase - counting calls is what can be

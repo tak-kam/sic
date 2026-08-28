@@ -17,6 +17,9 @@ Capabilities:
     the agent may not  run a shell of its own   (refused by the hook)
     the agent may not  use any other tool       (refused by the hook)
 
+Budgets:
+  at most 2 llm.invoke calls in a run, from 1 site: main 36:13
+
 At most 2 capability call(s).
 ```
 
@@ -94,11 +97,11 @@ is, and it should be built when someone is reading plans often enough to want
 it. Claiming certainty this cannot establish would be worse than claiming
 nothing.
 
-**The bound it does give is honest, and it is narrow.** Only a `budget` bounds a
-call site over a whole run. `retry` says how many times *one visit* may call
+**The bound it does give is honest, and it is narrow.** Only a `budget` bounds
+anything over a whole run. `retry` says how many times *one visit* may call
 out; how many visits there are depends on the path taken and on recursion, and
-this does not analyse either. So the total covers the budgeted sites, and the
-rest are counted and named as unbounded:
+this does not analyse either. So the total covers the budgets, and the rest are
+counted and named as unbounded:
 
 ```text
 At most 2 capability call(s).
@@ -109,6 +112,16 @@ depends on the path taken.
 
 Summing `retry` counts and calling the result a maximum would be a guess dressed
 as a fact, which is the one thing a plan must not be.
+
+**A budget belongs to a declaration, so it is totalled once and not once per
+site.** An agent called from two places is two `INVOKE` lines and one bound
+between them (`agents.md` §6), and the summing this total used to do gave the
+double. The lines say whose the number is - `at most 3 in a run, shared by 2
+sites` - and a `Budgets:` block names each allowance once with the sites under
+it, so the reader is shown that there is one three rather than left to work it
+out from the total. That block is the correction; a total that disagrees with
+the line above it is not one, because a reader who has just read the same
+number twice has no reason to doubt it.
 
 ---
 
@@ -195,7 +208,7 @@ a reader.
 
 Two `fs.write` calls in different functions are two arrows into one box. A
 grant is what the manifest is about and what a reader is being asked to allow;
-a budget belongs to a site, and §3 is where a site's numbers are. Collapsing
+a budget belongs to a declaration, and §3 is where the numbers are. Collapsing
 sites into grants is what keeps the picture readable at the size a real program
 makes it, and nothing is lost that the list does not already hold.
 

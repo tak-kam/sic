@@ -65,8 +65,11 @@ pub struct Checkpoint {
     pub strings: Vec<String>,
     pub lists: Vec<Vec<Value>>,
     pub objects: Vec<Vec<Value>>,
-    /// How many times each capability call site has run, for the budgets in the
-    /// policy table.
+    /// How many calls each allowance has paid for, for the budgets in the
+    /// policy table. Keyed by the allowance rather than by the call site, so
+    /// this is a different number from the one a 0.5 checkpoint holds under
+    /// the same name - and unreadable as one, because a checkpoint names the
+    /// bytecode it belongs to and that file no longer decodes.
     pub spent: Vec<(u32, u32)>,
     /// How many of the agent's own tools each call site has used. Travels for
     /// the same reason `spent` does: a resumed run must not get a fresh

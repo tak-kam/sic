@@ -220,8 +220,10 @@ pub struct CallPolicy {
     /// Total attempts, not extra ones.
     pub attempts: Option<u32>,
     pub timeout_ms: Option<u32>,
-    /// How many times this call site may run in a whole run.
-    pub budget: Option<u32>,
+    /// How many calls this site may make, and which allowance it spends them
+    /// from. The two travel together so that a site cannot be given a number
+    /// with nothing to count it against: see `Allowance`.
+    pub budget: Option<Allowance>,
     /// Which conversation the call belongs to, when the caller keeps one.
     /// `None` is a fresh conversation every time, which is what an agent
     /// without `memory: task` means.
@@ -233,6 +235,20 @@ pub struct CallPolicy {
     pub deadline_ms: Option<u32>,
     /// Phase 8: what makes a retry safe to repeat.
     pub idempotency_key: Option<LocalId>,
+}
+
+/// A count of calls, and the allowance it is counted against.
+///
+/// `group` is what makes the bound belong to the declaration rather than to
+/// the instruction: every site that shares a number shares one count, so an
+/// agent called from two places is still bounded by the number written on it.
+/// One type rather than two fields, because a number with no allowance behind
+/// it would be a bound nothing enforces and the compiler must not be able to
+/// write one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Allowance {
+    pub calls: u32,
+    pub group: u32,
 }
 
 impl CallPolicy {
