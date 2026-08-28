@@ -279,6 +279,19 @@ run is a non-interactive one. Answer a workflow's questions once this way and
 `sic recheck` has a regression test that cost nothing to make.
 → [interactive.md](docs/design/interactive.md)
 
+**And all of that is one thing: a harness that can be read before it runs.**
+The field's word for the scaffold around a model call covers the retry, the
+budget, the validation, the tool list, the person who approves the dangerous
+step and the record of what happened - everywhere else an object graph the
+program assembles at run time, and readable only by running it. Here it is a
+declaration in the bytecode, so `sic plan` prints it without constructing a VM
+and the plan and the run cannot disagree: they are the same bytes. And because
+`--record` keeps what a run was answered, `sic recheck` turns a harness into a
+regression test - change a retry threshold and a run from last week says which
+call it stopped asking. `workflows/harness.sic` is one written and run, and the
+document reports what could not be written as carefully as what could.
+→ [harness.md](docs/design/harness.md)
+
 ## Commands
 
 ```text
@@ -311,6 +324,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [durable-execution.md](docs/design/durable-execution.md) | suspend, checkpoint, resume |
 | [concurrency.md](docs/design/concurrency.md) | tasks, retry, timeout |
 | [agents.md](docs/design/agents.md) | structured output and agents |
+| [harness.md](docs/design/harness.md) | the scaffold around a model call, as a declaration rather than an object graph - and one written, run, and reported on |
 | [trust.md](docs/design/trust.md) | provenance in the type system |
 | [observability.md](docs/design/observability.md) | the journal and OpenTelemetry |
 | [runs.md](docs/design/runs.md) | recorded runs, attach, replay |
