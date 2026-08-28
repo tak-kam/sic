@@ -1037,21 +1037,16 @@ impl<'a> Vm<'a> {
                     let value = Value::Bool(if op == Op::Eq { equal } else { !equal });
                     self.set(index, base + a, value);
                 }
+                // Two numbers of the same type, which is what the verifier
+                // establishes before this runs. One instruction covers both,
+                // for the reason §6 gives for not splitting `EQ` per type: a
+                // value here always has the type the verifier proved, so the
+                // arm reads it and does not branch on what it might have been.
                 Op::Lt | Op::Le | Op::Gt | Op::Ge => {
-                    let (Value::I64(l), Value::I64(r)) =
-                        (self.get(index, base + b), self.get(index, base + c))
-                    else {
-                        die!(
-                            FailKind::Internal("comparison on a non-integer"),
-                            None,
-                            None
-                        );
-                    };
-                    let result = match op {
-                        Op::Lt => l < r,
-                        Op::Le => l <= r,
-                        Op::Gt => l > r,
-                        _ => l >= r,
+                    let result = match (self.get(index, base + b), self.get(index, base + c)) {
+                        (Value::I64(l), Value::I64(r)) => ordered(op, l, r),
+                        (Value::F64(l), Value::F64(r)) => ordered(op, l, r),
+                        _ => die!(FailKind::Internal("comparison on a non-number"), None, None),
                     };
                     self.set(index, base + a, Value::Bool(result));
                 }
@@ -1875,6 +1870,26 @@ impl<'a> Vm<'a> {
             value: None,
             detail: None,
         })
+    }
+}
+
+/// `<`, `<=`, `>` and `>=` over the two types an order exists on, in one
+/// place so that the four cannot mean one thing about an `Int` and another
+/// about a `Float`.
+///
+/// `f64` is only *partially* ordered in general, and this returns what IEEE
+/// says: every comparison against a NaN is false. Nothing in the language can
+/// produce one today - `sic-json` parses a number and has no NaN literal, no
+/// arithmetic on `Float` exists to divide zero by zero, and a capability hands
+/// back a parsed document - so the order is total in practice, and this is
+/// where that stops being true first when float arithmetic lands. See
+/// `docs/design/v0.1.md` §4.
+fn ordered<T: PartialOrd>(op: Op, l: T, r: T) -> bool {
+    match op {
+        Op::Lt => l < r,
+        Op::Le => l <= r,
+        Op::Gt => l > r,
+        _ => l >= r,
     }
 }
 

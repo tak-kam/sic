@@ -34,5 +34,12 @@ agent diagnose {
 // the whole thing decorative - see docs/design/trust.md.
 fn main() -> LLM<String> {
     let d = diagnose("disk usage is at 100%");
+    // The field is read rather than declared and forgotten. A threshold is a
+    // question about the answer, not a value derived from it, so the label
+    // does not stop it - trust.md §2a - and what comes back is a plain
+    // `Bool` that decides a branch.
+    if d.confidence < 0.5 {
+        log warn "the model is not confident in this";
+    }
     return d.cause;
 }

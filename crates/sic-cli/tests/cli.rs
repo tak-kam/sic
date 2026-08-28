@@ -1231,6 +1231,223 @@ mod comparing_strings {
     }
 }
 
+/// ordering a float.
+///
+/// Every `agent` in this repository declares a `confidence: Float`, and until
+/// #85 not one of them read it, because the type it is declared with accepted
+/// no operator. These run the binary rather than the checker, because the four
+/// operators reach the VM through a rule in three places - the checker, the
+/// verifier's data-flow pass and one arm - and no opcode was added to carry
+/// them.
+mod ordering_a_float {
+    use super::*;
+
+    /// The threshold, on a plain `Float` and in all four spellings, weighted so
+    /// that a test which only asked whether `0.91 > 0.7` would fail if any of
+    /// the other four answered the wrong way.
+    #[test]
+    fn a_float_orders_four_ways() {
+        let src = write_temp(
+            "float-order-four.sic",
+            "fn bit(b: Bool, weight: Int) -> Int {\n\
+             \x20   if b {\n\
+             \x20       return weight;\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let c = 0.91;\n\
+             \x20   return bit(c > 0.7, 1)\n\
+             \x20       + bit(c < 0.7, 2)\n\
+             \x20       + bit(c >= 0.91, 4)\n\
+             \x20       + bit(c <= 0.90, 8)\n\
+             \x20       + bit(c <= 0.91, 16);\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        // 1, 4 and 16 hold; 2 and 8 do not.
+        assert_eq!(stdout, "21\n");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The motivating case, run rather than compiled: a threshold on the
+    /// confidence of an answer a model gave. The label does not stop it -
+    /// `trust.md` §2a - and this asserts the branch was taken rather than that
+    /// the program compiled.
+    #[test]
+    fn a_models_confidence_can_be_thresholded() {
+        let checkpoint = write_temp("float-confidence.sicc", "");
+        let (_, stderr, code) = sic(&[
+            "run",
+            &example("agent.sic"),
+            "--checkpoint",
+            checkpoint.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 3, "stderr: {stderr}");
+
+        // An answer the model is not sure of takes the branch.
+        let (stdout, stderr, code) = sic(&[
+            "resume",
+            checkpoint.to_str().unwrap(),
+            &example("agent.sic"),
+            "--value",
+            r#"{"cause": "disk full", "confidence": 0.2}"#,
+        ]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "\"disk full\"\n");
+        assert!(stderr.contains("not confident"), "{stderr}");
+
+        // A confident one does not, and the program answers the same thing.
+        let (stdout, stderr, code) = sic(&[
+            "resume",
+            checkpoint.to_str().unwrap(),
+            &example("agent.sic"),
+            "--value",
+            r#"{"cause": "disk full", "confidence": 0.95}"#,
+        ]);
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "\"disk full\"\n");
+        assert!(!stderr.contains("not confident"), "{stderr}");
+
+        std::fs::remove_file(checkpoint).ok();
+    }
+
+    /// What the threshold does not buy, which is the half worth testing. The
+    /// gate is a question and compiles; the effect behind it is still a
+    /// model's answer reaching something that changes the world, and E0372
+    /// refuses it. A comparison that laundered its operand would show up here.
+    #[test]
+    fn a_gated_answer_still_cannot_reach_an_effect() {
+        let src = write_temp(
+            "float-gate-effect.sic",
+            "type Diagnosis {\n\
+             \x20   cause: String,\n\
+             \x20   confidence: Float,\n\
+             }\n\
+             \n\
+             allow {\n\
+             \x20   llm.invoke \"claude-opus-4\";\n\
+             \x20   process.exec \"/bin/echo\";\n\
+             }\n\
+             \n\
+             agent diagnose {\n\
+             \x20   input: String,\n\
+             \x20   output: Diagnosis,\n\
+             }\n\
+             \n\
+             fn main() -> Int {\n\
+             \x20   let d = diagnose(\"why did it fail?\");\n\
+             \x20   if d.confidence > 0.7 {\n\
+             \x20       process.exec(\"/bin/echo\", [d.cause]);\n\
+             \x20   }\n\
+             \x20   return 0;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0372"), "{stderr}");
+        assert!(stderr.contains("LLM<String>"), "{stderr}");
+        // And the gate itself was not what was refused.
+        assert!(!stderr.contains("E0371"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Declined rather than deferred, and the note has to say which. A reader
+    /// told "not yet" waits for it; the answer is that two floats are equal by
+    /// an accident of rounding, so the question has a better shape.
+    #[test]
+    fn a_float_is_not_compared_for_equality() {
+        let src = write_temp(
+            "float-no-equality.sic",
+            "fn main() -> Bool {\n\
+             \x20   return 0.7 == 0.7;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0303"), "{stderr}");
+        assert!(
+            stderr.contains("`==` cannot be applied to Float"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("Float is ordered, not compared for equality"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Deferred rather than declined, and the note says that instead. The
+    /// argument in `v0.1.md` §4 for leaving arithmetic out survives #85
+    /// untouched, and a test is what keeps the two refusals from drifting into
+    /// one message that means neither.
+    #[test]
+    fn a_float_has_no_arithmetic() {
+        let src = write_temp(
+            "float-no-arithmetic.sic",
+            "fn main() -> Float {\n\
+             \x20   return 0.5 + 0.25;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0303"), "{stderr}");
+        assert!(
+            stderr.contains("`+` cannot be applied to Float"),
+            "{stderr}"
+        );
+        assert!(
+            stderr.contains("v0.1 has arithmetic on Int only"),
+            "{stderr}"
+        );
+        std::fs::remove_file(src).ok();
+    }
+
+    /// No implicit conversion arrived with the operators. An `Int` threshold
+    /// against a `Float` score is the mistake this makes easy to make, and it
+    /// is refused where it is written rather than rounded quietly.
+    #[test]
+    fn a_float_is_not_ordered_against_an_int() {
+        let src = write_temp(
+            "float-no-mixing.sic",
+            "fn main() -> Bool {\n\
+             \x20   return 0.5 < 1;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0303"), "{stderr}");
+        assert!(
+            stderr.contains("`<` cannot be applied to Float and Int"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("no implicit conversions"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The workflow this repository runs on itself, reading the field it has
+    /// declared since it was written. `plan` is the cheapest way to say the
+    /// gate sits in a program that still means something end to end, and the
+    /// manifest is what the gate must not have changed: a branch is not an
+    /// effect, so the plan says what it said before.
+    #[test]
+    fn the_development_loop_reads_its_own_confidence() {
+        let source =
+            std::fs::read_to_string(repo_root().join("workflows/ci.sic")).expect("the workflow");
+        assert!(source.contains("d.confidence < 0.5"), "{source}");
+
+        let (stdout, stderr, code) = sic(&["plan", "workflows/ci.sic"]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(stdout.contains("llm.invoke"), "{stdout}");
+        assert!(
+            stdout.contains("At most 1 call(s) from budgeted sites"),
+            "{stdout}"
+        );
+    }
+}
+
 /// asking a string what it holds.
 ///
 /// A program could hold what another program printed and answer exactly one

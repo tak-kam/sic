@@ -80,11 +80,25 @@ fn operators_accept_only_what_the_vm_can_execute() {
 }
 
 #[test]
-fn float_and_string_are_values_but_have_no_operators() {
+fn a_float_and_a_string_are_values_in_their_own_right() {
     let typed = ok("fn main() -> Float { let x = 1.5; return x; }");
     assert_eq!(typed.fns[0].ret, Types::FLOAT);
     let typed = ok("fn main() -> String { let s = \"hi\"; return s; }");
     assert_eq!(typed.fns[0].ret, Types::STR);
+}
+
+/// Ordering is the whole of what a `Float` does, and the two things it does
+/// not do are refused for different reasons: arithmetic is deferred, equality
+/// is declined. `docs/design/v0.1.md` §4 argues both.
+#[test]
+fn a_float_orders_and_does_nothing_else() {
+    ok("fn main() -> Bool { return 0.9 > 0.7; }");
+    ok("fn main() -> Bool { let c = 0.9; return c >= 0.7 && c <= 1.0; }");
+    assert!(codes("fn main() { return 0.7 == 0.7; }").contains(&"E0303"));
+    assert!(codes("fn main() { return 0.7 != 0.7; }").contains(&"E0303"));
+    assert!(codes("fn main() { return 1.5 * 2.0; }").contains(&"E0303"));
+    // No implicit conversion arrived with the operators.
+    assert!(codes("fn main() { return 0.5 < 1; }").contains(&"E0303"));
 }
 
 #[test]

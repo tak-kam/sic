@@ -163,6 +163,15 @@ fn main() -> Observed<String> {
         log warn "it did not build, asking the agent why";
     }
     let d = diagnose(r.output);
+    // The confidence this program has declared since it was written, read for
+    // the first time. #85 gave `Float` its four ordering operators, and a
+    // threshold on a model's own score is a question about the answer rather
+    // than a value derived from it, so the label does not refuse it - see
+    // `docs/design/trust.md` §2a. What the gate buys is the difference between
+    // a diagnosis and a guess, in the log a person reads afterwards.
+    if d.confidence < 0.5 {
+        log warn "the agent is not confident in this; treat it as a guess";
+    }
     // This is what #58 was for. The binding used to go nowhere: a model's
     // answer is `LLM<String>` and this function had already promised a
     // different type, so the diagnosis had no channel out of the program.

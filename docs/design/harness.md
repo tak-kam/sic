@@ -299,7 +299,10 @@ real. It is not the one the field means.
 
 → separable, and the argument for it is above. Not filed here.
 
-### 5.2 A `Float` is a value nothing can be done with
+### 5.2 A `Float` was a value nothing could be done with
+
+This section is what the exercise found, and #85 has since acted on it; the
+last paragraph says what changed. What follows is the finding as it stood.
 
 The first version of the harness declared `confidence: Float`, because that is
 what a model answers with and what every `agent` in this repository already
@@ -310,24 +313,29 @@ error[E0303]: `>` cannot be applied to Float
    = note: v0.1 supports arithmetic and comparison on Int only
 ```
 
-`==` is refused too. A `Float` can be written as a literal, declared as a
+`==` was refused too. A `Float` could be written as a literal, declared as a
 field, parsed out of a model's answer, validated, carried, approved and shown
-to a person, and there is no operation in the language that can ask a question
-about it. `examples/agent.sic` and `workflows/ci.sic` both declare a
-`confidence: Float`, and neither of them ever reads it - which is not a
+to a person, and there was no operation in the language that could ask a
+question about it. `examples/agent.sic` and `workflows/ci.sic` both declared a
+`confidence: Float`, and neither of them ever read it - which was not a
 coincidence, because neither of them could.
 
-The cost is not "no arithmetic". It is that **the most common validation gate
-in the field cannot be written against the field it is about.** The harness
+The cost was not "no arithmetic". It was that **the most common validation gate
+in the field could not be written against the field it is about.** The harness
 here declares `confidence: Int` and asks the model for a percentage, so the
-workaround changes the question put to the model in order to work around the
+workaround changed the question put to the model in order to work around the
 type system. `contains` and `starts_with` were added on exactly this argument -
 a workflow could not otherwise ask a question it needed - and a comparison on
 `Float` is the same argument with a stronger case, since the value is one a
 model produced and a program has to act on.
 
 → separable: comparison on `Float`, which is the narrow version and probably
-the whole of it.
+the whole of it. **Filed as #85 and done**: `<`, `<=`, `>` and `>=` accept a
+`Float`, `==` and arithmetic still do not, and `examples/agent.sic` and
+`workflows/ci.sic` gate on the field they had been declaring. The harness here
+keeps its `Int`, because per cent is a fine thing to ask a model for - what
+changed is that it is now a choice about the question rather than the only
+schema that compiles.
 
 ### 5.3 `budget: N` bounds a call site, and `agents.md` says both things
 

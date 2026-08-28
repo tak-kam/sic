@@ -318,10 +318,11 @@ So the direction is to allow both, and the question is what the rule becomes.
 > whose result cannot be one of its operands is asking a question, and a
 > question may be asked about a labelled value.**
 
-In v0.1 that is exactly the comparisons over `Int` and `String` - `==` and `!=`
-on both, `<`, `<=`, `>` and `>=` on `Int`, which is all `<` applies to until
-somebody argues for a collation. They answer `Bool`, and no `Bool` is ever one
-of the values they were given.
+In v0.1 that is exactly the comparisons over `Int`, `String` and `Float` - `==`
+and `!=` on the first two, `<`, `<=`, `>` and `>=` on `Int` and on `Float`.
+`<` does not apply to a `String` until somebody argues for a collation, and
+`==` does not apply to a `Float` at all (`v0.1.md` §4). They answer `Bool`, and
+no `Bool` is ever one of the values they were given.
 
 Everything else answers its operands' type, and there the rule has two limbs
 rather than one - which is the part worth reading twice, because it is what
@@ -334,7 +335,8 @@ makes `+` on two strings the same decision rather than a hole in this one:
 | `! && \|\|` | `Bool` | `Bool` | refused |
 | `== !=` | `Bool` | `Bool` | refused |
 | `+` | `String` | `String` | **carries the label** |
-| `== != < <= > >=` | `Int`, `String` | `Bool` | allowed, answers plain |
+| `== !=` | `Int`, `String` | `Bool` | allowed, answers plain |
+| `< <= > >=` | `Int`, `Float` | `Bool` | allowed, answers plain |
 
 An operator whose result has its operands' type either refuses a label or
 carries it onward. Joining carries it, because a joined string is still the

@@ -378,6 +378,75 @@ fn comparing_two_different_types_is_rejected() {
     );
 }
 
+/// `LT` and its three siblings carry two types rather than one, so the rule
+/// that used to require `Int` is now `EQ`'s: the operands must agree. A
+/// bytecode file that ordered a float against an integer would reach a VM arm
+/// that matches on the pair and finds neither case.
+#[test]
+fn ordering_two_different_types_is_rejected() {
+    let p = program(
+        &[],
+        TypeDesc::Bool,
+        3,
+        vec![Const::F64(0.5), Const::I64(1)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 1),
+            Inst::abc(Op::Lt, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p).iter().any(|m| m.contains("cannot order")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// Agreeing is not enough. Two `Bool`s are equal or not and neither is less
+/// than the other, so `LT` over them is not an instruction the VM could
+/// execute - and a bytecode file is not something the verifier is allowed to
+/// believe.
+#[test]
+fn ordering_a_type_that_has_no_order_is_rejected() {
+    let p = program(
+        &[],
+        TypeDesc::Bool,
+        3,
+        vec![Const::Bool(true), Const::Bool(false)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 1),
+            Inst::abc(Op::Gt, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert!(
+        errors(&p).iter().any(|m| m.contains("Bool has no order")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// And two floats are accepted, which is the half of the rule that had to be
+/// added rather than kept.
+#[test]
+fn ordering_two_floats_is_accepted() {
+    let p = program(
+        &[],
+        TypeDesc::Bool,
+        3,
+        vec![Const::F64(0.9), Const::F64(0.7)],
+        vec![
+            Inst::abx(Op::LoadConst, 0, 0),
+            Inst::abx(Op::LoadConst, 1, 1),
+            Inst::abc(Op::Ge, 2, 0, 1),
+            Inst::abc(Op::Return, 2, 0, 0),
+        ],
+    );
+    assert_ok(&p);
+}
+
 /// The VM's `CONCAT` reads two arena handles without asking what they hold,
 /// which it may only do because this rule established that both operands are
 /// strings. The compiler never emits the instruction over two integers, so a
