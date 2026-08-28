@@ -105,6 +105,11 @@ pub struct TypeDecl {
     /// Fields are ordered. The order is what the bytecode uses; the source uses
     /// names.
     pub fields: Vec<FieldDecl>,
+    /// `..` at the end of the body: the type describes part of a document
+    /// rather than all of it, so `from_json` ignores a field it does not
+    /// declare. Without it a document with an extra field is refused, which is
+    /// what a model's answer needs. See `docs/design/agents.md` §8.
+    pub open: bool,
     pub span: Span,
 }
 

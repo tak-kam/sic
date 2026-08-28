@@ -1347,6 +1347,7 @@ fn record_program() -> Program {
             ("x".into(), index_of(TypeDesc::Int)),
             ("y".into(), index_of(TypeDesc::Int)),
         ],
+        open: false,
     });
     p
 }
@@ -1477,6 +1478,11 @@ fn a_nested_value_survives_a_checkpoint() {
 
 /// `main` parses the constant document as `Wrapper { value: Int }`.
 fn json_program(document: &str) -> Program {
+    json_program_with(document, false)
+}
+
+/// The same, and `open` says whether the type ends in `..`.
+fn json_program_with(document: &str, open: bool) -> Program {
     let mut p = program(
         vec![(
             "main",
@@ -1495,13 +1501,17 @@ fn json_program(document: &str) -> Program {
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
         fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        open,
     });
     p.funcs[0].ret_type = index_of(TypeDesc::Int);
     p
 }
 
 fn schema_error(document: &str) -> String {
-    let p = json_program(document);
+    schema_failure(json_program(document))
+}
+
+fn schema_failure(p: Program) -> String {
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
     match vm.run(0, &[]) {
         Status::Failed(info) => {
@@ -1537,8 +1547,26 @@ fn a_missing_field_is_a_mismatch_not_a_default() {
 #[test]
 fn an_unexpected_field_is_refused() {
     // Ignoring it would accept an answer that is not the shape that was asked
-    // for.
+    // for. That is what a type says by not ending in `..`, and it is still the
+    // default: the test below is the same document against a type that does.
     assert!(schema_error(r#"{"value": 1, "extra": 2}"#).contains("has no field `extra`"));
+}
+
+#[test]
+fn an_open_type_ignores_a_field_it_does_not_declare() {
+    // The same document, against a type that says it describes part of one. A
+    // protocol that carries more than this program asked about has not
+    // answered a different question.
+    let p = json_program_with(r#"{"value": 1, "extra": 2}"#, true);
+    assert_eq!(run(&p, &[]), Value::I64(1));
+}
+
+#[test]
+fn an_open_type_still_needs_the_fields_it_declares() {
+    // `..` is about what a document may carry beyond the type, not about what
+    // the type asks for: the field the program reads has to be there.
+    let detail = schema_failure(json_program_with("{}", true));
+    assert!(detail.contains("needs a field `value`"), "{detail}");
 }
 
 #[test]
@@ -1555,6 +1583,7 @@ fn a_whole_number_fits_a_float_but_not_the_other_way() {
     p.types[5] = TypeDesc::Object {
         name: "Wrapper".into(),
         fields: vec![("value".into(), index_of(TypeDesc::Float))],
+        open: false,
     };
     p.funcs[0].ret_type = index_of(TypeDesc::Float);
     assert_eq!(run(&p, &[]), Value::F64(2.0));

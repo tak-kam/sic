@@ -1424,10 +1424,10 @@ impl<'a> Vm<'a> {
                 let handle = self.arena.alloc_list(values);
                 Ok(Value::List(handle))
             }
-            (TypeDesc::Object { name, fields }, Json::Object(members)) => {
+            (TypeDesc::Object { name, fields, open }, Json::Object(members)) => {
                 let declared = fields.clone();
                 let type_name = name.clone();
-                let field_names: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
+                let open = *open;
                 let mut values = Vec::with_capacity(declared.len());
                 for (field_name, field_type) in &declared {
                     let field_name = field_name.clone();
@@ -1447,9 +1447,16 @@ impl<'a> Vm<'a> {
                     values.push(self.build_from_json(value, *field_type, path)?);
                     path.truncate(mark);
                 }
-                for (name, _) in members {
-                    if !field_names.contains(name) {
-                        return Err(at(path, &format!("`{type_name}` has no field `{name}`")));
+                // A closed type describes the whole document, so a field it
+                // does not declare is a document it does not describe. An open
+                // one describes part of a document, and the rest is somebody
+                // else's business: `..` in the source is what says which.
+                if !open {
+                    let field_names: Vec<&String> = declared.iter().map(|(n, _)| n).collect();
+                    for (name, _) in members {
+                        if !field_names.contains(&name) {
+                            return Err(at(path, &format!("`{type_name}` has no field `{name}`")));
+                        }
                     }
                 }
                 let handle = self.arena.alloc_object(values);

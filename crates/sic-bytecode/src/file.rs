@@ -31,7 +31,13 @@ pub const VERSION_MAJOR: u16 = 0;
 /// Bumped from 7 for `in` and `env`: a manifest entry now says what directory
 /// and what environment a child gets, and a reader that stopped after the flags
 /// would take the directory's length for the parameter count.
-pub const VERSION_MINOR: u16 = 8;
+/// Bumped from 8 for an open record: a record descriptor now carries whether
+/// `from_json` may ignore an undeclared field, and a reader that did not know
+/// would take that flag for the field count and then read a type section that
+/// happens to decode. A new instruction has twice been judged not to need a
+/// bump, because an old reader meets it as an unknown opcode; a changed section
+/// layout is the other case, where the file decodes into something else.
+pub const VERSION_MINOR: u16 = 9;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -80,8 +86,9 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u8(t.tag());
         match t {
             TypeDesc::Task(inner) | TypeDesc::List(inner) => w.u32(*inner),
-            TypeDesc::Object { name, fields } => {
+            TypeDesc::Object { name, fields, open } => {
                 w.str(name);
+                w.u8(*open as u8);
                 w.u8(fields.len() as u8);
                 for (field_name, field_type) in fields {
                     w.str(field_name);
@@ -343,12 +350,13 @@ fn decode_types(body: &[u8]) -> Result<Vec<TypeDesc>> {
             6 => TypeDesc::List(r.u32()?),
             7 => {
                 let name = r.str()?;
+                let open = r.u8()? != 0;
                 let field_count = r.u8()? as usize;
                 let mut fields = Vec::with_capacity(field_count);
                 for _ in 0..field_count {
                     fields.push((r.str()?, r.u32()?));
                 }
-                TypeDesc::Object { name, fields }
+                TypeDesc::Object { name, fields, open }
             }
             other => return Err(DecodeError::new(format!("unknown type tag {other}"))),
         });
@@ -583,6 +591,15 @@ mod tests {
                 TypeDesc::Object {
                     name: "Answer".into(),
                     fields: vec![("text".into(), 4), ("score".into(), 2)],
+                    open: false,
+                },
+                // Both settings of the flag, because one of them encodes as a
+                // zero byte and a writer that forgot it entirely would still
+                // round-trip the other.
+                TypeDesc::Object {
+                    name: "Line".into(),
+                    fields: vec![("reason".into(), 4)],
+                    open: true,
                 },
             ],
             funcs: vec![

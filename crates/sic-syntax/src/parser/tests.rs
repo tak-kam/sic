@@ -143,6 +143,34 @@ fn type_declarations() {
 }
 
 #[test]
+fn a_type_may_describe_part_of_a_document() {
+    let out = ok("type Line {\n  reason: String,\n  ..\n}\nfn main() { }");
+    assert!(out.contains("(type Line (reason String) ..)"), "{out}");
+    // It sits where a field would, so it is separated like one: the comma
+    // after `reason` is the same comma two fields would need.
+    let out = ok("type Line { reason: String, .. }\nfn main() { }");
+    assert!(out.contains("(type Line (reason String) ..)"), "{out}");
+    // A type may be nothing but the marker, and it then describes any object.
+    let out = ok("type Anything { .. }\nfn main() { }");
+    assert!(out.contains("(type Anything ..)"), "{out}");
+}
+
+#[test]
+fn the_marker_has_to_be_the_last_thing_in_the_body() {
+    // It reads as "and the rest", and there is nowhere else for the rest to be.
+    assert_eq!(
+        codes("type Line { .., reason: String }\nfn main() { }"),
+        vec!["E0219"]
+    );
+}
+
+#[test]
+fn a_field_access_is_still_two_tokens() {
+    // `..` is one token now, and `a.b` had better not have become one.
+    assert_eq!(expr("p.x"), "(. p x)");
+}
+
+#[test]
 fn struct_literals() {
     let out = ok("type Point { x: Int, y: Int }\nfn main() { let p = Point { x: 1, y: 2 }; }");
     assert!(out.contains("(struct Point (x 1) (y 2))"), "{out}");

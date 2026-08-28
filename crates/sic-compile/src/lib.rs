@@ -224,6 +224,7 @@ impl TypeSection {
             self.descs.push(TypeDesc::Object {
                 name: def.name.clone(),
                 fields: Vec::new(),
+                open: def.open,
             });
             self.index.insert(ty, position);
             let declared: Vec<(String, sic_core::TypeId)> = def.fields.clone();
@@ -234,8 +235,9 @@ impl TypeSection {
                     (field_name, index)
                 })
                 .collect();
-            let name = types.object(*object).name.clone();
-            self.descs[position as usize] = TypeDesc::Object { name, fields };
+            let def = types.object(*object);
+            let (name, open) = (def.name.clone(), def.open);
+            self.descs[position as usize] = TypeDesc::Object { name, fields, open };
             return position;
         }
 

@@ -670,6 +670,7 @@ fn the_verifier_knows_what_a_field_produces() {
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
         fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        open: false,
     });
     assert_ok(&p);
 }
@@ -691,6 +692,7 @@ fn a_field_of_the_wrong_type_is_rejected() {
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
         fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        open: false,
     });
     assert!(
         errors(&p)
@@ -718,6 +720,7 @@ fn a_field_that_does_not_exist_is_rejected() {
     p.types.push(TypeDesc::Object {
         name: "Wrapper".into(),
         fields: vec![("value".into(), index_of(TypeDesc::Int))],
+        open: false,
     });
     assert!(
         errors(&p).iter().any(|m| m.contains("has no field 7")),
