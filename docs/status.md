@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 765 tests.
+Last updated at 774 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -148,8 +148,9 @@ Each is recorded where the decision was made, with the reason:
   to its condition, which nothing in this language does (issue #66)
 - No assignment, so a loop body performs effects rather than accumulating a value: a
   fold is still a recursion, and still costs a frame per element - measured, it stops
-  at about 1020, and the shape somebody writes instead shadows and answers zero
-  without a warning. `docs/design/loops.md` is the design that would change both, and
+  at about 1020, and the shape somebody writes instead is refused rather than run,
+  because a `let` that hides a binding its own initializer reads is E0313 (issue #81,
+  `docs/design/v0.1.md` §2). `docs/design/loops.md` is the design that would change both, and
   it argues for `mut` and `=` rather than a loop-bound accumulator: the narrow form
   is assignment with a restriction bolted on, and it cannot write an agent loop
 - No package registry, no dynamic loading (§11, §33)

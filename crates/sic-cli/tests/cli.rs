@@ -3597,6 +3597,226 @@ mod loops {
     }
 }
 
+/// A `let` in a nested block may not hide a binding its own initializer reads.
+///
+/// `let total = total + x;` inside a loop body is the shape every language
+/// with assignment spells that way, and here it binds a fresh `total` per
+/// iteration and discards it at the closing brace. The program compiled,
+/// warned nothing and answered `0`. E0313 refuses it; issue #81 and
+/// `docs/design/v0.1.md` §2 have the argument, including which shadows are
+/// deliberately left alone.
+mod a_binding_that_hides_one_it_reads {
+    use super::*;
+
+    /// The program the issue was opened about.
+    #[test]
+    fn the_accumulator_somebody_writes_is_refused() {
+        let src = write_temp(
+            "hide-accumulator.sic",
+            "fn main() -> Int {\n\
+             \x20   let total = 0;\n\
+             \x20   for x in [1, 2, 3] {\n\
+             \x20       let total = total + x;\n\
+             \x20   }\n\
+             \x20   return total;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0313"), "{stderr}");
+        // The diagnostic points at both places: the binding that hides, and
+        // the one it reads and leaves alone.
+        assert!(
+            stderr.contains("bound again here from its own value"),
+            "{stderr}"
+        );
+        assert!(stderr.contains("this is what it reads"), "{stderr}");
+        // Until assignment lands there is no correct spelling to point at, so
+        // the note says what v0.1 does have.
+        assert!(stderr.contains("nothing in v0.1 assigns"), "{stderr}");
+        // The wrong answer is not printed alongside the diagnostic.
+        assert!(!stdout.contains('0'), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The same program with an `if` instead of a `for`. The loop is where it
+    /// is written, but the rule is about the block, so this is one bug rather
+    /// than two.
+    #[test]
+    fn the_same_shape_in_an_if_is_refused() {
+        let src = write_temp(
+            "hide-if.sic",
+            "fn main() -> Int {\n\
+             \x20   let total = 0;\n\
+             \x20   if true {\n\
+             \x20       let total = total + 1;\n\
+             \x20   }\n\
+             \x20   return total;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0313"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Two blocks out is the same reach as one.
+    #[test]
+    fn a_binding_hidden_from_two_blocks_out_is_refused() {
+        let src = write_temp(
+            "hide-two-blocks.sic",
+            "fn main() -> Int {\n\
+             \x20   let total = 0;\n\
+             \x20   for x in [1, 2] {\n\
+             \x20       if x > 0 {\n\
+             \x20           let total = total + x;\n\
+             \x20       }\n\
+             \x20   }\n\
+             \x20   return total;\n\
+             }\n",
+        );
+        let (_, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 1, "{stderr}");
+        assert!(stderr.contains("E0313"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A nested binding that does not read the outer one is a different value
+    /// that wants the same name. Refusing it would refuse a program that is
+    /// fine, so it is allowed on purpose.
+    #[test]
+    fn a_nested_binding_that_reads_nothing_still_compiles() {
+        let src = write_temp(
+            "hide-no-read.sic",
+            "fn main() -> Int {\n\
+             \x20   let x = 1;\n\
+             \x20   for y in [1, 2] {\n\
+             \x20       let x = 9;\n\
+             \x20       log info \"one\";\n\
+             \x20   }\n\
+             \x20   return x;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "1");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Rebinding in the same block reads the old value and is allowed on
+    /// purpose: the new binding is what the rest of the block sees, so nothing
+    /// computed here is thrown away.
+    #[test]
+    fn rebinding_in_the_same_block_still_compiles() {
+        let src = write_temp(
+            "hide-same-block.sic",
+            "fn twice(n: Int) -> Int { return n + n; }\n\
+             fn main() -> Int {\n\
+             \x20   let s = 3;\n\
+             \x20   let s = twice(s);\n\
+             \x20   return s;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "6");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// A function body is a block of its own, so a parameter is technically
+    /// enclosing. Issue #81 leaves shadowing a parameter alone, and the
+    /// parameter is in scope for exactly the block that rebinds it.
+    #[test]
+    fn rebinding_a_parameter_still_compiles() {
+        let src = write_temp(
+            "hide-parameter.sic",
+            "fn twice(s: Int) -> Int {\n\
+             \x20   let s = s + s;\n\
+             \x20   return s;\n\
+             }\n\
+             fn main() -> Int { return twice(4); }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "8");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The `for` binding and the body share one scope, so rebinding the loop
+    /// variable inside its own body is a same-block rebinding, allowed for the
+    /// same reason as the one above: the new value lasts as long as the
+    /// iteration that computed it, which is as long as anything in a body can.
+    #[test]
+    fn rebinding_the_loop_variable_still_compiles() {
+        let src = write_temp(
+            "hide-loop-variable.sic",
+            "fn main() -> Int {\n\
+             \x20   let n = 0;\n\
+             \x20   for n in [1, 2, 3] {\n\
+             \x20       let n = n + 1;\n\
+             \x20       log info \"one\";\n\
+             \x20   }\n\
+             \x20   return n;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "0");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// `let x = 1; let x = 2;` stays legal, and this test says so on purpose:
+    /// the answer is the last binding, which is what the program reads like.
+    /// What would report it is an unused-binding warning, which is another
+    /// rule about another thing and does not exist.
+    #[test]
+    fn a_same_block_shadow_that_reads_nothing_still_compiles() {
+        let src = write_temp(
+            "hide-same-block-no-read.sic",
+            "fn main() -> Int {\n\
+             \x20   let x = 1;\n\
+             \x20   let x = 2;\n\
+             \x20   return x;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["run", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert_eq!(stdout.trim(), "2");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Every program under `examples/` and `workflows/` still compiles. A rule
+    /// that refuses working programs is a rule with a false positive rate, and
+    /// this is where that would show.
+    #[test]
+    fn every_example_still_compiles() {
+        let root = format!("{}/../..", env!("CARGO_MANIFEST_DIR"));
+        let mut checked = 0;
+        for dir in ["examples", "workflows"] {
+            let entries = std::fs::read_dir(format!("{root}/{dir}")).expect("the directory exists");
+            for entry in entries {
+                let path = entry.unwrap().path();
+                if path.extension().and_then(|e| e.to_str()) != Some("sic") {
+                    continue;
+                }
+                let out = std::env::temp_dir()
+                    .join(format!("sic-test-{}-hide-example.sicb", std::process::id()));
+                let (_, stderr, code) = sic(&[
+                    "compile",
+                    path.to_str().unwrap(),
+                    "-o",
+                    out.to_str().unwrap(),
+                ]);
+                assert_eq!(code, 0, "{}: {stderr}", path.display());
+                assert!(!stderr.contains("E0313"), "{}: {stderr}", path.display());
+                std::fs::remove_file(out).ok();
+                checked += 1;
+            }
+        }
+        assert!(checked > 10, "only {checked} programs were checked");
+    }
+}
+
 /// agents.
 mod agents {
     use super::*;
