@@ -62,6 +62,7 @@ fn well_formed() -> Program {
             attempts: 3,
             timeout_ms: 500,
             budget: 0,
+            budget_group: 0,
             conversation: 0,
             tools: 0,
             deadline_ms: 0,

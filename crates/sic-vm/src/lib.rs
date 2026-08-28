@@ -89,7 +89,8 @@ pub enum FailKind {
     /// A document did not parse, or did not fit the type it was checked
     /// against. The detail says which and where.
     Schema,
-    /// A call site ran out of the budget its policy gave it.
+    /// A call ran out of the budget its policy spends from. Not the call
+    /// site's own budget: the sites an agent lowers to share one.
     OutOfBudget,
     /// A task was awaited whose result had already been taken.
     TaskAlreadyAwaited,
@@ -119,7 +120,7 @@ impl FailKind {
             FailKind::IndexOutOfRange => "the index is outside the list",
             FailKind::FieldNotThere => "the field was not in the document",
             FailKind::Schema => "the document does not fit the type",
-            FailKind::OutOfBudget => "the call site is out of budget",
+            FailKind::OutOfBudget => "the budget this call spends from is used up",
             FailKind::TaskAlreadyAwaited => "this task has already been awaited",
             FailKind::AwaitedTaskFailed => "the awaited task failed",
             FailKind::Deadlock => "every task is waiting for another task",
@@ -237,9 +238,12 @@ pub struct Vm<'a> {
     /// The span of the run itself, which every task sits inside.
     pub(crate) root_span: SpanId,
     pub(crate) fuel: u64,
-    /// How many times each capability call site has run, for the budgets in
-    /// the policy table. Keyed by pc, because that is what a budget is attached
-    /// to; the VM does not know that some of those sites are agents.
+    /// How many calls each allowance has paid for, for the budgets in the
+    /// policy table. Keyed by the allowance the policy entry names rather than
+    /// by the pc, because a budget is written on a declaration and the sites it
+    /// lowers to have to spend from one place. The VM still does not know that
+    /// some of those sites are agents: it counts against the number the table
+    /// gives it.
     spent: std::collections::HashMap<u32, u32>,
     /// How many of the agent's own tools each call site has used. Counted here
     /// rather than in the broker for the same reason the budget is: it has to
@@ -1800,24 +1804,28 @@ impl<'a> Vm<'a> {
         span: SpanId,
         parent: Option<SpanId>,
     ) -> Result<(), FailInfo> {
-        let Some(budget) = self
-            .program
-            .policy_at(pc)
-            .map(|p| p.budget)
-            .filter(|b| *b > 0)
-        else {
+        let Some(policy) = self.program.policy_at(pc).filter(|p| p.budget > 0) else {
             return Ok(());
         };
-        let used = self.spent.get(&pc).copied().unwrap_or(0) + 1;
+        let (budget, group) = (policy.budget, policy.budget_group);
+        let used = self.spent.get(&group).copied().unwrap_or(0) + 1;
         if used > budget {
-            return Err(self.fail_info(
-                index,
-                FailKind::OutOfBudget,
-                None,
-                Some(format!("`{name}` may run {budget} time(s) in a run")),
-            ));
+            // How many sites the allowance covers, because a reader who is
+            // told only the number will look at the site the run stopped at
+            // and count the calls it made. The bound is over all of them.
+            let sites = self
+                .program
+                .policies
+                .iter()
+                .filter(|p| p.budget_group == group)
+                .count();
+            let detail = match sites {
+                1 => format!("`{name}` may run {budget} time(s) in a run"),
+                n => format!("`{name}` may run {budget} time(s) in a run, from {n} call site(s)"),
+            };
+            return Err(self.fail_info(index, FailKind::OutOfBudget, None, Some(detail)));
         }
-        self.spent.insert(pc, used);
+        self.spent.insert(group, used);
 
         self.journal.emit_for(
             TaskId(index as u64),

@@ -49,7 +49,13 @@ pub const VERSION_MAJOR: u16 = 0;
 /// length. This is the same case as 9, one level further in - and note that the
 /// two new opcodes it arrived with are not: an old reader meets those as
 /// unknown instructions and says so.
-pub const VERSION_MINOR: u16 = 11;
+/// Bumped from 11 for the allowance a budget draws on: a policy entry now says
+/// which count a site spends from, one word after the budget, and a reader that
+/// did not know would take it for the conversation and every field after it for
+/// the one before. The same case as 9 and 11, in the policy table this time -
+/// and the reason for the field is in `agents.md` §6: a budget is written on an
+/// agent, so the sites it lowers to have to share one count.
+pub const VERSION_MINOR: u16 = 12;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -171,6 +177,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(policy.attempts);
         w.u32(policy.timeout_ms);
         w.u32(policy.budget);
+        w.u32(policy.budget_group);
         w.u32(policy.conversation);
         w.u32(policy.tools);
         w.u32(policy.deadline_ms);
@@ -477,7 +484,7 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 
 fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
     let mut r = Reader::new(body);
-    let n = r.count(28)?;
+    let n = r.count(32)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(PolicyEntry {
@@ -485,6 +492,7 @@ fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
             attempts: r.u32()?,
             timeout_ms: r.u32()?,
             budget: r.u32()?,
+            budget_group: r.u32()?,
             conversation: r.u32()?,
             tools: r.u32()?,
             deadline_ms: r.u32()?,
@@ -558,6 +566,7 @@ mod tests {
                 attempts: 3,
                 timeout_ms: 500,
                 budget: 8,
+                budget_group: 1,
                 conversation: 0,
                 tools: 0,
                 deadline_ms: 0,
@@ -701,6 +710,7 @@ mod tests {
                     attempts: 1,
                     timeout_ms: 0,
                     budget: 0,
+                    budget_group: 0,
                     conversation: 0,
                     tools: 0,
                     deadline_ms: 0,
@@ -710,6 +720,7 @@ mod tests {
                     attempts: u32::MAX,
                     timeout_ms: 30_000,
                     budget: 4,
+                    budget_group: 2,
                     conversation: 9,
                     tools: 200,
                     deadline_ms: 1_800_000,

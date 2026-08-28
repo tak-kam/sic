@@ -69,6 +69,7 @@ fn a_capability_call_is_listed_with_what_bounds_it() {
             kind: CapKind::Read,
             constraint: "./a.txt".into(),
             budget: None,
+            budget_sites: 0,
             attempts: 1,
             timeout_ms: 0,
             alternatives: None,
@@ -86,7 +87,7 @@ fn a_capability_call_is_listed_with_what_bounds_it() {
 }
 
 #[test]
-fn only_a_budget_bounds_a_site_over_a_run() {
+fn only_a_budget_bounds_a_call_over_a_run() {
     // `retry` says how many times one visit may call out; how many visits
     // there are depends on the path taken and on recursion.
     let unbudgeted = plan(
@@ -95,6 +96,7 @@ fn only_a_budget_bounds_a_site_over_a_run() {
             attempts: 5,
             timeout_ms: 250,
             budget: 0,
+            budget_group: 0,
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
@@ -114,6 +116,7 @@ fn only_a_budget_bounds_a_site_over_a_run() {
             attempts: 5,
             timeout_ms: 0,
             budget: 2,
+            budget_group: 1,
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
@@ -122,7 +125,20 @@ fn only_a_budget_bounds_a_site_over_a_run() {
     );
     assert_eq!(budgeted.bounded_calls, 2);
     assert_eq!(budgeted.unbounded_sites, 0);
-    assert!(render(&budgeted, "main.sic").contains("At most 2 capability call(s)"));
+    let text = render(&budgeted, "main.sic");
+    assert!(text.contains("At most 2 capability call(s)"), "{text}");
+    // One site, so the number on its line is its own and the line says
+    // nothing about sharing. The allowance is still named once, under
+    // `Budgets`.
+    assert!(
+        text.contains("at most 2 in a run  5 attempts each"),
+        "{text}"
+    );
+    assert!(!text.contains("shared by"), "{text}");
+    assert!(
+        text.contains("at most 2 fs.read calls in a run, from 1 site: main 3:12"),
+        "{text}"
+    );
 }
 
 #[test]

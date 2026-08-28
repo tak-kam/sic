@@ -41,10 +41,18 @@ pub struct PolicyEntry {
     pub attempts: u32,
     /// Milliseconds, or 0 for no deadline.
     pub timeout_ms: u32,
-    /// How many times this call site may run in a whole run, or 0 for no
+    /// How many calls the allowance below is worth in a whole run, or 0 for no
     /// limit. Counting calls is what can be enforced honestly today; tokens and
     /// cost need the broker to report them.
     pub budget: u32,
+    /// Which allowance those calls come out of. Every site carrying the same
+    /// number shares one count, and 0 goes with a budget of 0.
+    ///
+    /// This is what stops a bound from depending on how many places call the
+    /// thing it is written on. The VM still does not know that some of these
+    /// sites are agents: it counts against the number the table gives it, and
+    /// the compiler is what decides which sites share one.
+    pub budget_group: u32,
     /// Which conversation this call belongs to, or 0 for a fresh one every
     /// time. The broker keeps one per conversation and task, which is what
     /// `memory: task` on an agent declaration asks for.

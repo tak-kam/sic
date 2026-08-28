@@ -30,9 +30,17 @@ pub struct Plan {
     pub functions: Vec<FunctionPlan>,
     /// Every capability the module declares, whether or not it is called.
     pub capabilities: Vec<Grant>,
-    /// The most calls the sites with a budget can make, summed. This is a real
-    /// bound: a budget caps a site over the whole run.
+    /// The most calls the budgets can pay for, summed over the allowances
+    /// rather than over the sites. This is a real bound: a budget caps an
+    /// allowance over the whole run, and the sites that share one share the
+    /// number.
     pub bounded_calls: u64,
+    /// Every budget, once, with the sites that spend from it. A budget is
+    /// written on a declaration and a plan is a list of sites, so this is the
+    /// one place the two can be seen as the same fact - without it a reader of
+    /// two lines saying `at most 3 in a run` has to be told, rather than
+    /// shown, that there is one three between them.
+    pub budgets: Vec<BudgetPlan>,
     /// Call sites with no budget. How often one runs depends on the path taken
     /// and on recursion, so there is no number to give - saying so is better
     /// than inventing one.
@@ -51,6 +59,29 @@ pub struct Plan {
     /// structure. Mixing the two would change what every existing plan prints
     /// to say something the reader of a list did not ask for.
     pub reaches: Vec<Reaches>,
+}
+
+/// One allowance, and every site that spends from it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetPlan {
+    /// The allowance's number in the policy table, which is what the VM counts
+    /// against.
+    pub group: u32,
+    /// The capability every site in it calls. One, because an allowance comes
+    /// from an agent declaration and an agent is one model call.
+    pub cap: String,
+    /// How many calls it is worth over a whole run, however many sites there
+    /// are.
+    pub calls: u32,
+    pub sites: Vec<BudgetSite>,
+}
+
+/// Where a call that spends from an allowance is written.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetSite {
+    pub func: String,
+    pub position: Option<(u32, u32)>,
+    pub file: Option<String>,
 }
 
 /// One function reaching another.
@@ -87,10 +118,15 @@ pub enum Action {
         name: String,
         kind: CapKind,
         constraint: String,
-        /// The most times this site can run in a whole run, from its budget.
-        /// `None` means it has no budget, and how often it runs depends on the
-        /// path taken.
+        /// The most calls the allowance this site spends from is worth, over a
+        /// whole run. `None` means it has no budget, and how often it runs
+        /// depends on the path taken.
         budget: Option<u32>,
+        /// How many sites spend from that allowance, this one included. More
+        /// than one and the number above is not this site's to spend: it is
+        /// what they have between them, which is the thing a line printing
+        /// only the number would let a reader read the other way.
+        budget_sites: usize,
         /// How many times one visit to this site may call out, from `retry`.
         attempts: u32,
         timeout_ms: u32,
@@ -230,7 +266,7 @@ fn options_at(
 /// Reads a program and works out what it may do.
 pub fn plan(program: &Program, digest: Digest) -> Plan {
     let mut functions = Vec::new();
-    let mut bounded_calls: u64 = 0;
+    let mut budgets: Vec<BudgetPlan> = Vec::new();
     let mut unbounded_sites = 0usize;
     let mut called = vec![false; program.caps.len()];
     let mut call_sites: HashMap<String, Vec<String>> = HashMap::new();
@@ -286,8 +322,28 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                     // times one visit may call out, and how many visits there
                     // are depends on the path taken and on recursion.
                     let budget = policy.map(|p| p.budget).filter(|b| *b > 0);
+                    // Recorded against the allowance, not added up. Two sites
+                    // that share one are three calls between them, and a total
+                    // that summed the lines would say six - which is the
+                    // arithmetic #84 was about.
                     match budget {
-                        Some(budget) => bounded_calls += budget as u64,
+                        Some(calls) => {
+                            let group = policy.map(|p| p.budget_group).unwrap_or(0);
+                            let site = BudgetSite {
+                                func: func.name.clone(),
+                                position: program.debug.position(pc),
+                                file: program.debug.file(pc).map(str::to_string),
+                            };
+                            match budgets.iter_mut().find(|b| b.group == group) {
+                                Some(existing) => existing.sites.push(site),
+                                None => budgets.push(BudgetPlan {
+                                    group,
+                                    cap: cap.name.clone(),
+                                    calls,
+                                    sites: vec![site],
+                                }),
+                            }
+                        }
                         None => unbounded_sites += 1,
                     }
                     let alternatives = if cap.name == "human.choose" {
@@ -301,6 +357,10 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         constraint: cap.constraints.clone(),
                         alternatives,
                         budget,
+                        // Filled in once every function has been read: how
+                        // many sites share an allowance is not known while the
+                        // first of them is being written down.
+                        budget_sites: 0,
                         attempts,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
                         remembers: policy.map(|p| p.conversation != 0).unwrap_or(false),
@@ -340,6 +400,28 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         }
     }
 
+    // A site's line says how many sites its allowance covers, which nothing
+    // could say until all of them had been found.
+    for function in &mut functions {
+        for step in &mut function.steps {
+            let pc = step.pc;
+            if let Action::Capability {
+                budget: Some(_),
+                budget_sites,
+                ..
+            } = &mut step.action
+            {
+                let group = program.policy_at(pc).map(|p| p.budget_group).unwrap_or(0);
+                *budget_sites = budgets
+                    .iter()
+                    .find(|b| b.group == group)
+                    .map(|b| b.sites.len())
+                    .unwrap_or(1);
+            }
+        }
+    }
+    let bounded_calls = budgets.iter().map(|b| b.calls as u64).sum();
+
     let capabilities: Vec<Grant> = program
         .caps
         .iter()
@@ -370,6 +452,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         functions,
         capabilities,
         bounded_calls,
+        budgets,
         unbounded_sites,
         unused,
         multi_file: program.debug.sources.len() > 1,
@@ -395,6 +478,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     name,
                     constraint,
                     budget,
+                    budget_sites,
                     attempts,
                     timeout_ms,
                     alternatives,
@@ -410,8 +494,16 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     if *remembers {
                         out.push_str("  in one conversation per task");
                     }
+                    // The number is the allowance's, so where more than one
+                    // site draws on it the line has to say so. `at most 3 in a
+                    // run` printed at two sites is what a reader takes for
+                    // three apiece, and the run they then approve makes three
+                    // calls between them.
                     if let Some(budget) = budget {
                         out.push_str(&format!("  at most {budget} in a run"));
+                        if *budget_sites > 1 {
+                            out.push_str(&format!(", shared by {budget_sites} sites"));
+                        }
                     }
                     if *attempts > 1 {
                         out.push_str(&format!("  {attempts} attempts each"));
@@ -560,7 +652,41 @@ pub fn render(plan: &Plan, source: &str) -> String {
         ));
     }
 
-    // Only a budget bounds a site over a whole run, so only those are summed.
+    // The budgets, once each, with what spends them. The list above is by
+    // function, so an allowance shared by two functions appears twice there
+    // and nowhere as one thing; this is where it is one thing.
+    if !plan.budgets.is_empty() {
+        out.push_str("\nBudgets:\n");
+        for budget in &plan.budgets {
+            let sites: Vec<String> = budget
+                .sites
+                .iter()
+                .map(|site| match (site.position, plan.multi_file, &site.file) {
+                    (Some((line, col)), true, Some(file)) => {
+                        format!("{} {file}:{line}:{col}", site.func)
+                    }
+                    (Some((line, col)), _, _) => format!("{} {line}:{col}", site.func),
+                    (None, _, _) => site.func.clone(),
+                })
+                .collect();
+            let calls = match budget.calls {
+                1 => "call",
+                _ => "calls",
+            };
+            let where_from = match sites.len() {
+                1 => "1 site".to_string(),
+                n => format!("{n} sites"),
+            };
+            out.push_str(&format!(
+                "  at most {} {} {calls} in a run, from {where_from}: {}\n",
+                budget.calls,
+                budget.cap,
+                sites.join(", ")
+            ));
+        }
+    }
+
+    // Only a budget bounds a call over a whole run, so only those are summed.
     // A site with no budget gets no number, because a number that ignores
     // recursion would be a guess dressed as a fact.
     out.push('\n');
@@ -726,6 +852,7 @@ fn verb_of(grant: &Grant) -> &'static str {
         kind: grant.kind,
         constraint: String::new(),
         budget: None,
+        budget_sites: 0,
         attempts: 1,
         timeout_ms: 0,
         alternatives: None,

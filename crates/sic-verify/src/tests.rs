@@ -876,3 +876,74 @@ fn len_needs_a_list_or_a_string() {
         errors(&p)
     );
 }
+
+/// A budget the VM cannot count against anything.
+///
+/// The compiler cannot write one - a budget and the allowance it draws on are
+/// one value above the bytecode - but a file can, and a file that did would
+/// declare a bound nothing enforces.
+#[test]
+fn a_budget_must_name_an_allowance() {
+    let mut p = with_exec_capability(
+        2,
+        vec![Const::Str("/usr/bin/true".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.policies.push(PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 3,
+        budget_group: 0,
+        conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+    });
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("no allowance to count it against")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// And two sites in one allowance have to agree about how large it is, because
+/// the VM reads the size from whichever of them the run reached.
+#[test]
+fn sites_that_share_an_allowance_must_agree_about_its_size() {
+    let mut p = with_exec_capability(
+        2,
+        vec![Const::Str("/usr/bin/true".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.funcs[0].code_len = 4;
+    for (pc, budget) in [(1, 3), (2, 5)] {
+        p.policies.push(PolicyEntry {
+            pc,
+            attempts: 1,
+            timeout_ms: 0,
+            budget,
+            budget_group: 1,
+            conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
+        });
+    }
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("disagrees about its size, 5 against 3")),
+        "{:?}",
+        errors(&p)
+    );
+}

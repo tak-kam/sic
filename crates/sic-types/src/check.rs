@@ -69,6 +69,13 @@ pub struct AgentInfo {
     pub output: TypeId,
     /// How many model calls the agent may make in a whole run.
     pub budget: Option<u32>,
+    /// The allowance those calls draw on, or 0 when there is no budget.
+    ///
+    /// A number for the same reason `conversation` is one, and a different
+    /// number: the budget is written on the agent, so every call site the
+    /// agent lowers to has to count against one place. Two agents that both
+    /// declare `budget: 3` are two allowances of three, not one of six.
+    pub budget_group: u32,
     /// The conversation this agent's calls belong to, when it keeps one, and
     /// `None` when every call starts a fresh one.
     ///
@@ -713,11 +720,18 @@ impl Checker {
                 true => Some(self.agents.len() as u32 + 1),
                 false => None,
             };
+            // Numbered from one for the same reason, and only where there is
+            // something to count: a site with no budget draws on nothing.
+            let budget_group = match decl.budget {
+                Some(_) => self.agents.len() as u32 + 1,
+                None => 0,
+            };
             self.agents.push(AgentInfo {
                 name: decl.name.name.clone(),
                 input,
                 output,
                 budget: decl.budget,
+                budget_group,
                 conversation,
                 tools: decl.tools,
                 deadline_ms: decl.deadline_ms,

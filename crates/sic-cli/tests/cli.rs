@@ -3677,6 +3677,154 @@ mod agents {
 
         std::fs::remove_file(out).ok();
     }
+
+    /// One agent, `budget: 2`, called from two places.
+    ///
+    /// The declaration says two and there are two call sites, which is the
+    /// whole of #84: counted per site this program may make four model calls,
+    /// and nothing in the source, the declaration or the plan's per-line text
+    /// says so.
+    const TWO_SITES: &str = "type D { cause: String }\n\
+                             allow {\n\
+                             \x20   llm.invoke \"claude-opus-4\";\n\
+                             }\n\
+                             agent diagnose { input: String, output: D, budget: 2 }\n\
+                             fn ask() -> LLM<String> {\n\
+                             \x20   let d = diagnose(\"why?\");\n\
+                             \x20   return d.cause;\n\
+                             }\n\
+                             fn ask_again() -> LLM<String> {\n\
+                             \x20   let d = diagnose(\"why, again?\");\n\
+                             \x20   return d.cause;\n\
+                             }\n\
+                             fn main() -> LLM<String> {\n\
+                             \x20   let first = ask();\n\
+                             \x20   let second = ask_again();\n\
+                             \x20   return second;\n\
+                             }\n";
+
+    /// The load-bearing one: the two sites spend from one count, and it
+    /// survives the checkpoint between them.
+    ///
+    /// `budget: 2left` printed twice is what this used to say - two calls,
+    /// each charged to a site of its own, against a declaration that said two.
+    #[test]
+    fn an_agent_called_from_two_places_spends_one_budget() {
+        let store = temp_store("budget-shared");
+        let src = write_temp("budget-shared.sic", TWO_SITES);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        // The first site's call, and the run stops at the second.
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", r#"{"cause": "disk full"}"#],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        // The second site's, which finishes the run.
+        let (stdout, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", r#"{"cause": "still disk full"}"#],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+        assert_eq!(stdout, "\"still disk full\"\n");
+
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("call llm.invoke  (budget: 1 left)"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("call llm.invoke  (budget: 0 left)"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// And a site that has never run can be the one that is refused, because
+    /// what ran out was not its.
+    #[test]
+    fn a_budget_runs_out_at_a_site_that_has_not_been_used() {
+        let store = temp_store("budget-shared-out");
+        let src = write_temp(
+            "budget-shared-out.sic",
+            &TWO_SITES.replace("budget: 2", "budget: 1"),
+        );
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["attach", &id, "--value", r#"{"cause": "disk full"}"#],
+        );
+        assert_eq!(code, 1, "stderr: {stderr}");
+        assert!(
+            stderr.contains("the budget this call spends from is used up"),
+            "{stderr}"
+        );
+        // The message says the bound covers both sites: a reader who is told
+        // only the number will look at the site that failed and count the one
+        // call it has made.
+        assert!(
+            stderr.contains("`llm.invoke` may run 1 time(s) in a run, from 2 call site(s)"),
+            "{stderr}"
+        );
+        // And it stopped at the second site, which had never run.
+        assert!(stderr.contains(":11:13"), "{stderr}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The plan and the run say the same number, which is the part of #84 with
+    /// a reader on the other end: the summary line's arithmetic used to be the
+    /// only place the truth appeared, and it appeared as a result rather than
+    /// as a correction.
+    #[test]
+    fn the_plan_says_one_budget_and_which_sites_share_it() {
+        let src = write_temp("budget-shared-plan.sic", TWO_SITES);
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+
+        // Every site's line carries the number and says it is not its own.
+        assert_eq!(
+            stdout
+                .matches("at most 2 in a run, shared by 2 sites")
+                .count(),
+            2,
+            "{stdout}"
+        );
+        // The allowance once, with both sites under it, so a reader is shown
+        // that there is one two rather than told about it afterwards.
+        assert!(
+            stdout.contains(
+                "at most 2 llm.invoke calls in a run, from 2 sites: ask 7:13, ask_again 11:13"
+            ),
+            "{stdout}"
+        );
+        // And the total agrees with both, rather than being their sum.
+        assert!(stdout.contains("At most 2 capability call(s)."), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+    }
 }
 
 /// exporting.

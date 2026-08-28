@@ -424,7 +424,10 @@ impl<'a> FnLower<'a> {
                                 cap: info.cap,
                                 args,
                                 policy: crate::hir::CallPolicy {
-                                    budget: info.budget,
+                                    budget: info.budget.map(|calls| crate::hir::Allowance {
+                                        calls,
+                                        group: info.budget_group,
+                                    }),
                                     conversation: info.conversation,
                                     tools: info.tools,
                                     deadline_ms: info.deadline_ms,

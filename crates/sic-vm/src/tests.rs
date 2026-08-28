@@ -1264,6 +1264,7 @@ fn a_failed_call_is_retried_up_to_the_policy() {
         attempts: 3,
         timeout_ms: 0,
         budget: 0,
+        budget_group: 0,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
@@ -1310,6 +1311,7 @@ fn the_timeout_travels_with_the_request() {
         attempts: 1,
         timeout_ms: 250,
         budget: 0,
+        budget_group: 0,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
@@ -1673,13 +1675,15 @@ fn a_whole_number_fits_a_float_but_not_the_other_way() {
 #[test]
 fn a_call_site_runs_out_of_budget() {
     // The VM enforces the budget without knowing that this call site is an
-    // agent: a budget is attached to a pc, and that is all it needs.
+    // agent: a policy entry says how many calls an allowance is worth and
+    // which allowance this site spends from, and that is all it needs.
     let mut p = exec_program();
     p.policies.push(sic_bytecode::PolicyEntry {
         pc: 1,
         attempts: 1,
         timeout_ms: 0,
         budget: 1,
+        budget_group: 1,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
@@ -1710,6 +1714,7 @@ fn exceeding_a_budget_fails_the_run() {
         attempts: 1,
         timeout_ms: 0,
         budget: 1,
+        budget_group: 1,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
@@ -1729,6 +1734,76 @@ fn exceeding_a_budget_fails_the_run() {
     }
 }
 
+/// Two call sites, one allowance, and the second call is the one that is
+/// refused.
+///
+/// This is the whole of #84 at the level that enforces it. Keyed by pc, each
+/// site had a count of its own and both calls went through - so splitting a
+/// function in two doubled what the declaration said, and nothing in the
+/// bytecode recorded that it had.
+#[test]
+fn two_sites_that_share_an_allowance_share_its_count() {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            2,
+            vec![
+                Inst::abx(Op::LoadConst, 1, 0),
+                Inst::abc(Op::CallCap, 0, 0, 1),
+                Inst::abc(Op::CallCap, 0, 0, 1),
+                Inst::abc(Op::Return, 0, 0, 0),
+            ],
+        )],
+        vec![Const::Str("/usr/bin/true".into())],
+    );
+    p.caps.push(sic_bytecode::CapDecl {
+        name: "process.exec".into(),
+        kind: sic_core::CapKind::Exec,
+        constraints: "/usr/bin/true".into(),
+        pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
+        repeatable: false,
+        delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
+        args: Vec::new(),
+        params: vec![4],
+        ret_type: 2,
+    });
+    for pc in [1, 2] {
+        p.policies.push(sic_bytecode::PolicyEntry {
+            pc,
+            attempts: 1,
+            timeout_ms: 0,
+            budget: 1,
+            budget_group: 1,
+            conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
+        });
+    }
+
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
+    match vm.resume(sic_core::CapValue::I64(0)) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::OutOfBudget);
+            // And the message says the bound is over both of them, because a
+            // reader looking at the site that failed can count one call there.
+            assert!(
+                info.detail
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("1 time(s) in a run, from 2 call site(s)"),
+                "{info:?}"
+            );
+        }
+        other => panic!("expected the second site to be refused, got {other:?}"),
+    }
+}
+
 #[test]
 fn a_budget_survives_a_checkpoint() {
     // Otherwise resuming would hand the run a fresh allowance.
@@ -1738,6 +1813,10 @@ fn a_budget_survives_a_checkpoint() {
         attempts: 1,
         timeout_ms: 0,
         budget: 3,
+        // Deliberately not the pc: what travels is the allowance, and a
+        // checkpoint that keyed this by the call site would hand a resumed run
+        // one count per site instead of one per declaration.
+        budget_group: 7,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
@@ -1747,7 +1826,7 @@ fn a_budget_survives_a_checkpoint() {
     assert!(matches!(vm.run(0, &[]), Status::Suspended(_)));
     let bytes = vm.checkpoint(program_digest(), "?").unwrap();
     let saved = Checkpoint::decode(&bytes).unwrap();
-    assert_eq!(saved.spent, vec![(1, 1)]);
+    assert_eq!(saved.spent, vec![(7, 1)]);
 }
 
 /// A call the budget refused is not charged and not recorded.
@@ -1768,6 +1847,7 @@ fn a_refused_call_is_not_billed_for() {
         attempts: 1,
         timeout_ms: 0,
         budget: 1,
+        budget_group: 1,
         conversation: 0,
         tools: 0,
         deadline_ms: 0,

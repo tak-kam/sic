@@ -185,9 +185,43 @@ impl<'a> Verifier<'a> {
     }
 
     /// A policy names a call site, so the site has to be a capability call.
+    ///
+    /// And a budget has to be a bound something can actually count. The VM
+    /// counts a call against the allowance its own policy entry names, so a
+    /// budget with no allowance would be enforced against nothing, and two
+    /// sites in one allowance that disagree about its size would be enforced
+    /// as whichever of the two the run reached. Both are unwritable by the
+    /// compiler and neither is unwritable by a file: this is where a file is
+    /// refused rather than half-understood.
     fn check_policies(&mut self) {
         let p = self.program;
+        let mut allowances: Vec<(u32, u32)> = Vec::new();
         for policy in &p.policies {
+            if policy.budget > 0 && policy.budget_group == 0 {
+                self.error(
+                    None,
+                    None,
+                    format!(
+                        "the policy at {} has a budget and no allowance to count it against",
+                        policy.pc
+                    ),
+                );
+            }
+            if policy.budget_group != 0 {
+                match allowances.iter().find(|(g, _)| *g == policy.budget_group) {
+                    Some((_, calls)) if *calls != policy.budget => self.error(
+                        None,
+                        None,
+                        format!(
+                            "the policy at {} shares allowance {} and disagrees about its size, \
+                             {} against {calls}",
+                            policy.pc, policy.budget_group, policy.budget
+                        ),
+                    ),
+                    Some(_) => {}
+                    None => allowances.push((policy.budget_group, policy.budget)),
+                }
+            }
             match p.code.get(policy.pc as usize).and_then(|i| i.op()) {
                 Some(Op::CallCap) => {}
                 _ => self.error(

@@ -400,9 +400,11 @@ is decided once, here, rather than discovered one at a time.
 
 ## 8. Budget: three numbers, because there are three enforcement points
 
-`budget: N` counts capability calls, is enforced by the VM against a pc in the
-policy table, and travels in checkpoints so that resuming does not hand a run a
-fresh allowance. Compared with the field that is the good half: it is *hard*.
+`budget: N` counts capability calls, is enforced by the VM against an allowance
+named in the policy table, and travels in checkpoints so that resuming does not
+hand a run a fresh allowance. The allowance rather than the call site, because
+the number is written on the declaration: an agent called from two places is
+bounded by what it says, not by twice it (`agents.md` §6). Compared with the field that is the good half: it is *hard*.
 `task_budget` in Anthropic's API is advisory - the model sees a countdown and
 paces itself - and the client-library limits elsewhere are enforced by the
 client. sic enforces its budget inside the machine that is executing, which
@@ -421,7 +423,7 @@ in one sentence, so there are three fields and each has one:
 agent refactorer {
     input: String,
     output: Patch,
-    budget: 20,             // model calls  - the VM, against a pc
+    budget: 20,             // model calls  - the VM, against an allowance
     tools: 200,             // tool uses    - the broker, through the hook
     deadline: 1800000,      // wall clock   - the broker, which has the clock
 }
@@ -467,7 +469,7 @@ to do with it. This section claimed to replace both; it replaces one.
 | `budget` | yes | already does; otherwise resuming hands the run a fresh allowance |
 | `tools` | yes | same argument, same reason |
 | `deadline` | **no** | it bounds one answer, not the run |
-| the site it belongs to | yes | a count charged to the wrong site is not a bound |
+| the allowance it belongs to | yes | a count charged to the wrong one is not a bound |
 
 The last row is the one with a real answer rather than a preference. A deadline
 that travelled would mean a run that waited two days for a person had spent its
