@@ -240,6 +240,20 @@ impl<'a> Verifier<'a> {
                     format!("the policy at {} allows zero attempts", policy.pc),
                 );
             }
+            // The VM parses against this type before it lets go of the pending
+            // call, so an index out of range would be a panic at the moment an
+            // answer arrives rather than at load.
+            if policy.validates > 0 && p.types.get(policy.validates as usize - 1).is_none() {
+                self.error(
+                    None,
+                    None,
+                    format!(
+                        "the policy at {} validates against type {}, which does not exist",
+                        policy.pc,
+                        policy.validates - 1
+                    ),
+                );
+            }
         }
     }
 

@@ -165,6 +165,10 @@ pub(crate) struct PendingCap {
     /// They travel in the pending call because a retry re-issues the request.
     pub tools: u32,
     pub deadline_ms: u32,
+    /// Why the answer to the previous attempt was rejected, or empty when this
+    /// is the first attempt. Travels to whoever answers, which is the only way
+    /// a retry can say what was wrong with the last one.
+    pub rejected: String,
     /// Which call site this is, so that what the agent used can be counted
     /// against the allowance of the site that allowed it.
     pub pc: u32,
@@ -469,6 +473,13 @@ impl<'a> Vm<'a> {
             Ok(found) => found,
             Err(status) => return status,
         };
+        // Before the answer is anything to the program: does it fit the shape
+        // the agent declared? Here rather than at the `FROM_JSON` that will
+        // check it again, because this is the last moment the call that would
+        // be asked again still exists. Two lines further on it is gone.
+        if let Some(detail) = self.answer_that_does_not_fit(&pending, &value) {
+            return self.reject_answer(index, pending, &value, detail);
+        }
         self.journal.emit_for(
             TaskId(index as u64),
             pending.span,
@@ -483,6 +494,115 @@ impl<'a> Vm<'a> {
         self.tasks[index].regs[pending.reg] = value;
         self.tasks[index].state = TaskState::Ready;
 
+        let status = self.schedule();
+        self.record_end(&status);
+        status
+    }
+
+    /// Why the answer does not fit the type the agent declared, if it does not.
+    ///
+    /// `None` for every call that is not an agent's, which is what a policy
+    /// with no `validates` means, and for every agent whose declaration has no
+    /// `retry`: with one attempt there is nothing this could decide that
+    /// `FROM_JSON` does not decide two instructions later, and the run that
+    /// ends is the same run.
+    ///
+    /// The document is therefore parsed twice on the way to a value - once
+    /// here and once by `FROM_JSON`. That is deliberate. The alternative is a
+    /// second implementation of `build_from_json` that answers yes or no
+    /// without building anything, and two procedures that had to agree about
+    /// what fits a type would disagree, quietly, in the direction that lets a
+    /// bad document through. A model call took seconds; this is a few
+    /// microseconds of it.
+    fn answer_that_does_not_fit(
+        &mut self,
+        pending: &PendingCap,
+        value: &CapValue,
+    ) -> Option<String> {
+        let ty = self
+            .program
+            .policy_at(pending.pc)?
+            .validates
+            .checked_sub(1)?;
+        let CapValue::Str(text) = value else {
+            // An `llm.invoke` answers with text, so anything else is a broker
+            // that did not keep its side of the signature. `FROM_JSON` reports
+            // it, and reporting it twice in two ways would be worse.
+            return None;
+        };
+        let text = text.clone();
+        self.value_from_json(&text, ty).err()
+    }
+
+    /// Records an answer that did not fit, and asks again if an attempt is left.
+    ///
+    /// The retry charges the budget, and a transport retry does not. The two
+    /// are not the same event: a rejected answer is a model that was asked, ran
+    /// and replied, so a bound on model calls that did not count it would be
+    /// counting successes rather than calls. A call the broker could not
+    /// complete produced no answer, and `attempts` is what bounds how many
+    /// times that may be tried.
+    ///
+    /// So the budget is the harder of the two bounds, and it wins: an agent
+    /// with `budget: 2, retry: 3` gets two attempts and a budget error, not
+    /// three attempts. That is the right way round, because the budget is the
+    /// number a person approved.
+    fn reject_answer(
+        &mut self,
+        index: usize,
+        pending: PendingCap,
+        value: &CapValue,
+        detail: String,
+    ) -> Status {
+        self.journal.emit_for(
+            TaskId(index as u64),
+            pending.span,
+            pending.parent,
+            EventKind::AnswerRejected {
+                cap: pending.name.clone(),
+                result: digest_values(std::slice::from_ref(value)),
+                error: detail.clone(),
+                attempt: pending.attempt,
+            },
+        );
+
+        if pending.attempt < pending.attempts {
+            let mut next = pending.clone();
+            next.attempt += 1;
+            next.rejected = detail.clone();
+            match self.charge_budget(index, next.pc, &next.name, next.span, next.parent) {
+                Ok(()) => {
+                    self.journal.emit_for(
+                        TaskId(index as u64),
+                        next.span,
+                        next.parent,
+                        EventKind::CapabilityRequested {
+                            cap: next.name.clone(),
+                            args: digest_values(&next.args),
+                            attempt: next.attempt,
+                        },
+                    );
+                    self.tasks[index].state = TaskState::WaitingCap(next);
+                    let status = self.schedule();
+                    self.record_end(&status);
+                    return status;
+                }
+                // The budget refused the next attempt. The run ends on that
+                // rather than on the shape, because that is what stopped it.
+                Err(info) => {
+                    self.finish_task(index, TaskState::Failed(info));
+                    let status = self.schedule();
+                    self.record_end(&status);
+                    return status;
+                }
+            }
+        }
+
+        // Out of attempts, and the run ends exactly where a program with no
+        // `retry` would have ended it: at the shape, with the message
+        // `FROM_JSON` would have given.
+        let info = self.fail_info(index, FailKind::Schema, None, Some(detail));
+        self.finish_task(index, TaskState::Failed(info));
         let status = self.schedule();
         self.record_end(&status);
         status
@@ -741,6 +861,7 @@ impl<'a> Vm<'a> {
                     conversation: pending.conversation,
                     tools_left: tools_left(&self.used_tools, pending),
                     answer_ms: pending.deadline_ms,
+                    rejected: pending.rejected.clone(),
                 };
                 self.answering = Some(index);
                 return Status::Suspended(request);
@@ -1765,6 +1886,7 @@ impl<'a> Vm<'a> {
             args,
             attempt: 1,
             attempts: policy.map(|p| p.attempts).unwrap_or(1).max(1),
+            rejected: String::new(),
             timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
             conversation: policy.map(|p| p.conversation).unwrap_or(0),
             tools: policy.map(|p| p.tools).unwrap_or(0),
@@ -1927,6 +2049,7 @@ fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
                     conversation: pending.conversation,
                     tools: pending.tools,
                     deadline_ms: pending.deadline_ms,
+                    rejected: pending.rejected.clone(),
                     pc: pending.pc,
                     span: pending.span.0,
                     parent: pending.parent.map(|s| s.0),
@@ -1989,6 +2112,7 @@ fn restore_task(saved: &checkpoint::TaskSnapshot) -> Task {
                     conversation: pending.conversation,
                     tools: pending.tools,
                     deadline_ms: pending.deadline_ms,
+                    rejected: pending.rejected.clone(),
                     pc: pending.pc,
                     span: SpanId(pending.span),
                     parent: pending.parent.map(SpanId),

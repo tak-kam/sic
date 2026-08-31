@@ -129,6 +129,13 @@ pub enum Action {
         budget_sites: usize,
         /// How many times one visit to this site may call out, from `retry`.
         attempts: u32,
+        /// Whether those attempts are about the shape of the answer rather
+        /// than about the broker reaching anybody.
+        ///
+        /// The two read differently and a reader has to be able to tell them
+        /// apart, because only one of them is charged to the budget on the
+        /// same line - so only one of them tempts a reader to multiply.
+        until_it_fits: bool,
         timeout_ms: u32,
         /// How many alternatives a decision offers, for `human.choose`. Read
         /// from the `MAKE_LIST` that built the argument, because how many
@@ -318,6 +325,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                     }
                     let policy = program.policy_at(pc);
                     let attempts = policy.map(|p| p.attempts.max(1)).unwrap_or(1);
+                    let until_it_fits = policy.map(|p| p.validates > 0).unwrap_or(false);
                     // A budget is the only real bound: `retry` says how many
                     // times one visit may call out, and how many visits there
                     // are depends on the path taken and on recursion.
@@ -362,6 +370,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         // first of them is being written down.
                         budget_sites: 0,
                         attempts,
+                        until_it_fits,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
                         remembers: policy.map(|p| p.conversation != 0).unwrap_or(false),
                         tools: policy.map(|p| p.tools).filter(|t| *t > 0),
@@ -480,6 +489,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     budget,
                     budget_sites,
                     attempts,
+                    until_it_fits,
                     timeout_ms,
                     alternatives,
                     remembers,
@@ -506,7 +516,16 @@ pub fn render(plan: &Plan, source: &str) -> String {
                         }
                     }
                     if *attempts > 1 {
-                        out.push_str(&format!("  {attempts} attempts each"));
+                        match until_it_fits {
+                            // Not "each": every attempt comes out of the
+                            // allowance printed just before it, so the number
+                            // above is the whole of what this may do and there
+                            // is nothing here to multiply it by.
+                            true => out.push_str(&format!(
+                                "  at most {attempts} attempts at an answer that fits"
+                            )),
+                            false => out.push_str(&format!("  {attempts} attempts each")),
+                        }
                     }
                     if *timeout_ms > 0 {
                         out.push_str(&format!("  within {timeout_ms}ms"));
@@ -854,6 +873,7 @@ fn verb_of(grant: &Grant) -> &'static str {
         budget: None,
         budget_sites: 0,
         attempts: 1,
+        until_it_fits: false,
         timeout_ms: 0,
         alternatives: None,
         remembers: false,

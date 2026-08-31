@@ -110,6 +110,10 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
                         conversation: policy.conversation.unwrap_or(0),
                         tools: policy.tools.unwrap_or(0),
                         deadline_ms: policy.deadline_ms.unwrap_or(0),
+                        validates: policy
+                            .validates
+                            .map(|ty| types.intern(ty, &hir.types) + 1)
+                            .unwrap_or(0),
                     });
                 }
                 program.funcs.push(FuncDef {

@@ -151,9 +151,14 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
                     |_| {},
                 );
             }
+            // A rejected answer closes the model call's span the way a failed
+            // one does, and the retry's `CapabilityRequested` opens the next.
+            // One span per attempt rather than one per site, which is what a
+            // trace of a harness has to show for the retry to be visible at all.
             EventKind::RunFailed { error }
             | EventKind::TaskFailed { error }
-            | EventKind::CapabilityFailed { error, .. } => {
+            | EventKind::CapabilityFailed { error, .. }
+            | EventKind::AnswerRejected { error, .. } => {
                 close(
                     &mut open,
                     &mut finished,

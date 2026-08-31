@@ -340,14 +340,146 @@ than a call count first.
 
 ---
 
+## 6a. `retry`: asking again when the answer does not fit
+
+The most characteristic thing a harness does is ask again because the answer
+did not fit, and until #83 that was the one thing this language could not
+express. `agent` validated and refused `retry`; `llm.invoke` could be retried
+and its answer could not be validated. The two halves were in different places
+and there was no way to put them together.
+
+```text
+agent propose {
+    input: String,
+    output: Fix,
+    budget: 3,
+    retry: 3,
+}
+```
+
+`retry: N` is a total, not extra attempts, which is what `retry N` after a
+capability call has always meant. `retry: 1` and no `retry` are the same thing,
+and that is what every agent written before this meant.
+
+### Why it is a field of the declaration
+
+`retry N` is a word after a call everywhere else in the language, and here it is
+not. The reason is #84's, applied to a second number: **a bound a person
+approves must not depend on how many places call the thing it is written on.**
+A retry at the call site would be multiplied by a refactor that moved nothing,
+and there would be no way to say "three attempts at this agent's answer, wherever
+it is asked from" - which is the only thing anybody means.
+
+It also puts the four numbers that bound an agent in one place, which is what a
+reader of a declaration is entitled to: `budget` for model calls, `retry` for
+asking again, `tools` for tool uses, `deadline` for wall clock. E0330 still
+refuses `retry` after an agent call and its note now names the field.
+
+`retry: N` with N above one needs the grant to say `repeatable`, which is the
+same claim `retry N` after any capability call needs, refused with the same
+E0374. It matters more here than there: an agent with `tools` acts while it
+answers, so a rejected answer can have left work behind it.
+
+### Where it is enforced, and why not at `FROM_JSON`
+
+The check is in `Vm::resume`, the one place every driver's answer arrives -
+`--llm`, `sic attach`, a replay, a resumed checkpoint, the isolated process.
+Not at the `FROM_JSON` two instructions later, for a reason that decides the
+whole shape: **by the time `FROM_JSON` runs, the call it would ask again is
+gone.** The pending call is dropped the moment the answer lands in a register.
+
+So the policy entry carries the type as well as the count, and `resume` parses
+the document against it while the call is still in hand. `FROM_JSON` still runs
+and is still what turns the document into a value; the earlier parse decides
+only whether to ask again. That means the document is parsed twice, and the
+alternative - a second implementation of `build_from_json` that answers yes or
+no without building anything - is two procedures that must agree about what fits
+a type and would disagree quietly, in the direction that lets a bad document
+through. A model call took seconds.
+
+A run that is out of attempts fails exactly where it failed before any of this
+existed: at the shape, with the message `FROM_JSON` gives, at the pc the debug
+section maps back to the agent call. Nothing was bolted on to catch it - there
+is still no `Result`, no exception and no fallible `from_json` a program can
+write, and #77 stays unspent. **A validation failure is still not a value.**
+What changed is that the runtime may ask again before it becomes one.
+
+### A rejected answer is charged to the budget
+
+It has to be. A model that answers badly three times has been called three
+times, and a bound that counted only the successes would not be a bound. So the
+budget is the harder of the two numbers and wins: `budget: 2, retry: 3` gets
+two attempts and a budget error, because the budget is the number a person
+approved and the retry is a ceiling under it.
+
+A transport retry - the broker could not answer at all - is **not** charged, and
+the difference is not an oversight. A call that produced no answer produced no
+model work to bound, and `attempts` is already what bounds how many times that
+may be tried. The budget counts answers.
+
+The two had never met before this: `budget` could only be written on an agent,
+`retry N` could only be written on a call that was not one, so no site in any
+program had both. This is the first thing that puts them on one instruction.
+
+### What the retry says
+
+The natural retry prompt is "your last answer was rejected because X", and
+`harness.md` §5.4 found that a program cannot build it: the rejected answer is
+`LLM<String>`, the reason comes from the type section, and `+` refuses to join
+two provenances. That is `trust.md` being right.
+
+The runtime is not the program, and may write it. The request carries `rejected`
+- the sentence `FROM_JSON` would have printed - and the broker appends it to the
+prompt the program wrote:
+
+```text
+why did it fail?
+
+The last answer did not fit: confidence: expected Int, found a string
+Try again.
+
+Reply with JSON of this shape, and nothing else:
+{"change": string, "confidence": integer}
+```
+
+The program's prompt is untouched; the runtime's half is appended, so a reader
+of a transcript can see which is which. It travels in the checkpoint, because a
+run that stops between two attempts is written out while it waits.
+
+`memory: task` is still worth having and is now doing a different job: it is
+what lets the model see its own rejected answer, where this sentence tells it
+which part of it was wrong. Neither replaces the other, and an agent without
+`memory` is now told enough to try again.
+
+### What `sic plan` says
+
+The line reads `at most 3 in a run  at most 3 attempts at an answer that fits`,
+which is deliberately not the `3 attempts each` a transport retry prints. Since
+every attempt comes out of the allowance named on the same line, the number
+above it is the whole of what the site may do and there is nothing to multiply
+it by. The summary total is unchanged for the same reason.
+
+---
+
 ## 7. What the journal records
 
 ```text
 BudgetConsumed { kind, amount, remaining }
+AnswerRejected { cap, result, error, attempt }
 ```
 
 and nothing else that is specific to agents, which is a change from the first
-draft of this design. `AgentStarted` and `AgentCompleted` would have to be
+draft of this design.
+
+`AnswerRejected` arrived with #83 and is deliberately not a `CapabilityFailed`:
+the broker did its job and the model replied, and an account that called that a
+failure of the call would hide what a reader of a bad run most needs to see.
+The digest is the answer, so a recorded run's values file holds the document
+itself; `error` is what `FROM_JSON` would have said. It is followed by another
+`CapabilityRequested` when an attempt is left, and by nothing when there is not.
+The metric is its own, `sic.capability.answers_rejected`, for the same reason:
+an operator watching a model that started answering badly does not want a
+broker that could not connect in the same line. `AgentStarted` and `AgentCompleted` would have to be
 emitted by something that knows what an agent is, and the whole point of the
 lowering is that nothing below the checker does. An agent's work already appears
 as what it is: a function activation, a capability request and completion, and -
@@ -370,6 +502,11 @@ spent rather than only when it runs out.
   this project is after.
 - **No tool calls and no agent loops.** They need a budget that counts more than
   calls, and a way for an agent to decide it is done.
+- **No retry on a *semantic* judgement.** `retry` asks again when the document
+  does not fit the type. An answer that parses and that the program dislikes -
+  a confidence below a threshold - is a value, and asking again about it is a
+  loop the program writes, as `workflows/harness.sic` does. The two failures are
+  different and only one of them is the runtime's to see.
 - **No memory or execution history on an agent.** Both are state that outlives a
   run, which is a question about where state lives, not about agents.
 - **No token or cost budgets.** The broker would have to report them, which

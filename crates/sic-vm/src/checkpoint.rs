@@ -31,7 +31,7 @@ pub const VERSION_MAJOR: u16 = 0;
 /// to, and a reader that stopped after the timeout would take that for a span.
 /// Bumped from 4 for an agent's tool allowance and answer deadline, and for the
 /// call site they belong to.
-pub const VERSION_MINOR: u16 = 5;
+pub const VERSION_MINOR: u16 = 6;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -139,6 +139,10 @@ pub struct Pending {
     /// a resume as well as before one.
     pub tools: u32,
     pub deadline_ms: u32,
+    /// Why the previous attempt's answer was rejected, or empty. A run that
+    /// suspends between two attempts is checkpointed here, so without this the
+    /// reason would survive the wait only for a run that never stopped.
+    pub rejected: String,
     pub pc: u32,
     pub span: u64,
     pub parent: Option<u64>,
@@ -510,6 +514,7 @@ fn write_state(w: &mut Writer, state: &TaskStateSnapshot) {
             w.u32(pending.conversation);
             w.u32(pending.tools);
             w.u32(pending.deadline_ms);
+            w.str(&pending.rejected);
             w.u32(pending.pc);
             w.u64(pending.span);
             write_option_u64(w, pending.parent);
@@ -556,6 +561,7 @@ fn read_state(r: &mut Reader<'_>) -> Result<TaskStateSnapshot> {
                 conversation: r.u32()?,
                 tools: r.u32()?,
                 deadline_ms: r.u32()?,
+                rejected: r.str()?,
                 pc: r.u32()?,
                 span: r.u64()?,
                 parent: read_option_u64(r)?,

@@ -121,6 +121,12 @@ fn kind_from_json(json: &Json) -> Option<EventKind> {
             error: string(json, "error")?.to_string(),
             attempt: int(json, "attempt")? as u32,
         },
+        "answer_rejected" => EventKind::AnswerRejected {
+            cap: string(json, "cap")?.to_string(),
+            result: digest(json, "result")?,
+            error: string(json, "error")?.to_string(),
+            attempt: int(json, "attempt")? as u32,
+        },
         "task_started" => EventKind::TaskStarted {
             func: string(json, "func")?.to_string(),
         },
@@ -247,6 +253,12 @@ mod tests {
             cap: "fs.read".into(),
             error: "no".into(),
             attempt: 3,
+        });
+        round_trip(EventKind::AnswerRejected {
+            cap: "llm.invoke".into(),
+            result: d,
+            error: "confidence: expected Int, found a string".into(),
+            attempt: 2,
         });
         round_trip(EventKind::TaskStarted {
             func: "work".into(),

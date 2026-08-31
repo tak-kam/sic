@@ -61,6 +61,17 @@ pub fn event_to_json(event: &Event) -> String {
             field_str(&mut out, "error", error, false);
             field_u64(&mut out, "attempt", *attempt as u64, false);
         }
+        EventKind::AnswerRejected {
+            cap,
+            result,
+            error,
+            attempt,
+        } => {
+            field_str(&mut out, "cap", cap, false);
+            field_str(&mut out, "result", &result.to_string(), false);
+            field_str(&mut out, "error", error, false);
+            field_u64(&mut out, "attempt", *attempt as u64, false);
+        }
         EventKind::TaskStarted { func } => field_str(&mut out, "func", func, false),
         EventKind::TaskCompleted { result } => {
             field_str(&mut out, "result", &result.to_string(), false)

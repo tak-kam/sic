@@ -87,6 +87,16 @@ pub struct AgentDecl {
     /// use is to say "the usual" is vocabulary that earns nothing, and the
     /// absence of the field already reads as what it means.
     pub memory: bool,
+    /// How many times the agent may ask, in total, when the answer does not
+    /// fit `output`. `None` and `retry: 1` both mean one attempt, which is
+    /// what every agent written before this meant.
+    ///
+    /// A bound on the declaration rather than a word at the call site, for the
+    /// reason `budget` is one: the number is what a person approves, and a
+    /// number that depended on how many places call the agent would be a
+    /// different number after a refactor that moved nothing. See
+    /// `docs/design/agents.md` §6a.
+    pub retry: Option<u32>,
     /// How many tools the agent may use, at this call site, in a whole run.
     pub tools: Option<u32>,
     /// How long it has to produce one answer, in milliseconds.

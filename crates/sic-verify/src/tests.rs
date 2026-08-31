@@ -971,11 +971,46 @@ fn a_budget_must_name_an_allowance() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
     assert!(
         errors(&p)
             .iter()
             .any(|m| m.contains("no allowance to count it against")),
+        "{:?}",
+        errors(&p)
+    );
+}
+
+/// The VM parses an answer against this type while the call it would ask again
+/// is still in hand, so an index out of range would be a panic at the moment an
+/// answer arrives. It is a load-time question, and this is where it is asked.
+#[test]
+fn a_validated_call_must_name_a_type_that_exists() {
+    let mut p = with_exec_capability(
+        2,
+        vec![Const::Str("/usr/bin/true".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 0, 0, 1),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.policies.push(PolicyEntry {
+        pc: 1,
+        attempts: 2,
+        timeout_ms: 0,
+        budget: 0,
+        budget_group: 0,
+        conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+        validates: 999,
+    });
+    assert!(
+        errors(&p)
+            .iter()
+            .any(|m| m.contains("which does not exist")),
         "{:?}",
         errors(&p)
     );
@@ -1006,6 +1041,7 @@ fn sites_that_share_an_allowance_must_agree_about_its_size() {
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
+            validates: 0,
         });
     }
     assert!(

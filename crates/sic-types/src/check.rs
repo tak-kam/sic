@@ -84,6 +84,14 @@ pub struct AgentInfo {
     /// the agent and the task, and the task is the only half the broker can
     /// see for itself.
     pub conversation: Option<u32>,
+    /// How many times the agent may ask when the answer does not fit `output`,
+    /// counting the first. `None` is one attempt.
+    ///
+    /// This is the only bound here the VM enforces against something other
+    /// than a count it keeps: it re-asks when `FROM_JSON` would have failed,
+    /// which is why it travels to the bytecode beside the type the answer has
+    /// to fit. See `docs/design/agents.md` §6a.
+    pub retry: Option<u32>,
     /// How many tools the agent may use at this call site in a whole run, and
     /// how long it has to produce one answer. Both are the broker's to enforce:
     /// only it sees the agent's tools, and only it has a clock.
@@ -752,6 +760,24 @@ impl Checker {
                 Some(_) => self.agents.len() as u32 + 1,
                 None => 0,
             };
+            // Asking again performs the effect again, so an agent may only ask
+            // for it where the manifest says so - the same claim `retry N` on a
+            // capability call needs, and the same rule, because it is the same
+            // second call to a model. It matters more here than there: an agent
+            // with `tools` acts while it answers, so a rejected answer can have
+            // left work behind it.
+            if decl.retry.is_some_and(|n| n > 1) && !self.caps[cap.index()].repeatable {
+                self.error(
+                    "E0374",
+                    format!("agent `{}` may not be retried", decl.name.name),
+                    decl.span,
+                    "the `llm.invoke` grant does not say the effect can be repeated",
+                );
+                self.note(
+                    "asking again is a second model call; if that is safe, say so: \
+                     allow { llm.invoke \"...\" repeatable; }",
+                );
+            }
             self.agents.push(AgentInfo {
                 name: decl.name.name.clone(),
                 input,
@@ -759,6 +785,7 @@ impl Checker {
                 budget: decl.budget,
                 budget_group,
                 conversation,
+                retry: decl.retry,
                 tools: decl.tools,
                 deadline_ms: decl.deadline_ms,
                 cap,
@@ -1506,7 +1533,8 @@ impl Checker {
             if is_agent {
                 self.note(
                     "an agent is bounded in its declaration: `budget` for model calls, \
-                     `tools` for tool uses, `deadline` for wall clock",
+                     `retry` for asking again, `tools` for tool uses, `deadline` for \
+                     wall clock",
                 );
             } else {
                 self.note("a function has no effect to retry or to wait for");

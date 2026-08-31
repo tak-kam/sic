@@ -66,6 +66,7 @@ fn well_formed() -> Program {
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
+            validates: 0,
         }],
         debug: DebugInfo {
             sources: vec!["main.sic".into()],

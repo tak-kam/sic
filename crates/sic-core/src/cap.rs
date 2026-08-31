@@ -275,6 +275,18 @@ pub struct CapRequest {
     /// honour it, and this one bounds an answer rather than a call. Keeping them
     /// apart is what stops a program from appearing to have set the other.
     pub answer_ms: u32,
+    /// Why the previous answer was rejected, or empty on a first attempt and
+    /// on every call whose answer nothing validates.
+    ///
+    /// It travels with the request because whoever answers has to be told what
+    /// was wrong with the last one, and only the runtime knows: the program
+    /// cannot build that sentence - the rejected answer came from a model and
+    /// the reason came from the type section, and `+` refuses to join two
+    /// provenances. An agent that remembers would see its own bad answer in the
+    /// conversation and still not be told which field of it did not fit; a
+    /// person answering by hand would see the same question twice with no
+    /// indication that anything had happened.
+    pub rejected: String,
 }
 
 /// What came back from a capability call.
@@ -446,6 +458,7 @@ impl CapRequest {
         w.u32(self.conversation);
         w.u32(self.tools_left);
         w.u32(self.answer_ms);
+        w.str(&self.rejected);
     }
 
     pub fn read(r: &mut Reader<'_>) -> Result<CapRequest> {
@@ -466,6 +479,7 @@ impl CapRequest {
             conversation: r.u32()?,
             tools_left: r.u32()?,
             answer_ms: r.u32()?,
+            rejected: r.str()?,
         })
     }
 
@@ -557,6 +571,7 @@ mod tests {
             conversation: 7,
             tools_left: 12,
             answer_ms: 900,
+            rejected: "confidence: expected Int, found a string".into(),
         }
     }
 

@@ -71,6 +71,10 @@ pub fn metrics(events: &[TimedEvent], resource: &Resource) -> String {
     let mut run_failures = Counter::default();
     let mut capability_calls = Counter::default();
     let mut capability_failures = Counter::default();
+    // Kept apart from the failures on purpose: a model that answers in the
+    // wrong shape is not a broker that could not answer, and an operator
+    // watching one of those wants the other left out of the line.
+    let mut answers_rejected = Counter::default();
     let mut tasks_started = Counter::default();
     let mut tasks_failed = Counter::default();
     let mut agent_invocations = Counter::default();
@@ -136,6 +140,10 @@ pub fn metrics(events: &[TimedEvent], resource: &Resource) -> String {
                 capability_failures.add(cap, 1);
                 open.retain(|c| c.0 != timed.event.span);
             }
+            EventKind::AnswerRejected { cap, .. } => {
+                answers_rejected.add(cap, 1);
+                open.retain(|c| c.0 != timed.event.span);
+            }
             EventKind::TaskStarted { .. } => tasks_started.add(&workflow, 1),
             EventKind::TaskFailed { .. } => tasks_failed.add(&workflow, 1),
             EventKind::CheckpointWritten { .. } => checkpoints.add(&workflow, 1),
@@ -173,6 +181,14 @@ pub fn metrics(events: &[TimedEvent], resource: &Resource) -> String {
             "sic.capability.failures",
             "{call}",
             &capability_failures,
+            attr::CAPABILITY,
+            start,
+            end,
+        ),
+        sum(
+            "sic.capability.answers_rejected",
+            "{answer}",
+            &answers_rejected,
             attr::CAPABILITY,
             start,
             end,

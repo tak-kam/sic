@@ -124,6 +124,9 @@ fn inst_str(p: &Program, pc: u32, inst: Inst) -> String {
             if policy.attempts > 1 {
                 line.push_str(&format!("  ; retry {}", policy.attempts));
             }
+            if policy.validates > 0 {
+                line.push_str(&format!("  ; until {}", p.type_name(policy.validates - 1)));
+            }
             if policy.timeout_ms > 0 {
                 line.push_str(&format!("  ; timeout {}ms", policy.timeout_ms));
             }

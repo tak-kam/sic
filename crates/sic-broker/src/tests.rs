@@ -59,6 +59,7 @@ fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
         conversation: 0,
         tools_left: 0,
         answer_ms: 0,
+        rejected: String::new(),
     }
 }
 
@@ -147,6 +148,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         conversation: 0,
         tools_left: 0,
         answer_ms: 0,
+        rejected: String::new(),
     };
     assert!(
         broker
@@ -166,6 +168,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         conversation: 0,
         tools_left: 0,
         answer_ms: 0,
+        rejected: String::new(),
     };
     assert!(
         broker
@@ -1236,6 +1239,7 @@ fn a_routed_call_is_the_same_call() {
         conversation: 0,
         tools_left: 0,
         answer_ms: 0,
+        rejected: String::new(),
     };
 
     // The caller is on the other side of the socket, so it has to be answered
@@ -1296,6 +1300,7 @@ fn a_routed_call_is_checked_against_the_pin() {
         conversation: 0,
         tools_left: 0,
         answer_ms: 0,
+        rejected: String::new(),
     };
     let error = crate::perform(&manifest, &request).expect_err("the pin does not match");
     assert!(error.message.contains("but the grant pins"), "{error}");

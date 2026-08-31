@@ -252,6 +252,9 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
         // is part of rather than the call.
         tools_left: 0,
         answer_ms: 0,
+        // A tool call is not an answer being validated, so there is never a
+        // previous one to explain.
+        rejected: String::new(),
     };
     match ask(socket, &request).map(|bytes| sic_broker::route::answer(&bytes)) {
         Ok(Ok(CapOutcome::Value(value))) => result(

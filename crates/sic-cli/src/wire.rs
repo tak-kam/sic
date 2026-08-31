@@ -325,6 +325,7 @@ mod tests {
                 conversation: 3,
                 tools_left: 20,
                 answer_ms: 300_000,
+                rejected: String::new(),
             }),
             FromVm::Checkpoint(vec![9u8; 300]),
             FromVm::Ended(Ended::Finished("42".into())),
@@ -396,6 +397,7 @@ mod tests {
             conversation: 0,
             tools_left: 0,
             answer_ms: 0,
+            rejected: String::new(),
         });
         send(&mut child, &asked.to_bytes()).expect("the child asks");
         let heard = recv(&mut parent).expect("readable").expect("a message");

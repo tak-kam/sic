@@ -4269,6 +4269,182 @@ mod agents {
     }
 }
 
+/// retrying an answer that did not fit - the one thing a harness does.
+mod retrying {
+    use super::*;
+
+    const RETRIES: &str = "type Fix { change: String, confidence: Int }\n\
+                           allow { llm.invoke \"a-model\" repeatable; }\n\
+                           agent propose {\n\
+                           \x20   input: String,\n\
+                           \x20   output: Fix,\n\
+                           \x20   budget: 3,\n\
+                           \x20   retry: 3,\n\
+                           \x20   memory: task,\n\
+                           }\n\
+                           fn main() -> Int {\n\
+                           \x20   let f = propose(\"why did it fail?\");\n\
+                           \x20   log info \"proposed: \" + f.change;\n\
+                           \x20   return 0;\n\
+                           }\n";
+
+    /// A model that answers in the wrong shape is asked again, and told what
+    /// was wrong with the last answer.
+    ///
+    /// The sentence the retry carries is one the program could not have built:
+    /// the rejected answer is `LLM<String>` and the reason comes from the type
+    /// section, and `+` refuses to join two provenances. The runtime is not the
+    /// program and may write it.
+    #[test]
+    fn a_badly_shaped_answer_is_asked_again_with_the_reason() {
+        let store = temp_store("retry-shape");
+        let src = write_temp("retry-shape.sic", RETRIES);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        // Wrong shape: the run does not end, it asks again.
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "attach",
+                &id,
+                "--value",
+                r#"{"change": "a cast", "confidence": "high"}"#,
+            ],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        assert!(
+            stderr.contains("The last answer did not fit: confidence: expected Int"),
+            "{stderr}"
+        );
+
+        // And a good one finishes it.
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "attach",
+                &id,
+                "--value",
+                r#"{"change": "a cast", "confidence": 90}"#,
+            ],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+
+        // The account shows the rejection and charges both attempts, which is
+        // what makes a budget a bound rather than a count of successes.
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("answered, and the answer did not fit"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("call llm.invoke  (budget: 2 left)"),
+            "{stdout}"
+        );
+        assert!(
+            stdout.contains("call llm.invoke (attempt 2)  (budget: 1 left)"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// The budget is the harder bound and wins. An agent with `budget: 2,
+    /// retry: 3` gets two attempts, because the budget is the number a person
+    /// approved and the retry is a ceiling under it.
+    #[test]
+    fn the_budget_refuses_an_attempt_the_retry_would_have_allowed() {
+        let store = temp_store("retry-budget");
+        let src = write_temp(
+            "retry-budget.sic",
+            &RETRIES.replace("budget: 3", "budget: 2"),
+        );
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let bad = r#"{"change": "a cast", "confidence": "high"}"#;
+        let (_, stderr, code) =
+            sic_with_store(repo_root(), Some(&store), &["attach", &id, "--value", bad]);
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (_, stderr, code) =
+            sic_with_store(repo_root(), Some(&store), &["attach", &id, "--value", bad]);
+        assert_eq!(code, 1, "stderr: {stderr}");
+        assert!(
+            stderr.contains("the budget this call spends from is used up"),
+            "{stderr}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// Out of attempts, the run ends exactly where it ended before any of this
+    /// existed: at the shape, with the message `FROM_JSON` gives.
+    #[test]
+    fn the_last_attempt_ends_the_run_on_the_shape() {
+        let store = temp_store("retry-exhausted");
+        let src = write_temp(
+            "retry-exhausted.sic",
+            &RETRIES.replace("retry: 3", "retry: 2"),
+        );
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let bad = r#"{"change": "a cast", "confidence": "high"}"#;
+        let (_, _, code) =
+            sic_with_store(repo_root(), Some(&store), &["attach", &id, "--value", bad]);
+        assert_eq!(code, 3);
+        let (_, stderr, code) =
+            sic_with_store(repo_root(), Some(&store), &["attach", &id, "--value", bad]);
+        assert_eq!(code, 1, "stderr: {stderr}");
+        assert!(
+            stderr.contains("the document does not fit the type: confidence: expected Int"),
+            "{stderr}"
+        );
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// And the plan says it before anything runs, in words that do not invite
+    /// a reader to multiply the retry by the budget: every attempt comes out of
+    /// the allowance printed on the same line.
+    #[test]
+    fn the_plan_says_how_many_attempts_at_a_shape() {
+        let src = write_temp("retry-plan.sic", RETRIES);
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+        assert!(
+            stdout.contains("at most 3 in a run  at most 3 attempts at an answer that fits"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("At most 3 capability call(s)."), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// exporting.
 mod exporting {
     use super::*;

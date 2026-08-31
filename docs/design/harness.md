@@ -156,25 +156,25 @@ Execution plan for workflows/harness.sic
 bytecode sha256:...
 
   build
-    1. RUN      process.run     "/PATH/TO/build"   ; 48:12
+    1. RUN      process.run     "/PATH/TO/build"   ; 58:12
 
   propose_until_confident
-    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 8 tool use(s)  120000ms per answer   ; 61:13
-    2. VERIFY   Fix   ; 61:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 3 attempts at an answer that fits  at most 8 tool use(s)  120000ms per answer   ; 77:13
+    2. VERIFY   Fix   ; 77:13
 
   retry_proposal
-    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 8 tool use(s)  120000ms per answer   ; 69:13
-    2. VERIFY   Fix   ; 69:13
+    1. INVOKE   llm.invoke      "claude-opus-4"  in one conversation per task  at most 3 in a run, shared by 2 sites  at most 3 attempts at an answer that fits  at most 8 tool use(s)  120000ms per answer   ; 85:13
+    2. VERIFY   Fix   ; 85:13
 
   apply
-    1. EXEC     process.exec    "/PATH/TO/apply"   ; 85:12
+    1. EXEC     process.exec    "/PATH/TO/apply"   ; 101:12
 
   main
-    1. APPROVE  human.approve   "applying the fix"   ; 97:20
+    1. APPROVE  human.approve   "applying the fix"   ; 113:20
 
 Capabilities:
   process.run     [exec]  "/PATH/TO/build"  (not pinned)  (no declared shape)  in "/PATH/TO/project"  with no environment
-  llm.invoke      [invoke]  "claude-opus-4"  (not pinned)
+  llm.invoke      [invoke]  "claude-opus-4"  (not pinned)  repeatable
     the agent may not  use "/PATH/TO/build"     (the grant does not say `delegable`)
     the agent may use  "applying the fix"       (through the broker)
     the agent may not  use "/PATH/TO/apply"     (the grant does not say `delegable`)
@@ -185,14 +185,15 @@ Capabilities:
   process.exec    [exec]  "/PATH/TO/apply"  (not pinned)  in the directory `sic` is started in  with no environment
 
 Budgets:
-  at most 3 llm.invoke calls in a run, from 2 sites: propose_until_confident 61:13, retry_proposal 69:13
+  at most 3 llm.invoke calls in a run, from 2 sites: propose_until_confident 77:13, retry_proposal 85:13
 
 At most 3 call(s) from budgeted sites, plus 3 site(s) with no budget.
 ```
 
 Everything a harness is, before it runs: which model, how many times, how long
-per answer, how many tools, whether it remembers, what it may reach, what the
-answer must fit, and which effect is behind a person. `--graph` draws the retry
+per answer, how many tools, how many tries at an answer that fits, whether it
+remembers, what it may reach, what the answer must fit, and which effect is
+behind a person. `--graph` draws the retry
 as what it is - `retry_proposal --> retry_proposal`, a cycle printed before the
 program runs.
 
@@ -251,6 +252,10 @@ argument for doing the exercise.
 
 ### 5.1 Retry and validation cannot be put in the same place
 
+Written in the present tense of the exercise, and settled since - **#83 gave the
+agent declaration a `retry`**, and the note at the end of this section says what
+changed. What follows is the finding as it stood.
+
 The single most characteristic thing a harness does is ask again because the
 answer did not fit. sic has a retry, and it has a validation, and there is no
 way to make the retry be about the validation.
@@ -300,7 +305,33 @@ field of it - `confidence > 70` - which is a *semantic* retry the program can
 write because the value exists. Semantic retries are useful and this one is
 real. It is not the one the field means.
 
-→ separable, and the argument for it is above. Not filed here.
+→ separable, and the argument for it is above. **Filed as #83 and done**:
+`retry: N` is a field of the agent declaration, beside `budget`, and the VM
+asks again when the answer does not fit `output`. The four decisions that issue
+said had to be made were made this way, and `agents.md` §6a argues each:
+
+| the question | the answer, and what it cost |
+|---|---|
+| what shape is "it did not validate" | no shape. The program never sees the failure; it gets more attempts. #77's sums stay unspent and a validation failure is still not a value |
+| does the budget charge a rejected answer | yes. A transport failure still does not, because it produced no answer - the budget counts answers |
+| what does `sic plan` say | `at most 3 attempts at an answer that fits`, deliberately not `3 attempts each`. Every attempt comes out of the allowance on the same line, so there is nothing to multiply |
+| does the conversation see the rejected answer | yes, through `memory: task`, and it is now also *told what was wrong* - see §5.4, which this closes too |
+
+The retry could not be a word at the call site, for #84's reason applied to a
+second number: a bound a person approves must not depend on how many places
+call the thing it is written on. The paragraph above about `retry 3` sitting on
+the `CALL_CAP` rather than on the `FROM_JSON` was right about the instruction
+and wrong about where that leads. It does sit on the `CALL_CAP` - and it has to,
+because by the time `FROM_JSON` runs the call that would be asked again is gone.
+So the shape travels with the call instead, and `Vm::resume` parses the answer
+against it while the call is still in hand.
+
+What did not change: a run out of attempts ends exactly where it ended before,
+at the shape, with the message `FROM_JSON` gives. Nothing was bolted on to catch
+it. The gap this section describes was that a harness for the world as it is
+retries the shape failure; that is now writable, and the sentence above it -
+"the harness sic can declare is one whose model answers in the right shape" -
+is no longer the position of this document.
 
 ### 5.2 A `Float` was a value nothing could be done with
 
@@ -420,6 +451,25 @@ remembers. A one-shot agent retried with a literal is asking a stranger the
 same question in different words, and the program cannot tell it what went
 wrong. That is the honest cost of §5.4 and it is bounded by §5.1 anyway - the
 failure a retry would most want to explain is the one that ended the run.
+
+**#83 closed the second half of that.** The program still cannot build the
+sentence and `trust.md` still refuses to let it, but the *runtime* is not the
+program, and it now writes one: the request carries why the last answer was
+rejected, and the broker appends it to the prompt.
+
+```text
+why did it fail?
+
+The last answer did not fit: confidence: expected Int, found a string
+Try again.
+```
+
+The program's prompt is untouched and the runtime's half is appended, so a
+reader of a transcript can still see where each half came from - which is the
+provenance argument holding rather than being set aside. `memory: task` keeps
+the job this section gave it and is no longer doing two: it is what lets the
+model see its own bad answer, where the appended sentence tells it which part of
+it did not fit. An agent without `memory` is now told enough to try again.
 
 ### 5.5 `tools: 0` cannot be written
 

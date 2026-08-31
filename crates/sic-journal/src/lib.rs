@@ -131,6 +131,23 @@ pub enum EventKind {
         error: String,
         attempt: u32,
     },
+    /// An answer arrived and did not fit the type the agent declared.
+    ///
+    /// Not a `CapabilityFailed`: the broker did its job and the model replied,
+    /// and an account that called that a failure of the call would be hiding
+    /// what a reader of a bad run most needs to see. The digest is the answer,
+    /// so a recorded run's values file has the document itself; `error` is what
+    /// `FROM_JSON` would have said.
+    ///
+    /// It is followed by another `CapabilityRequested` when an attempt is left,
+    /// and by nothing when there is not - the run ends on the same failure it
+    /// would have ended on before any of this existed.
+    AnswerRejected {
+        cap: String,
+        result: Digest,
+        error: String,
+        attempt: u32,
+    },
 
     TaskStarted {
         func: String,
@@ -212,6 +229,7 @@ impl EventKind {
             EventKind::CapabilityRequested { .. } => "capability_requested",
             EventKind::CapabilityCompleted { .. } => "capability_completed",
             EventKind::CapabilityFailed { .. } => "capability_failed",
+            EventKind::AnswerRejected { .. } => "answer_rejected",
             EventKind::TaskStarted { .. } => "task_started",
             EventKind::TaskCompleted { .. } => "task_completed",
             EventKind::TaskFailed { .. } => "task_failed",

@@ -136,6 +136,9 @@ impl Printer {
         if let Some(budget) = a.budget {
             parts.push(format!("(budget {budget})"));
         }
+        if let Some(n) = a.retry {
+            parts.push(format!("(retry {n})"));
+        }
         if let Some(tools) = a.tools {
             parts.push(format!("(tools {tools})"));
         }

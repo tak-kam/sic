@@ -691,6 +691,29 @@ fn an_agent_may_bound_its_tools_and_its_time() {
     }
 }
 
+/// `retry` reads the same in an agent body as it does after a call.
+///
+/// It is a keyword in both places rather than a keyword in one and a field name
+/// in the other, so the parser reads the token where it stands. A `retry` that
+/// had to be spelled differently inside a declaration would be a second word
+/// for one idea.
+#[test]
+fn an_agent_may_declare_a_retry() {
+    let dump = ok(concat!(
+        "agent r { input: String, output: P, retry: 3 }\n",
+        "fn main() { }",
+    ));
+    assert!(dump.contains("(retry 3)"), "{dump}");
+
+    for bad in [
+        "agent r { retry: 0 }\nfn main() { }",
+        "agent r { retry: -1 }\nfn main() { }",
+        "agent r { retry: task }\nfn main() { }",
+    ] {
+        assert!(codes(bad).contains(&"E0208"), "{bad}");
+    }
+}
+
 /// A chain is flat to read and deep as a tree.
 ///
 /// `1 + 1 + 1 + ...` and `a.f.f.f...` are read by a loop, so the parser never

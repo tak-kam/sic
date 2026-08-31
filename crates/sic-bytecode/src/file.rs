@@ -55,7 +55,7 @@ pub const VERSION_MAJOR: u16 = 0;
 /// the one before. The same case as 9 and 11, in the policy table this time -
 /// and the reason for the field is in `agents.md` §6: a budget is written on an
 /// agent, so the sites it lowers to have to share one count.
-pub const VERSION_MINOR: u16 = 12;
+pub const VERSION_MINOR: u16 = 13;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;
@@ -181,6 +181,7 @@ pub fn encode(p: &Program) -> Vec<u8> {
         w.u32(policy.conversation);
         w.u32(policy.tools);
         w.u32(policy.deadline_ms);
+        w.u32(policy.validates);
     }
     sections.push((section::POLICIES, w.finish()));
 
@@ -484,7 +485,7 @@ fn decode_code(body: &[u8]) -> Result<Vec<Inst>> {
 
 fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
     let mut r = Reader::new(body);
-    let n = r.count(32)?;
+    let n = r.count(36)?;
     let mut out = Vec::with_capacity(n);
     for _ in 0..n {
         out.push(PolicyEntry {
@@ -496,6 +497,7 @@ fn decode_policies(body: &[u8]) -> Result<Vec<PolicyEntry>> {
             conversation: r.u32()?,
             tools: r.u32()?,
             deadline_ms: r.u32()?,
+            validates: r.u32()?,
         });
     }
     r.expect_end("policies")?;
@@ -570,6 +572,7 @@ mod tests {
                 conversation: 0,
                 tools: 0,
                 deadline_ms: 0,
+                validates: 0,
             }],
             debug: DebugInfo {
                 sources: vec!["main.sic".into()],
@@ -714,6 +717,7 @@ mod tests {
                     conversation: 0,
                     tools: 0,
                     deadline_ms: 0,
+                    validates: 0,
                 },
                 PolicyEntry {
                     pc: 1,
@@ -724,6 +728,7 @@ mod tests {
                     conversation: 9,
                     tools: 200,
                     deadline_ms: 1_800_000,
+                    validates: 0,
                 },
             ],
             debug: DebugInfo {

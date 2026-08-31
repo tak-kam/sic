@@ -71,6 +71,7 @@ fn a_capability_call_is_listed_with_what_bounds_it() {
             budget: None,
             budget_sites: 0,
             attempts: 1,
+            until_it_fits: false,
             timeout_ms: 0,
             alternatives: None,
             remembers: false,
@@ -100,6 +101,7 @@ fn only_a_budget_bounds_a_call_over_a_run() {
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
+            validates: 0,
         })),
         digest(),
     );
@@ -120,6 +122,7 @@ fn only_a_budget_bounds_a_call_over_a_run() {
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
+            validates: 0,
         })),
         digest(),
     );
@@ -135,10 +138,36 @@ fn only_a_budget_bounds_a_call_over_a_run() {
         "{text}"
     );
     assert!(!text.contains("shared by"), "{text}");
+
     assert!(
         text.contains("at most 2 fs.read calls in a run, from 1 site: main 3:12"),
         "{text}"
     );
+
+    // An agent's retry is about the shape of the answer, and every attempt at
+    // one comes out of the allowance on the same line. So the line says so, in
+    // different words, and does not invite a reader to multiply the two.
+    let validated = plan(
+        &program_with_capability(Some(PolicyEntry {
+            pc: 1,
+            attempts: 3,
+            timeout_ms: 0,
+            budget: 3,
+            budget_group: 1,
+            conversation: 0,
+            tools: 0,
+            deadline_ms: 0,
+            validates: 1,
+        })),
+        digest(),
+    );
+    assert_eq!(validated.bounded_calls, 3);
+    let text = render(&validated, "main.sic");
+    assert!(
+        text.contains("at most 3 in a run  at most 3 attempts at an answer that fits"),
+        "{text}"
+    );
+    assert!(!text.contains("attempts each"), "{text}");
 }
 
 #[test]

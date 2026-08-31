@@ -64,6 +64,16 @@ pub struct PolicyEntry {
     /// How long one answer may take, in milliseconds, or 0 for no deadline.
     /// Enforced by the broker, which is the only side with a clock.
     pub deadline_ms: u32,
+    /// The type an answer has to fit, plus one, or 0 for a call whose answer
+    /// nothing here checks. Plus one because type 0 is a type.
+    ///
+    /// Only an agent sets it, and it is what separates the two retries. A
+    /// `CALL_CAP` with `attempts > 1` and no `validates` asks again when the
+    /// broker could not answer; one with both also asks again when the answer
+    /// arrived and did not fit this. The VM has to be told here rather than at
+    /// the `FROM_JSON` that does the checking, because by the time that runs
+    /// the call it would ask again is gone.
+    pub validates: u32,
 }
 
 impl Program {

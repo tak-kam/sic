@@ -116,6 +116,18 @@ impl EventKind {
                 w.str(error);
                 w.u32(*attempt);
             }
+            EventKind::AnswerRejected {
+                cap,
+                result,
+                error,
+                attempt,
+            } => {
+                w.u8(18);
+                w.str(cap);
+                digest(w, result);
+                w.str(error);
+                w.u32(*attempt);
+            }
             EventKind::TaskStarted { func } => {
                 w.u8(8);
                 w.str(func);
@@ -206,6 +218,12 @@ impl EventKind {
                 error: r.str()?,
                 attempt: r.u32()?,
             },
+            18 => EventKind::AnswerRejected {
+                cap: r.str()?,
+                result: read_digest(r)?,
+                error: r.str()?,
+                attempt: r.u32()?,
+            },
             8 => EventKind::TaskStarted { func: r.str()? },
             9 => EventKind::TaskCompleted {
                 result: read_digest(r)?,
@@ -236,5 +254,27 @@ impl EventKind {
             },
             other => return Err(BinError::new(format!("unknown event tag {other}"))),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The socket carries the same events the file does, and a run that splits
+    /// the interpreter into a process of its own must not lose one on the way.
+    #[test]
+    fn an_answer_that_did_not_fit_survives_the_wire() {
+        let kind = EventKind::AnswerRejected {
+            cap: "llm.invoke".into(),
+            result: Digest::of(b"{\"value\":\"no\"}"),
+            error: "value: expected Int, found a string".into(),
+            attempt: 2,
+        };
+        let mut w = Writer::new();
+        kind.write(&mut w);
+        let bytes = w.finish();
+        let mut r = Reader::new(&bytes);
+        assert_eq!(EventKind::read(&mut r).unwrap(), kind);
     }
 }

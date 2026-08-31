@@ -218,7 +218,13 @@ and one validator now serves both. A field may also say it is sometimes not
 there - `executable: String?` - which is the other half of the same
 disagreement: `a.executable?` asks whether the document carried it, and
 `a.executable` fails the run at a named line rather than inventing a value,
-which is the decision `xs[i]` already made.
+which is the decision `xs[i]` already made. And when the answer does not fit at
+all, `retry: 3` on the declaration has the runtime ask again - with what was
+wrong with the last answer appended to the prompt, which the program itself
+could not write, because a rejected answer and a reason from the type section
+come from two different places and a value comes from one. Every attempt is
+charged to the budget, so a bound that counted only the good answers is not the
+bound anybody approved.
 → [agents.md](docs/design/agents.md)
 
 **A list is walked, and a string can be asked what it holds.** `for x in xs`

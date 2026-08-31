@@ -554,6 +554,9 @@ fn explain_event(timed: &TimedEvent) -> Option<String> {
             format!("  {cap} answered {}", short(result))
         }
         EventKind::CapabilityFailed { cap, error, .. } => format!("  {cap} failed: {error}"),
+        EventKind::AnswerRejected { cap, error, .. } => {
+            format!("  {cap} answered, and the answer did not fit: {error}")
+        }
         EventKind::RunSuspended { cap } => format!("waiting for {cap}"),
         EventKind::RunResumed { cap } => format!("resumed with {cap}"),
         EventKind::TaskFailed { error } => format!("task failed: {error}"),

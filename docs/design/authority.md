@@ -429,6 +429,14 @@ agent refactorer {
 }
 ```
 
+A fourth number arrived later and is not a fourth enforcement point: `retry: N`
+(#83) says how many times a *rejected* answer may be asked for again, and the VM
+enforces it in the same place it enforces the budget. It belongs to the same
+declaration and not to this section, because it answers "again?" rather than
+"how much?" - and because every attempt it allows is charged to `budget`, so it
+is a ceiling under a bound rather than a bound of its own. `agents.md` §6a
+argues it.
+
 `deadline` is milliseconds, which reads badly at this magnitude and is still the
 right answer: `timeout N` is milliseconds, and one unit for every duration in the
 language is worth more than a readable number. Two units in one file is a bug

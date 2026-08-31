@@ -26,19 +26,29 @@ type Fix {
 
 allow {
     process.run "/PATH/TO/build" in "/PATH/TO/project";
-    llm.invoke "claude-opus-4";
+    // `repeatable` is what lets the agent below declare a `retry`: asking again
+    // is a second model call, and a second call of anything needs the manifest
+    // to say performing it twice is allowed.
+    llm.invoke "claude-opus-4" repeatable;
     human.approve "applying the fix";
     process.exec "/PATH/TO/apply";
 }
 
-// The four numbers a harness is bounded by, in the place a reader of the
-// program meets them. Three are enforced in three different places, which is
-// why they are three fields (`docs/design/authority.md` §8), and the fourth -
-// how many times the retry below may go round - is written in the program.
+// The numbers a harness is bounded by, in the place a reader of the program
+// meets them. They are separate fields because they are enforced in different
+// places (`docs/design/authority.md` §8), and they are on the declaration
+// rather than at a call site because a bound a person approves must not depend
+// on how many places call the thing it is written on.
+//
+// The two retries are the two things that go wrong with a model, and only one
+// of them is a number here. `retry` is the runtime's: the answer did not fit
+// `Fix` at all. The loop below is the program's: the answer fit and the program
+// did not like it.
 agent propose {
     input: String,
     output: Fix,
-    budget: 3,          // model calls at this site, enforced by the VM
+    budget: 3,          // model calls in a run, enforced by the VM
+    retry: 3,           // attempts at an answer that fits `Fix`, by the VM
     tools: 8,           // tool uses, enforced by the broker through the hook
     deadline: 120000,   // per answer, enforced by the broker
     memory: task,       // one conversation, so a retry needs no prompt
@@ -48,15 +58,21 @@ fn build() -> Exit {
     return process.run("/PATH/TO/build", []);
 }
 
-// The retry, and the two things about it that are the finding rather than the
-// code. It is a recursion because nothing in the language assigns; and it asks
-// a literal rather than a prompt built out of the answer it is rejecting,
-// because the logs are `Observed<String>` and the answer is `LLM<String>` and
-// `+` refuses to join two provenances (E0375, and it is right to).
+// The *semantic* retry: the answer fit `Fix` and the program does not like it.
+// This one has to be written, because the judgement is the program's - the
+// runtime has no opinion about what a confidence of 40 means. It is a recursion
+// because nothing in the language assigns.
 //
-// `memory: task` is what makes the literal enough: the second call is asked in
-// a conversation that already holds the first answer, so "try again" means
-// what it says without the program having to quote anything back.
+// The shape retry is not here and never was: an answer that is not `Fix` at all
+// never reaches this function, because `retry: 3` on the declaration has the VM
+// ask again before the value exists. That is #83, and `harness.md` §5.1 is the
+// finding it came from.
+//
+// The literal prompt is the other half of that section. The logs are
+// `Observed<String>` and the answer is `LLM<String>`, and `+` refuses to join
+// two provenances (E0375, and it is right to), so the program cannot quote the
+// answer it is rejecting. `memory: task` is what makes a literal enough: the
+// second call is asked in a conversation that already holds the first answer.
 fn propose_until_confident(logs: Observed<String>) -> LLM<Fix> {
     let f = propose(logs);
     if f.confidence > 70 {

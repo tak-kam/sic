@@ -582,6 +582,41 @@ fn an_agent_cannot_share_a_name_with_a_function() {
     assert!(cs.contains(&"E0361"), "{cs:?}");
 }
 
+/// Asking again is a second model call, so it needs the claim a second call of
+/// anything needs. The same code as `retry N` after a capability call, because
+/// it is the same question about the same grant.
+#[test]
+fn an_agent_may_only_retry_where_the_grant_says_the_effect_repeats() {
+    let base = "type D { cause: String }\n";
+    let cs = codes(&format!(
+        "{base}allow {{ llm.invoke \"m\"; }}\n\
+         agent a {{ input: String, output: D, retry: 3 }}\nfn main() {{ }}"
+    ));
+    assert!(cs.contains(&"E0374"), "{cs:?}");
+
+    let typed = ok(&format!(
+        "{base}allow {{ llm.invoke \"m\" repeatable; }}\n\
+         agent a {{ input: String, output: D, retry: 3 }}\nfn main() {{ }}"
+    ));
+    assert_eq!(typed.agents[0].retry, Some(3));
+
+    // One attempt repeats nothing, so it needs nothing.
+    ok(&format!(
+        "{base}allow {{ llm.invoke \"m\"; }}\n\
+         agent a {{ input: String, output: D, retry: 1 }}\nfn main() {{ }}"
+    ));
+}
+
+/// `retry` after an agent call is still refused, and the note now names the
+/// field that replaces it - which is the whole of what E0330 is for here.
+#[test]
+fn a_retry_after_an_agent_call_points_at_the_declaration() {
+    let cs = codes(&format!(
+        "{AGENT}fn main() {{ let d = diagnose(\"logs\") retry 3; }}"
+    ));
+    assert!(cs.contains(&"E0330"), "{cs:?}");
+}
+
 // ---- trust and provenance ----
 
 const TRUST: &str = "type Plan { action: String }\n\

@@ -690,11 +690,21 @@ fn asked_for(request: &CapRequest) -> Result<(String, bool), CapError> {
             )));
         }
     };
+    // What was wrong with the last answer, when there was one. The prompt is
+    // the program's and is not touched: this is appended, so a reader of a
+    // transcript can see which half the runtime wrote.
+    let again = match request.rejected.is_empty() {
+        true => String::new(),
+        false => format!(
+            "\n\nThe last answer did not fit: {}\nTry again.",
+            request.rejected
+        ),
+    };
     if shape.is_empty() {
-        return Ok((prompt.to_string(), false));
+        return Ok((format!("{prompt}{again}"), false));
     }
     Ok((
-        format!("{prompt}\n\nReply with JSON of this shape, and nothing else:\n{shape}"),
+        format!("{prompt}{again}\n\nReply with JSON of this shape, and nothing else:\n{shape}"),
         true,
     ))
 }

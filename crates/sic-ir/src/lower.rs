@@ -429,6 +429,14 @@ impl<'a> FnLower<'a> {
                                         group: info.budget_group,
                                     }),
                                     conversation: info.conversation,
+                                    // The retry and the shape it is about, on
+                                    // the one instruction. The `FROM_JSON`
+                                    // below still runs and is still what
+                                    // validates; this is what lets the VM know,
+                                    // while the call is still outstanding, that
+                                    // it is about to.
+                                    attempts: info.retry,
+                                    validates: info.retry.filter(|n| *n > 1).map(|_| info.output),
                                     tools: info.tools,
                                     deadline_ms: info.deadline_ms,
                                     ..Default::default()

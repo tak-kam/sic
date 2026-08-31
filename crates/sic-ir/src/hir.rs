@@ -219,6 +219,15 @@ pub enum Term {
 pub struct CallPolicy {
     /// Total attempts, not extra ones.
     pub attempts: Option<u32>,
+    /// The type the answer has to fit for an attempt to count as one.
+    ///
+    /// Only an agent sets it. It is what makes the difference between the two
+    /// retries: without it an attempt is spent when the broker could not
+    /// answer, and with it an attempt is also spent when the answer arrived
+    /// and did not fit. The type travels with the call because the VM has to
+    /// decide before it lets go of the pending call - by the time `FROM_JSON`
+    /// runs, there is nothing left to ask again.
+    pub validates: Option<TypeId>,
     pub timeout_ms: Option<u32>,
     /// How many calls this site may make, and which allowance it spends them
     /// from. The two travel together so that a site cannot be given a number
@@ -254,6 +263,7 @@ pub struct Allowance {
 impl CallPolicy {
     pub fn is_empty(&self) -> bool {
         self.attempts.is_none()
+            && self.validates.is_none()
             && self.timeout_ms.is_none()
             && self.budget.is_none()
             && self.conversation.is_none()

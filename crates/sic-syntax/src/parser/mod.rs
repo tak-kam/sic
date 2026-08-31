@@ -488,6 +488,7 @@ impl Parser {
             input: None,
             output: None,
             budget: None,
+            retry: None,
             memory: false,
             tools: None,
             deadline_ms: None,
@@ -546,6 +547,16 @@ impl Parser {
     }
 
     fn parse_agent_field(&mut self, decl: &mut AgentDecl) {
+        // `retry` is a keyword, because it is one after a capability call, and
+        // a keyword is not an identifier. It is the same word for the same
+        // idea in both places, so the lexer is not asked to change its mind
+        // about it - this reads it where it stands.
+        if let TokenKind::Kw(Keyword::Retry) = self.peek() {
+            self.bump();
+            self.expect(&TokenKind::Colon, "after an agent setting");
+            self.parse_agent_count("retry", |decl, v| decl.retry = Some(v), decl);
+            return;
+        }
         let key = self.expect_ident("an agent setting");
         self.expect(&TokenKind::Colon, "after an agent setting");
         match key.name.as_str() {
@@ -588,7 +599,8 @@ impl Parser {
                     "E0209",
                     format!("`{other}` is not an agent setting"),
                     key.span,
-                    "expected `input`, `output`, `budget`, `tools`, `deadline` or `memory`",
+                    "expected `input`, `output`, `budget`, `retry`, `tools`, \
+                     `deadline` or `memory`",
                 );
                 // Skip whatever it was, so one unknown setting does not
                 // derail the rest of the body.

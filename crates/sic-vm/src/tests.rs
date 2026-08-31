@@ -900,6 +900,7 @@ fn a_checkpoint_pointing_outside_its_own_state_is_refused() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        rejected: String::new(),
         pc: 0,
         span: 0,
         parent: None,
@@ -998,6 +999,7 @@ fn a_checkpoint_frame_must_point_into_this_program() {
                 conversation: 0,
                 tools: 0,
                 deadline_ms: 0,
+                rejected: String::new(),
                 pc: 0,
                 span: 0,
                 parent: None,
@@ -1268,6 +1270,7 @@ fn a_failed_call_is_retried_up_to_the_policy() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
 
     let sink = SharedSink::default();
@@ -1315,6 +1318,7 @@ fn the_timeout_travels_with_the_request() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
     let Status::Suspended(request) = vm.run(0, &[]) else {
@@ -1687,6 +1691,7 @@ fn a_call_site_runs_out_of_budget() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
 
     let sink = SharedSink::default();
@@ -1718,6 +1723,7 @@ fn exceeding_a_budget_fails_the_run() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
 
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
@@ -1782,6 +1788,7 @@ fn two_sites_that_share_an_allowance_share_its_count() {
             conversation: 0,
             tools: 0,
             deadline_ms: 0,
+            validates: 0,
         });
     }
 
@@ -1820,6 +1827,7 @@ fn a_budget_survives_a_checkpoint() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
 
     let mut vm = Vm::new(&p, DEFAULT_FUEL);
@@ -1851,6 +1859,7 @@ fn a_refused_call_is_not_billed_for() {
         conversation: 0,
         tools: 0,
         deadline_ms: 0,
+        validates: 0,
     });
 
     let sink = SharedSink::default();
@@ -1871,4 +1880,217 @@ fn a_refused_call_is_not_billed_for() {
     // neither.
     assert_eq!(charged, 1, "{events:?}");
     assert_eq!(asked, 1, "{events:?}");
+}
+
+// ---- retrying an answer that does not fit ----
+
+/// An agent, as the compiler lowers one: a model call whose answer is parsed
+/// against a declared type on the very next instruction.
+///
+/// `policy` is what the agent's declaration became. `budget` and `attempts`
+/// are separate numbers here for the same reason they are separate fields in
+/// the source: one bounds how many times the model may be asked at all, the
+/// other how many times a bad answer may be re-asked.
+fn agent_program(attempts: u32, budget: u32) -> Program {
+    let mut p = program(
+        vec![(
+            "main",
+            &[],
+            TypeDesc::Int,
+            3,
+            vec![
+                Inst::abx(Op::LoadConst, 2, 0),
+                Inst::abc(Op::CallCap, 0, 0, 2),
+                Inst::abc(Op::FromJson, 1, 5, 0),
+                Inst::abc(Op::GetField, 1, 1, 0),
+                Inst::abc(Op::Return, 1, 0, 0),
+            ],
+        )],
+        vec![Const::Str("why did it fail?".into())],
+    );
+    p.types.push(TypeDesc::Object {
+        name: "Wrapper".into(),
+        fields: vec![Field::new("value", index_of(TypeDesc::Int))],
+        open: false,
+    });
+    p.funcs[0].ret_type = index_of(TypeDesc::Int);
+    p.caps.push(sic_bytecode::CapDecl {
+        name: "llm.invoke".into(),
+        kind: sic_core::CapKind::Invoke,
+        constraints: "a-model".into(),
+        pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
+        repeatable: true,
+        delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
+        args: Vec::new(),
+        params: vec![index_of(TypeDesc::Str)],
+        ret_type: index_of(TypeDesc::Str),
+    });
+    p.policies.push(sic_bytecode::PolicyEntry {
+        pc: 1,
+        attempts,
+        timeout_ms: 0,
+        budget,
+        budget_group: u32::from(budget > 0),
+        conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+        validates: 5 + 1,
+    });
+    p
+}
+
+fn bad_answer() -> sic_core::CapValue {
+    sic_core::CapValue::Str("{\"value\":\"not a number\"}".into())
+}
+
+#[test]
+fn an_answer_that_does_not_fit_is_asked_again() {
+    let p = agent_program(3, 0);
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert_eq!(request.attempt, 1);
+    // Nothing has been rejected yet, so there is nothing to explain.
+    assert_eq!(request.rejected, "");
+
+    let Status::Suspended(request) = vm.resume(bad_answer()) else {
+        panic!("expected a second attempt");
+    };
+    assert_eq!(request.attempt, 2);
+    // The one thing the program could not have said itself: what was wrong
+    // with the answer it is being asked to replace.
+    assert!(request.rejected.contains("expected Int"), "{request:?}");
+
+    // A good answer ends it, and `FROM_JSON` is still what turns the document
+    // into a value: the check here decided only whether to ask again.
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::Str("{\"value\":7}".into())),
+        Status::Finished(Value::I64(7))
+    ));
+
+    let events = names(&sink);
+    assert_eq!(
+        events.iter().filter(|n| **n == "answer_rejected").count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|n| **n == "capability_requested")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn the_last_attempt_fails_the_way_a_run_with_no_retry_would() {
+    let p = agent_program(2, 0);
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    let Status::Suspended(_) = vm.resume(bad_answer()) else {
+        panic!("expected a second attempt");
+    };
+    match vm.resume(bad_answer()) {
+        Status::Failed(info) => {
+            assert_eq!(info.kind, FailKind::Schema);
+            assert!(info.describe().contains("expected Int"), "{info:?}");
+        }
+        other => panic!("expected a schema failure, got {other:?}"),
+    }
+    // Both rejections are in the journal, including the one the run ended on.
+    assert_eq!(
+        names(&sink)
+            .iter()
+            .filter(|n| **n == "answer_rejected")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn a_rejected_answer_is_charged_to_the_budget() {
+    // Two calls allowed and three attempts asked for. The budget is the number
+    // a person approved, so it is the one that decides.
+    let p = agent_program(3, 2);
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    let Status::Suspended(request) = vm.resume(bad_answer()) else {
+        panic!("expected a second attempt");
+    };
+    assert_eq!(request.attempt, 2);
+    match vm.resume(bad_answer()) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::OutOfBudget),
+        other => panic!("expected a budget failure, got {other:?}"),
+    }
+    // One charge per attempt, and none for the attempt the budget refused.
+    assert_eq!(
+        names(&sink)
+            .iter()
+            .filter(|n| **n == "budget_consumed")
+            .count(),
+        2
+    );
+}
+
+#[test]
+fn an_agent_with_one_attempt_never_parses_twice() {
+    // No `retry` means no `validates`, and then this is a run that behaves
+    // exactly as it did before any of it existed: `FROM_JSON` reports the
+    // failure, at the instruction that owns it.
+    let mut p = agent_program(1, 0);
+    p.policies[0].validates = 0;
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    match vm.resume(bad_answer()) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::Schema),
+        other => panic!("expected a schema failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_rejection_survives_a_checkpoint() {
+    // A run that stops between two attempts is checkpointed while it waits, so
+    // the reason lives in the file rather than only in memory. What reads it
+    // back is the attempt after next: a broker that cannot answer at all sends
+    // the run round again, and the answer still to be explained is the last one
+    // that actually arrived.
+    let p = agent_program(4, 0);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    let Status::Suspended(_) = vm.resume(bad_answer()) else {
+        panic!("expected a second attempt");
+    };
+    let bytes = vm.checkpoint(program_digest(), "?").unwrap();
+    let (mut vm, _question) = Vm::restore(
+        &p,
+        &bytes,
+        program_digest(),
+        Box::new(SharedSink::default()),
+    )
+    .expect("the checkpoint should restore");
+    let Status::Suspended(request) = vm.resume_failed(&sic_core::CapError::new("nope")) else {
+        panic!("expected a third attempt");
+    };
+    assert_eq!(request.attempt, 3);
+    assert!(request.rejected.contains("expected Int"), "{request:?}");
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::Str("{\"value\":7}".into())),
+        Status::Finished(Value::I64(7))
+    ));
 }
