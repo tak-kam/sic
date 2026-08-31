@@ -132,7 +132,8 @@ either. Somebody answered a run once, and it became a test of the retry policy.
 
 That is the shape of the claim: **a harness whose behaviour is a regression
 test is a different kind of object from one that is a Python object graph.** It
-is also, today, a claim with a bug on it, and §5.6 is that bug.
+is also, today, a claim with a bug on it, and §5.6 is that bug - filed as #82
+and fixed since, which is what the exercise was for.
 
 ---
 
@@ -489,7 +490,7 @@ filing rather than mentioning: `tools: 0` should print as `no tools`, and the
 hook already refuses everything the manifest does not account for, so the
 enforcement is there and only the declaration is missing.
 
-→ separable, and small.
+→ separable, and small. **Filed as #86.**
 
 ### 5.6 `sic replay` fails on any run that logs
 
@@ -534,7 +535,11 @@ capability calls by name and argument digest and passes on all three of the
 edits in §3 - so the claim's more useful half is intact.
 
 → separable, and the smallest, most clearly-argued issue this exercise
-produced.
+produced. **Filed as #82 and fixed**: the comparison and the journal writer go
+through one function that renders an event as a file records it, so a writer and
+a reader cannot drift apart again; `describe` gained a `Logged` arm; and a test
+now replays a run that logged. The second of this document's two claims is
+available to the programs it was written for.
 
 ### 5.7 What the failing program said, once more from this end
 
