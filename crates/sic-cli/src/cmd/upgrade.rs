@@ -11,6 +11,8 @@
 //! about to install against what that file says it is.
 //! `docs/design/upgrade.md` says what those checks do and do not prove.
 
+use crate::out::sayln;
+
 use std::io::Read;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -147,7 +149,7 @@ fn upgrade(opts: UpgradeOptions) -> Result<ExitCode, Failure> {
                     // The version matches; the bytes may not, for a binary
                     // built locally. Saying "nothing newer" claims only what
                     // was actually compared.
-                    println!("{tag} is the latest release, so there is nothing newer to install");
+                    sayln!("{tag} is the latest release, so there is nothing newer to install");
                     return Ok(ExitCode::SUCCESS);
                 }
                 Fetched::New(new) => {
@@ -172,7 +174,7 @@ fn upgrade(opts: UpgradeOptions) -> Result<ExitCode, Failure> {
         // Byte-identical to what is running, so its version is known without
         // asking it.
         report("candidate", crate::VERSION, &found, &label);
-        println!("already installed, so there is nothing to do");
+        sayln!("already installed, so there is nothing to do");
         return Ok(ExitCode::SUCCESS);
     }
 
@@ -191,12 +193,12 @@ fn upgrade(opts: UpgradeOptions) -> Result<ExitCode, Failure> {
 
     if opts.check {
         staged.discard();
-        println!("would replace {}", display(&installed));
+        sayln!("would replace {}", display(&installed));
         return Ok(ExitCode::SUCCESS);
     }
 
     swap(staged, &installed)?;
-    println!(
+    sayln!(
         "replaced {}  {} -> {version}",
         display(&installed),
         crate::VERSION
@@ -263,7 +265,7 @@ fn fetch_latest() -> Result<Fetched, Failure> {
         )));
     }
 
-    println!("fetching {tag} for {target}");
+    sayln!("fetching {tag} for {target}");
     let dir = TempDir::new()?;
     let base = format!("https://github.com/{REPO}/releases/download/{tag}");
     let stem = format!("sic-{tag}-{target}");
@@ -449,7 +451,7 @@ impl Drop for TempDir {
 }
 
 fn report(what: &str, version: &str, digest: &str, where_: &str) {
-    println!("  {what}  {version}  sha256:{}  {where_}", short(digest));
+    sayln!("  {what}  {version}  sha256:{}  {where_}", short(digest));
 }
 
 /// The first eight characters, which is what a person compares by eye. The
@@ -613,7 +615,7 @@ fn swap(staged: Staged, installed: &Path) -> Result<(), Failure> {
         )));
     }
     if std::fs::remove_file(&aside).is_err() {
-        println!(
+        sayln!(
             "the old binary is still running, so it is at {} until it is not",
             display(&aside)
         );

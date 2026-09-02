@@ -1,5 +1,7 @@
 //! `sic parse <FILE>`: print the AST of a source file.
 
+use crate::out::say;
+
 use std::process::ExitCode;
 
 use sic_core::SourceMap;
@@ -23,6 +25,6 @@ pub fn run(path: &str) -> ExitCode {
 
     // Print whatever the parser recovered even when there were errors; a partial
     // AST is still useful.
-    print!("{}", dump(&module));
+    say!("{}", dump(&module));
     status
 }

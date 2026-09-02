@@ -3,6 +3,8 @@
 //! This is the layer where workflow semantics still exist, so it is worth being
 //! able to look at directly.
 
+use crate::out::say;
+
 use std::process::ExitCode;
 
 use super::{load_program, report};
@@ -20,6 +22,6 @@ pub fn run(path: &str) -> ExitCode {
     }
     report(&loaded.sources, &diags);
 
-    print!("{}", sic_ir::dump(&sic_ir::lower(&loaded.module, &typed)));
+    say!("{}", sic_ir::dump(&sic_ir::lower(&loaded.module, &typed)));
     ExitCode::SUCCESS
 }

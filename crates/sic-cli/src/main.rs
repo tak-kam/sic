@@ -4,8 +4,11 @@
 //! the real benefit is that everything the CLI accepts can be read in this one
 //! file.
 
+use crate::out::{say, sayln};
+
 mod cmd;
 mod module;
+mod out;
 mod path;
 #[cfg(unix)]
 mod wire;
@@ -235,11 +238,11 @@ fn main() -> ExitCode {
             Err(msg) => usage_error(msg),
         },
         "help" | "--help" | "-h" => {
-            print!("{USAGE}");
+            say!("{USAGE}");
             ExitCode::SUCCESS
         }
         "version" | "--version" | "-V" => {
-            println!("sic {VERSION}");
+            sayln!("sic {VERSION}");
             ExitCode::SUCCESS
         }
         other => usage_error(format!("unknown command `{other}`")),

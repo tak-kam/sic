@@ -10,6 +10,8 @@
 //! that, so a difference means the program did. See `docs/design/runs.md` §4
 //! and §5.
 
+use crate::out::{say, sayln};
+
 use std::path::Path;
 use std::process::ExitCode;
 
@@ -48,7 +50,7 @@ pub fn list_waiting() -> ExitCode {
         found += 1;
         // The question is last, because it is the only field that can contain
         // spaces.
-        println!(
+        sayln!(
             "{}  {:<10}  {:<14}  {question}",
             &summary.run.to_string()[..8],
             summary.workflow,
@@ -59,14 +61,14 @@ pub fn list_waiting() -> ExitCode {
         // waiting, and what changed is that saying so is now honest about
         // whether waiting will end.
         if store::checkpoint_matches(&dir) == Some(false) {
-            println!(
+            sayln!(
                 "          this one cannot be picked up: its checkpoint belongs to \
                  different bytecode"
             );
         }
     }
     if found == 0 {
-        println!("nothing is waiting");
+        sayln!("nothing is waiting");
     }
     ExitCode::SUCCESS
 }
@@ -81,7 +83,7 @@ pub fn list() -> ExitCode {
         }
     };
     if runs.is_empty() {
-        println!("no recorded runs in {}", store::store_root().display());
+        sayln!("no recorded runs in {}", store::store_root().display());
         return ExitCode::SUCCESS;
     }
 
@@ -91,16 +93,16 @@ pub fn list() -> ExitCode {
         };
         let summary = store::summarize(&events);
         let short = &summary.run.to_string()[..8];
-        print!(
+        say!(
             "{short}  {:<10}  {:<10}  {} capability call(s)",
             summary.workflow,
             summary.outcome.label(),
             summary.capability_calls
         );
         if let Some(detail) = summary.outcome.detail() {
-            print!("  {detail}");
+            say!("  {detail}");
         }
-        println!();
+        sayln!();
     }
     ExitCode::SUCCESS
 }
@@ -310,8 +312,8 @@ fn answer_once(it: Round<'_>) -> (ExitCode, bool) {
 /// `--value`, and an interactive answer that never came. One place, because
 /// the second is the first with a person who changed their mind.
 fn waiting_on(question: &str, prefix: &str, tag: &sic_bytecode::TypeDesc) -> ExitCode {
-    println!("waiting: {question}");
-    println!(
+    sayln!("waiting: {question}");
+    sayln!(
         "answer:  sic attach {prefix} --value <{}>",
         tag.short_name()
     );
@@ -400,35 +402,35 @@ pub fn explain(prefix: &str) -> ExitCode {
     };
     let summary = store::summarize(&events);
 
-    println!("run {}", summary.run);
-    println!("  workflow   {}", summary.workflow);
-    print!("  outcome    {}", summary.outcome.label());
+    sayln!("run {}", summary.run);
+    sayln!("  workflow   {}", summary.workflow);
+    say!("  outcome    {}", summary.outcome.label());
     match summary.outcome.detail() {
-        Some(detail) => println!("  ({detail})"),
-        None => println!(),
+        Some(detail) => sayln!("  ({detail})"),
+        None => sayln!(),
     }
-    println!("  events     {}", summary.events);
-    println!("  stored in  {}", dir.display());
+    sayln!("  events     {}", summary.events);
+    sayln!("  stored in  {}", dir.display());
     if dir.join(store::CHECKPOINT).exists() {
-        println!("  checkpoint present: `sic resume` can continue this run");
+        sayln!("  checkpoint present: `sic resume` can continue this run");
     }
     // Reading a terminal user interface is a bet on a version, so a run whose
     // model calls an agent answered says which build of what answered them.
     if let Some(driver) = store::read_driver(&dir) {
-        println!("  answered by {} at {}", driver.driver, driver.command);
-        println!("              {}, {}", driver.agent, driver.multiplexer);
+        sayln!("  answered by {} at {}", driver.driver, driver.command);
+        sayln!("              {}, {}", driver.agent, driver.multiplexer);
         // What the agent was told, as digests. A file that was not there is
         // said too: an empty list cannot tell "looked and found nothing" from
         // "did not look".
         for instruction in &driver.instructions {
             match &instruction.digest {
-                Some(digest) => println!("              told by {} {digest}", instruction.path),
-                None => println!("              no {}", instruction.path),
+                Some(digest) => sayln!("              told by {} {digest}", instruction.path),
+                None => sayln!("              no {}", instruction.path),
             }
         }
     }
 
-    println!();
+    sayln!();
     // A budget charge is emitted before the call it pays for, because a call
     // the budget refuses must not leave a request behind - that is the order
     // #32 established and the reason is recorded on it. So the charge is held
@@ -458,7 +460,7 @@ pub fn explain(prefix: &str) -> ExitCode {
             };
             logged += 1;
             let indent = "  ".repeat(store::depth_of(&timed.event, &events) + 1);
-            println!("{indent}{}: {text}", level.name());
+            sayln!("{indent}{}: {text}", level.name());
             continue;
         }
         let Some(mut line) = explain_event(timed) else {
@@ -471,14 +473,14 @@ pub fn explain(prefix: &str) -> ExitCode {
             }
         }
         let indent = "  ".repeat(store::depth_of(&timed.event, &events) + 1);
-        println!("{indent}{line}");
+        sayln!("{indent}{line}");
     }
     // A charge whose call never arrived. Nothing in the VM produces one - the
     // budget refuses before it charges - so this is a journal that was cut
     // between the two, and dropping it would be this reader deciding a run
     // spent nothing because it could not see what it spent.
     for (_, remaining) in &charged {
-        println!("  budget: {remaining} left, for a call this journal does not have");
+        sayln!("  budget: {remaining} left, for a call this journal does not have");
     }
 
     // The journal records digests, so the one thing it cannot show is what a
@@ -499,14 +501,14 @@ pub fn explain(prefix: &str) -> ExitCode {
         let Some(question) = &recorded.asked else {
             continue;
         };
-        println!();
-        println!("  asked a person:");
+        sayln!();
+        sayln!("  asked a person:");
         for line in question.lines() {
-            println!("    {line}");
+            sayln!("    {line}");
         }
-        println!("    answered {}", as_recorded(&recorded.value));
+        sayln!("    answered {}", as_recorded(&recorded.value));
         if let Some(because) = &recorded.because {
-            println!("    because {because}");
+            sayln!("    because {because}");
         }
     }
     ExitCode::SUCCESS
@@ -590,7 +592,7 @@ pub fn inspect(prefix: &str) -> ExitCode {
         Err(code) => return code,
     };
     for timed in &events {
-        println!("{}", sic_journal::json::event_to_json(&timed.event));
+        sayln!("{}", sic_journal::json::event_to_json(&timed.event));
     }
     ExitCode::SUCCESS
 }
@@ -627,7 +629,7 @@ pub fn replay(prefix: &str) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     };
 
-    println!("replaying {} ({})", summary.run, summary.workflow);
+    sayln!("replaying {} ({})", summary.run, summary.workflow);
 
     // The sink is shared so the events can be read back after the VM has them.
     let sink = SharedSink::default();
@@ -655,13 +657,13 @@ pub fn replay(prefix: &str) -> ExitCode {
     let replayed = sink.events();
     let differences = compare(&recorded, &replayed);
     for line in &differences {
-        println!("  {line}");
+        sayln!("  {line}");
     }
     if differences.is_empty() {
-        println!("  {} events matched", replayed.len());
+        sayln!("  {} events matched", replayed.len());
     }
     if let Some(reason) = stopped_early {
-        println!("  stopped: {reason}");
+        sayln!("  stopped: {reason}");
     }
 
     if differences.is_empty() {
@@ -858,9 +860,10 @@ pub fn recheck(prefix: &str, source: &str) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     };
 
-    println!(
+    sayln!(
         "rechecking {} ({}) against {source}",
-        summary.run, summary.workflow
+        summary.run,
+        summary.workflow
     );
 
     let wanted = calls_of(recorded.iter().map(|t| &t.event.kind));
@@ -945,12 +948,12 @@ pub fn recheck(prefix: &str, source: &str) -> ExitCode {
     }
 
     if findings.is_empty() {
-        println!("  {matched} of {} calls matched", wanted.len());
+        sayln!("  {matched} of {} calls matched", wanted.len());
         ExitCode::SUCCESS
     } else {
-        println!("  {matched} of {} calls matched", wanted.len());
+        sayln!("  {matched} of {} calls matched", wanted.len());
         for line in &findings {
-            println!("  {line}");
+            sayln!("  {line}");
         }
         ExitCode::from(EXIT_FAILURE)
     }

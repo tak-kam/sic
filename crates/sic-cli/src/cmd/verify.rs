@@ -1,5 +1,7 @@
 //! `sic verify <FILE.sicb>`: check that bytecode is safe to run.
 
+use crate::out::sayln;
+
 use std::process::ExitCode;
 
 use sic_bytecode::Program;
@@ -30,13 +32,13 @@ pub fn report(program: &Program) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     }
 
-    println!("ok: {} function(s) verified", program.funcs.len());
-    println!("required capabilities:");
+    sayln!("ok: {} function(s) verified", program.funcs.len());
+    sayln!("required capabilities:");
     if program.caps.is_empty() {
-        println!("  (none)");
+        sayln!("  (none)");
     }
     for cap in &program.caps {
-        println!("  {} [{}] {:?}", cap.name, cap.kind.name(), cap.constraints);
+        sayln!("  {} [{}] {:?}", cap.name, cap.kind.name(), cap.constraints);
     }
     ExitCode::SUCCESS
 }

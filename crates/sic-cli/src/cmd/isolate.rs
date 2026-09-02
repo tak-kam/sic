@@ -9,6 +9,8 @@
 //! makes possible later is a child with fewer privileges than the parent, which
 //! is the one thing a crate boundary cannot do.
 
+use crate::out::sayln;
+
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::process::{Child, Command, ExitCode};
 
@@ -258,7 +260,7 @@ pub fn finish(ran: Ran, checkpoint_path: Option<&str>, how: super::run::Stopping
     match ran.ended {
         Ended::Finished(text) if text.is_empty() => ExitCode::SUCCESS,
         Ended::Finished(text) => {
-            println!("{text}");
+            sayln!("{text}");
             ExitCode::SUCCESS
         }
         // Rendered by the child, which is the side the value and the source

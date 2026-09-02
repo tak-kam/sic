@@ -11,6 +11,8 @@
 //! of functions cannot: which of them reach which. See
 //! `docs/design/plan.md`.
 
+use crate::out::say;
+
 use std::process::ExitCode;
 
 use sic_core::Digest;
@@ -47,8 +49,8 @@ pub fn run(path: &str, graph: bool) -> ExitCode {
     let digest = Digest::of(&sic_bytecode::encode(&program));
     let plan = sic_plan::plan(&program, digest);
     match graph {
-        true => print!("{}", sic_plan::graph(&plan, path)),
-        false => print!("{}", sic_plan::render(&plan, path)),
+        true => say!("{}", sic_plan::graph(&plan, path)),
+        false => say!("{}", sic_plan::render(&plan, path)),
     }
     ExitCode::SUCCESS
 }

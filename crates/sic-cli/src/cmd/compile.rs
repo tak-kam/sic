@@ -1,5 +1,7 @@
 //! `sic compile <FILE.sic> [-o OUT]`: write bytecode to a file.
 
+use crate::out::sayln;
+
 use std::process::ExitCode;
 
 use super::{EXIT_FAILURE, compile_source};
@@ -19,7 +21,7 @@ pub fn run(path: &str, output: Option<&str>) -> ExitCode {
         eprintln!("error: cannot write `{out_path}`: {e}");
         return ExitCode::from(EXIT_FAILURE);
     }
-    println!("wrote {out_path} ({} bytes)", bytes.len());
+    sayln!("wrote {out_path} ({} bytes)", bytes.len());
     ExitCode::SUCCESS
 }
 

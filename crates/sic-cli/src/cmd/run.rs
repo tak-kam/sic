@@ -5,6 +5,8 @@
 //! bytecode" as an invariant with no exceptions is what makes it worth
 //! anything.
 
+use crate::out::sayln;
+
 use std::process::ExitCode;
 
 use sic_broker::Broker;
@@ -317,7 +319,7 @@ pub fn finish(
     match outcome {
         Outcome::Finished(Value::Unit) => ExitCode::SUCCESS,
         Outcome::Finished(value) => {
-            println!("{}", vm.display(&value));
+            sayln!("{}", vm.display(&value));
             ExitCode::SUCCESS
         }
         Outcome::Failed(info) => {

@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 809 tests.
+Last updated at 811 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -36,6 +36,7 @@ in the source, so it is the same on every platform - four of them are
 | 22, 23, 24, 25 | OTLP traces and metrics, `sic.` and GenAI attributes | `docs/design/observability.md` |
 | 27 | Secrets do not reach telemetry | the journal records digests, never values |
 | 28 | A debug section maps a pc to a line | every runtime failure names one |
+| - | Output a reader is allowed to stop reading: a closed pipe - `\| head`, a pager somebody quits - ends the delivery and not the command, so `sic explain \| head` no longer panics out of the standard library with exit 101 next to three exit codes this project gives meanings to. Every other write error still panics, because a full disk is a lost result rather than a reader who left | `crates/sic-cli/src/out.rs` |
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `attach`, `explain`, `inspect-run`, `replay`, `recheck`, `export`, `upgrade`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | 30 | `sic plan`, and `--graph`: the same plan as a Mermaid flowchart, which says which functions reach which - the one thing a list of blocks side by side cannot, and the caption says "may, not will" so an arrow does not claim more than the sentence it replaces | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |

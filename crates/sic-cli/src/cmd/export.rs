@@ -5,6 +5,8 @@
 //! a capability. What comes out is a document, and getting it to a collector is
 //! somebody else's job.
 
+use crate::out::sayln;
+
 use std::process::ExitCode;
 
 use sic_otel::Resource;
@@ -45,7 +47,7 @@ pub fn run(journal_path: &str, options: ExportOptions<'_>) -> ExitCode {
     let metrics = sic_otel::metrics(&result.events, &resource);
 
     match (options.traces, options.metrics) {
-        (None, None) => println!("{traces}"),
+        (None, None) => sayln!("{traces}"),
         (traces_path, metrics_path) => {
             if let Some(path) = traces_path {
                 if let Err(code) = write(path, &traces) {
