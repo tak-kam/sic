@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use sic_core::Digest;
 use sic_journal::{Event, EventKind, RunId, TimedEvent};
 use sic_json::quoted;
 
@@ -155,6 +156,8 @@ impl Outcome {
 pub struct Summary {
     pub run: RunId,
     pub workflow: String,
+    /// The bytecode the run was of, from `RunStarted`.
+    pub program: Digest,
     pub outcome: Outcome,
     pub capability_calls: usize,
     pub events: usize,
@@ -165,11 +168,19 @@ pub fn summarize(events: &[TimedEvent]) -> Summary {
     let mut outcome = Outcome::Unfinished;
     let mut capability_calls = 0;
     let mut run = RunId(0);
+    let mut program = Digest::of(&[]);
 
     for timed in events {
         run = timed.event.run;
         match &timed.event.kind {
-            EventKind::RunStarted { workflow: name, .. } => workflow = name.clone(),
+            EventKind::RunStarted {
+                workflow: name,
+                program: of,
+                ..
+            } => {
+                workflow = name.clone();
+                program = *of;
+            }
             EventKind::RunCompleted { .. } => outcome = Outcome::Completed,
             EventKind::RunFailed { error } => outcome = Outcome::Failed(error.clone()),
             EventKind::RunSuspended { cap } => outcome = Outcome::Waiting(cap.clone()),
@@ -183,6 +194,7 @@ pub fn summarize(events: &[TimedEvent]) -> Summary {
     Summary {
         run,
         workflow,
+        program,
         outcome,
         capability_calls,
         events: events.len(),

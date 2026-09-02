@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 811 tests.
+Last updated at 812 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -32,6 +32,7 @@ in the source, so it is the same on every platform - four of them are
 | 15 | Suspend, save, resume | `docs/design/durable-execution.md` |
 | 16 | Cooperative scheduling, `spawn` and `await` | `docs/design/concurrency.md` |
 | 18 | Structured output: parse, validate, typed value - and `type Line { reason: String, .. }`, a type that says it describes part of a document, because one validator serves a model's answer and a machine protocol and those disagree about a field nobody declared; a field may also say it is sometimes not there, `executable: String?`, which is the other half of the same disagreement - `a.executable?` asks and `a.executable` fails the run rather than inventing a value | `docs/design/agents.md` |
+| - | A journal says which bytecode it is a record of: `run_started` carries the digest `sic plan` prints, so a file handed to somebody on its own can be held against a plan - and `sic replay` refuses a journal and a program that do not belong together instead of reporting every event as a difference | `docs/design/runs.md` §4 |
 | 20, 21 | The journal is the runtime's own account | `docs/design/v0.1.md` §10 |
 | 22, 23, 24, 25 | OTLP traces and metrics, `sic.` and GenAI attributes | `docs/design/observability.md` |
 | 27 | Secrets do not reach telemetry | the journal records digests, never values |

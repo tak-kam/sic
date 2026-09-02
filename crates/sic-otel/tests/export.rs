@@ -29,6 +29,7 @@ fn simple_run() -> Vec<TimedEvent> {
             100,
             EventKind::RunStarted {
                 workflow: "main".into(),
+                program: Digest::of(b"bytecode"),
                 args: d,
             },
         ),
@@ -146,6 +147,7 @@ fn a_model_call_carries_the_genai_attributes() {
             100,
             EventKind::RunStarted {
                 workflow: "main".into(),
+                program: Digest::of(b"bytecode"),
                 args: d,
             },
         ),
@@ -207,6 +209,7 @@ fn a_call_that_waited_is_measured_apart_from_one_that_did_not() {
             0,
             EventKind::RunStarted {
                 workflow: "main".into(),
+                program: Digest::of(b"bytecode"),
                 args: d,
             },
         ),
@@ -338,6 +341,7 @@ fn a_capability_span_says_what_is_left_of_the_budget() {
             100,
             EventKind::RunStarted {
                 workflow: "main".into(),
+                program: Digest::of(b"bytecode"),
                 args: d,
             },
         ),

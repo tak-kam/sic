@@ -358,6 +358,10 @@ impl<'a> Vm<'a> {
             None,
             EventKind::RunStarted {
                 workflow: name.clone(),
+                // Computed here rather than handed in, because a caller that
+                // could forget is a journal that could be about nothing. It is
+                // the same function `checkpoint` names the same bytecode with.
+                program: sic_bytecode::digest(self.program),
                 args: arg_digest,
             },
         );

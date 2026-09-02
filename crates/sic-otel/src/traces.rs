@@ -51,7 +51,11 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
         last_ts = last_ts.max(ts);
 
         match &event.kind {
-            EventKind::RunStarted { workflow, args } => {
+            EventKind::RunStarted {
+                workflow,
+                program,
+                args,
+            } => {
                 let mut span = start(
                     event.span,
                     event.parent,
@@ -61,6 +65,8 @@ pub fn traces(events: &[TimedEvent], resource: &Resource) -> String {
                 );
                 span.attributes
                     .push((attr::WORKFLOW.into(), Value::str(workflow.clone())));
+                span.attributes
+                    .push((attr::PROGRAM_DIGEST.into(), Value::str(program.to_string())));
                 span.attributes
                     .push((attr::ARGS_DIGEST.into(), Value::str(args.to_string())));
                 push(&mut open, &mut order, span);

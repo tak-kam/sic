@@ -69,9 +69,14 @@ impl EventKind {
     /// is better than guessing.
     pub fn write(&self, w: &mut Writer) {
         match self {
-            EventKind::RunStarted { workflow, args } => {
+            EventKind::RunStarted {
+                workflow,
+                program,
+                args,
+            } => {
                 w.u8(0);
                 w.str(workflow);
+                digest(w, program);
                 digest(w, args);
             }
             EventKind::RunCompleted { result } => {
@@ -195,6 +200,7 @@ impl EventKind {
         Ok(match r.u8()? {
             0 => EventKind::RunStarted {
                 workflow: r.str()?,
+                program: read_digest(r)?,
                 args: read_digest(r)?,
             },
             1 => EventKind::RunCompleted {

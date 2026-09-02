@@ -49,6 +49,10 @@ pub mod attr {
     pub const ATTEMPT: &str = "sic.capability.attempt";
     pub const FUNCTION: &str = "sic.function.name";
     pub const ARGS_DIGEST: &str = "sic.args.digest";
+    /// Which bytecode the run was of. On the root span, because it is true of
+    /// the whole run, and because somebody reading a trace they did not produce
+    /// has no other way to ask what program it is about.
+    pub const PROGRAM_DIGEST: &str = "sic.program.digest";
     pub const RESULT_DIGEST: &str = "sic.result.digest";
     pub const BUDGET_REMAINING: &str = "sic.budget.remaining";
 

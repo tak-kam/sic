@@ -11,7 +11,6 @@ use std::process::ExitCode;
 
 use sic_broker::Broker;
 use sic_bytecode::Program;
-use sic_core::Digest;
 use sic_journal::Journal;
 use sic_vm::{DEFAULT_FUEL, FailInfo, Value, Vm};
 
@@ -348,7 +347,7 @@ fn write_checkpoint(
 ) -> ExitCode {
     // The digest ties the checkpoint to this exact bytecode, so it cannot be
     // resumed against a program that has changed underneath it.
-    let digest = Digest::of(&sic_bytecode::encode(program));
+    let digest = sic_bytecode::digest(program);
     let Some(bytes) = vm.checkpoint(digest, question) else {
         eprintln!("internal error: the run is waiting but has no state to save");
         return ExitCode::from(EXIT_FAILURE);

@@ -8,7 +8,6 @@
 use std::process::ExitCode;
 
 use sic_broker::Broker;
-use sic_core::Digest;
 use sic_journal::NullSink;
 use sic_vm::Vm;
 
@@ -66,7 +65,7 @@ pub fn run(checkpoint_path: &str, source_path: &str, options: ResumeOptions<'_>)
         Err(code) => return code,
     };
     // A checkpoint is only meaningful against the bytecode it was taken from.
-    let digest = Digest::of(&sic_bytecode::encode(&program));
+    let digest = sic_bytecode::digest(&program);
 
     let sink: Box<dyn sic_journal::Sink> = match options.journal {
         Some(path) => match FileSink::append(path) {

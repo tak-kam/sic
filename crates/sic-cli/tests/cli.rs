@@ -7036,16 +7036,50 @@ mod recorded_runs {
         std::fs::remove_dir_all(store).ok();
     }
 
+    /// A digest no run produces, for standing in as what a recording said.
+    const NOT_A_DIGEST_THIS_RUN_PRODUCES: &str =
+        "sha256:0000000000000000000000000000000000000000000000000000000000000000";
+
+    /// The only run directory under a store.
+    fn only_run(store: &std::path::Path) -> std::path::PathBuf {
+        std::fs::read_dir(store)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path()
+    }
+
+    /// Rewrites the recorded journal, standing in for the thing `replay`
+    /// exists to catch.
+    ///
+    /// A replay's claim is about determinism: the *stored* bytecode, run again,
+    /// against the stored answers. So the difference it is built to find is a
+    /// sic that changed - a recording that says something this build does not
+    /// produce. There is no cheap way to have two sic binaries in a test, and
+    /// editing what the recording says is the same situation from the other
+    /// end.
+    ///
+    /// These tests used to swap the bytecode instead, which is a different
+    /// thing and is now refused before the comparison runs: a journal and a
+    /// program that do not belong together cannot be compared, and every
+    /// difference such a pair reports is noise.
+    fn edit_recorded_journal(dir: &std::path::Path, from: &str, to: &str) {
+        let path = dir.join("journal.jsonl");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains(from), "nothing to edit in {text}");
+        std::fs::write(&path, text.replace(from, to)).unwrap();
+    }
+
     #[test]
     fn a_replay_that_differs_says_where() {
-        // A difference is a real finding: the VM changed, the compiler changed, or
-        // something was not as deterministic as it claimed.
+        // A difference is a real finding: the VM changed, the compiler changed,
+        // or something was not as deterministic as it claimed.
         let store = temp_store("differs");
         let src = write_temp(
             "replay-差.sic".replace('差', "diff").as_str(),
             "fn main() -> Int { return 1; }\n",
         );
-        let other = write_temp("replay-other.sic", "fn main() -> Int { return 2; }\n");
 
         let (_, _, code) = sic_with_store(
             repo_root(),
@@ -7054,13 +7088,53 @@ mod recorded_runs {
         );
         assert_eq!(code, 0);
 
-        // Swap the recorded bytecode for a different program.
-        let dir = std::fs::read_dir(&store)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
+        // What the recording says the run answered with, changed to something
+        // this build will not produce.
+        let dir = only_run(&store);
+        let recorded = std::fs::read_to_string(dir.join("journal.jsonl")).unwrap();
+        let answered = recorded
+            .lines()
+            .find(|l| l.contains("\"event\":\"run_completed\""))
+            .and_then(|l| l.split_once("\"result\":\""))
+            .map(|(_, rest)| rest.split('"').next().unwrap().to_string())
+            .expect("the recording should say what the run answered");
+        edit_recorded_journal(&dir, &answered, NOT_A_DIGEST_THIS_RUN_PRODUCES);
+
+        let id = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+        assert_eq!(code, 1, "{stdout}");
+        assert!(stdout.contains("recorded"), "{stdout}");
+        assert!(stdout.contains("replayed"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// A journal and a program that do not belong together are refused, rather
+    /// than compared and reported as a wall of differences.
+    ///
+    /// `RunStarted` names the bytecode the run was of (#88), so this is
+    /// answerable now and was not before: a replay used to run whatever
+    /// `program.sicb` happened to hold and report every event as a difference,
+    /// which reads like a determinism bug and is not one. A checkpoint has
+    /// refused the same mismatch, by name, since it had a digest.
+    #[test]
+    fn a_replay_refuses_bytecode_the_journal_is_not_about() {
+        let store = temp_store("replay-mismatch");
+        let src = write_temp("replay-mismatch.sic", "fn main() -> Int { return 1; }\n");
+        let other = write_temp(
+            "replay-mismatch-other.sic",
+            "fn main() -> Int { return 2; }\n",
+        );
+
+        let (_, _, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 0);
+
+        let dir = only_run(&store);
         let other_bytecode = other.with_extension("sicb");
         let (_, _, code) = sic(&[
             "compile",
@@ -7072,10 +7146,18 @@ mod recorded_runs {
         std::fs::copy(&other_bytecode, dir.join("program.sicb")).unwrap();
 
         let id = dir.file_name().unwrap().to_string_lossy().into_owned();
-        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
-        assert_eq!(code, 1);
-        assert!(stdout.contains("recorded"), "{stdout}");
-        assert!(stdout.contains("replayed"), "{stdout}");
+        let (stdout, stderr, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
+        assert_eq!(code, 1, "{stdout}");
+        assert!(
+            stderr.contains("recorded from different bytecode"),
+            "{stderr}"
+        );
+        // Both digests, because a reader who is told only that they differ
+        // cannot tell which of the two files is the one they did not expect.
+        assert!(stderr.contains("recorded sha256:"), "{stderr}");
+        assert!(stderr.contains("stored   sha256:"), "{stderr}");
+        // And nothing was compared: a refusal is not a report of differences.
+        assert!(!stdout.contains("events matched"), "{stdout}");
 
         for path in [src, other, other_bytecode] {
             std::fs::remove_file(path).ok();
@@ -7159,21 +7241,18 @@ mod recorded_runs {
         );
         assert_eq!(code, 0);
 
-        let dir = std::fs::read_dir(&store)
-            .unwrap()
-            .flatten()
-            .next()
-            .unwrap()
-            .path();
-        let other_bytecode = other.with_extension("sicb");
-        let (_, _, code) = sic(&[
-            "compile",
-            other.to_str().unwrap(),
-            "-o",
-            other_bytecode.to_str().unwrap(),
-        ]);
-        assert_eq!(code, 0);
-        std::fs::copy(&other_bytecode, dir.join("program.sicb")).unwrap();
+        // What the recording says was logged, changed to a digest this build
+        // will not produce - the same situation as a sic whose logging changed,
+        // from the end a test can reach.
+        let dir = only_run(&store);
+        let recorded = std::fs::read_to_string(dir.join("journal.jsonl")).unwrap();
+        let logged = recorded
+            .lines()
+            .find(|l| l.contains("\"event\":\"logged\""))
+            .and_then(|l| l.split_once("\"message\":\""))
+            .map(|(_, rest)| rest.split('"').next().unwrap().to_string())
+            .expect("the recording should hold a logged digest");
+        edit_recorded_journal(&dir, &logged, NOT_A_DIGEST_THIS_RUN_PRODUCES);
 
         let id = dir.file_name().unwrap().to_string_lossy().into_owned();
         let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["replay", &id]);
@@ -7200,7 +7279,7 @@ mod recorded_runs {
             "{stdout}"
         );
 
-        for path in [src, other, other_bytecode] {
+        for path in [src, other] {
             std::fs::remove_file(path).ok();
         }
         std::fs::remove_dir_all(store).ok();

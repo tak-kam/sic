@@ -107,6 +107,30 @@ What it does not do is call anything. A replay that asked the broker again would
 be a second run, with a second set of effects, which is the opposite of what
 replaying is for.
 
+### It refuses a journal and a program that do not belong together
+
+A replay reads `program.sicb` back off a disk anybody could have written to
+since. If those bytes are not the bytes the journal is a record of, the
+comparison answers a different question, and every difference it reports is
+noise that reads exactly like the finding above - a determinism bug that is not
+one.
+
+`RunStarted` names the bytecode (#88), so the pair can be checked before
+anything runs:
+
+```console
+$ sic replay d0b0d9b5
+error: this journal was recorded from different bytecode
+  recorded sha256:bc04a041...
+  stored   sha256:5d8ff875...
+```
+
+Both digests, because a reader told only that they differ cannot tell which of
+the two files is the one they did not expect. This is the same claim a
+checkpoint has made since it had a digest, about the other artifact; §1 already
+said a run's directory holds three files, and this is what makes two of them
+provably about each other.
+
 Suspending, checkpointing and resuming are left out of the comparison. They
 record how a run was carried out - in how many sittings the answers arrived -
 rather than what the program did. A run that waited two days for a person is the

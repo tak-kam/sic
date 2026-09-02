@@ -184,7 +184,7 @@ fn answer_once(it: Round<'_>) -> (ExitCode, bool) {
     };
     // The bytecode is the one the run started with, so the digest matches by
     // construction - which is the point of storing it beside the checkpoint.
-    let digest = Digest::of(&sic_bytecode::encode(&program));
+    let digest = sic_bytecode::digest(&program);
 
     let sink: Box<dyn sic_journal::Sink> =
         match super::journal::FileSink::append(&dir.join(store::JOURNAL).to_string_lossy()) {
@@ -404,6 +404,10 @@ pub fn explain(prefix: &str) -> ExitCode {
 
     sayln!("run {}", summary.run);
     sayln!("  workflow   {}", summary.workflow);
+    // Which program this is a record of. `sic plan` prints the same digest on
+    // its second line, so the two can be held next to each other - which is the
+    // whole of what a person auditing a run needs and could not do.
+    sayln!("  bytecode   {}", summary.program);
     say!("  outcome    {}", summary.outcome.label());
     match summary.outcome.detail() {
         Some(detail) => sayln!("  ({detail})"),
@@ -628,6 +632,20 @@ pub fn replay(prefix: &str) -> ExitCode {
         eprintln!("error: the stored bytecode has no `main`");
         return ExitCode::from(EXIT_FAILURE);
     };
+    // The journal now says which bytecode it is a record of, so a replay can
+    // refuse the pair rather than run it and report every event as a
+    // difference. A checkpoint has refused this mismatch since it had a digest;
+    // this is the same claim about the other artifact.
+    let stored = sic_bytecode::digest(&program);
+    if summary.program != stored {
+        eprintln!(
+            "error: this journal was recorded from different bytecode\n\
+             \x20 recorded {}\n\
+             \x20 stored   {stored}",
+            summary.program
+        );
+        return ExitCode::from(EXIT_FAILURE);
+    }
 
     sayln!("replaying {} ({})", summary.run, summary.workflow);
 

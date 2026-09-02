@@ -15,8 +15,6 @@ use crate::out::say;
 
 use std::process::ExitCode;
 
-use sic_core::Digest;
-
 use super::{EXIT_FAILURE, compile_source, load_bytecode};
 
 pub fn run(path: &str, graph: bool) -> ExitCode {
@@ -46,7 +44,7 @@ pub fn run(path: &str, graph: bool) -> ExitCode {
         return ExitCode::from(EXIT_FAILURE);
     }
 
-    let digest = Digest::of(&sic_bytecode::encode(&program));
+    let digest = sic_bytecode::digest(&program);
     let plan = sic_plan::plan(&program, digest);
     match graph {
         true => say!("{}", sic_plan::graph(&plan, path)),

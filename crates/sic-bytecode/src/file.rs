@@ -80,6 +80,19 @@ type Result<T> = std::result::Result<T, DecodeError>;
 
 // ---------------------------------------------------------------- encoding
 
+/// What a module is called, once, so that everything naming one agrees.
+///
+/// The digest is of the encoded module rather than of whatever file it may have
+/// come from, which is what lets a program compiled in memory be named at all -
+/// and what makes the name the same whether a run started from `.sic` or
+/// `.sicb`. `sic plan` prints it, a checkpoint carries it and refuses to
+/// restore against anything else, and a journal records it at `RunStarted`.
+/// Those are three readers of one claim, and they were three copies of this
+/// line until one of them needed to be somewhere the other two could not reach.
+pub fn digest(p: &Program) -> sic_core::Digest {
+    sic_core::Digest::of(&encode(p))
+}
+
 pub fn encode(p: &Program) -> Vec<u8> {
     let mut sections: Vec<(u32, Vec<u8>)> = Vec::new();
 

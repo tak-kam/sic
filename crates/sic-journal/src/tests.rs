@@ -14,6 +14,7 @@ fn sequence_numbers_are_monotonic_and_spans_are_unique() {
         None,
         EventKind::RunStarted {
             workflow: "main".into(),
+            program: Digest::of(b"bytecode"),
             args: Digest::of(b""),
         },
     );

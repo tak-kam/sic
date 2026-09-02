@@ -25,8 +25,13 @@ pub fn event_to_json(event: &Event) -> String {
     field_str(&mut out, "event", event.kind.name(), false);
 
     match &event.kind {
-        EventKind::RunStarted { workflow, args } => {
+        EventKind::RunStarted {
+            workflow,
+            program,
+            args,
+        } => {
             field_str(&mut out, "workflow", workflow, false);
+            field_str(&mut out, "program", &program.to_string(), false);
             field_str(&mut out, "args", &args.to_string(), false);
         }
         EventKind::RunCompleted { result } => {

@@ -96,8 +96,21 @@ impl LogLevel {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum EventKind {
+    /// `program` is the bytecode's digest, and it is what ties this file to a
+    /// plan.
+    ///
+    /// Without it a journal says which function a run entered and what it was
+    /// called with, and nothing about which program that function was in - so
+    /// two runs of two different programs that both start at `main` and take no
+    /// arguments differ in a timestamp and a run id. Every neighbouring
+    /// artifact already carries the digest: a checkpoint refuses to restore
+    /// against different bytecode, `sic plan` prints it on its second line, and
+    /// a recorded run keeps the bytes themselves. The journal is the one a
+    /// person is handed on its own, which is the one that most needed to be
+    /// able to say what it is a record of.
     RunStarted {
         workflow: String,
+        program: Digest,
         args: Digest,
     },
     RunCompleted {

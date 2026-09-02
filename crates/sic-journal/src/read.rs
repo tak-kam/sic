@@ -92,6 +92,7 @@ fn kind_from_json(json: &Json) -> Option<EventKind> {
     Some(match name {
         "run_started" => EventKind::RunStarted {
             workflow: string(json, "workflow")?.to_string(),
+            program: digest(json, "program")?,
             args: digest(json, "args")?,
         },
         "run_completed" => EventKind::RunCompleted {
@@ -227,6 +228,7 @@ mod tests {
         let d = Digest::of(b"x");
         round_trip(EventKind::RunStarted {
             workflow: "main".into(),
+            program: Digest::of(b"bytecode"),
             args: d,
         });
         round_trip(EventKind::RunCompleted { result: d });
