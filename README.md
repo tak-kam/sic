@@ -274,6 +274,16 @@ behind an approval. It renders in GitHub and most editors with nothing
 installed, and where nothing renders it is still readable. The first node in
 the diagram says "may, not will" - an arrow is much harder to qualify than a
 sentence, and a plan that over-claims is as useless as one that under-reports.
+
+**And checked.** `sic plan --json` writes the same plan as data, so the reader
+does not have to be a person. "Nothing writes outside `./out`", "every model
+call is bounded" - each is a sentence about a manifest, each is checkable, and
+against prose the check was a grep that a longer constraint breaks. It is also
+what makes a *diff* of a plan mean something: what a reviewer needs is rarely
+the plan, it is that this branch may now write a file it could not write
+before. All three renderings come from one `Plan`, because a second reader of
+the bytecode would eventually let a rule pass against a plan a person would
+have refused.
 → [plan.md](docs/design/plan.md)
 
 **And a person who is present can just answer.** `sic run p.sic --record
@@ -303,7 +313,7 @@ document reports what could not be written as carefully as what could.
 ```text
 sic run <FILE.sic> [--journal P] [--checkpoint P] [--record] [--llm SPEC] [--no-isolate]
                                    [--interactive]  ask this terminal, and keep asking
-sic plan <FILE.sic|FILE.sicb> [--graph]
+sic plan <FILE.sic|FILE.sicb> [--graph | --json]
                                    what a program may do, running nothing;
                                    --graph draws which functions reach which
 sic runs [--waiting]               what has been recorded, or what is waiting
@@ -337,7 +347,7 @@ Exit code 3 means a run was suspended and checkpointed. Waiting is not failing.
 | [interactive.md](docs/design/interactive.md) | answering a run from the terminal it is running in |
 | [logging.md](docs/design/logging.md) | what a program has to say about itself, and where it goes |
 | [processes.md](docs/design/processes.md) | what splitting the VM from the broker buys, and what is already true without it |
-| [plan.md](docs/design/plan.md) | `sic plan`, and `--graph` |
+| [plan.md](docs/design/plan.md) | `sic plan`, and `--graph` and `--json` |
 | [driving.md](docs/design/driving.md) | answering a model call with an agent CLI in a pane |
 | [authority.md](docs/design/authority.md) | what the agent answering may do, and who decides |
 | [arguments.md](docs/design/arguments.md) | what a program may be told, and what a grant pins about it |

@@ -420,3 +420,122 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
         assert!(rendered.ends_with(')'), "{rendered}");
     }
 }
+
+// ---- the plan as data ----
+
+/// Reads one member out of a flat object. Enough for a test, and deliberately
+/// not a JSON reader: `sic-json` is the parser, and this file is checking what
+/// was written rather than re-deriving it.
+fn member<'a>(json: &'a str, name: &str) -> &'a str {
+    let at = json
+        .find(&format!("\"{name}\":"))
+        .unwrap_or_else(|| panic!("no `{name}` in {json}"));
+    let rest = &json[at + name.len() + 3..];
+    let end = rest
+        .find([',', '}', ']'])
+        .unwrap_or_else(|| panic!("unterminated `{name}` in {json}"));
+    rest[..end].trim_matches('"')
+}
+
+#[test]
+fn the_plan_as_data_says_what_the_prose_says() {
+    let p = program_with_capability(Some(PolicyEntry {
+        pc: 1,
+        attempts: 3,
+        timeout_ms: 250,
+        budget: 2,
+        budget_group: 1,
+        conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+        validates: 0,
+    }));
+    let plan = plan(&p, digest());
+    let json = to_json(&plan);
+
+    // The version is first, so a reader that does not recognise it can stop
+    // before it has assumed anything.
+    assert!(json.starts_with("{\"version\":1,"), "{json}");
+    // The digest is what ties an approved plan to a run, and it is the same
+    // digest the prose prints.
+    assert_eq!(member(&json, "bytecode"), digest().to_string());
+    assert!(render(&plan, "main.sic").contains(&digest().to_string()));
+
+    // The numbers a rule would be written against.
+    assert_eq!(member(&json, "capability"), "fs.read");
+    assert_eq!(member(&json, "effect"), "read");
+    assert_eq!(member(&json, "constraint"), "./a.txt");
+    assert_eq!(member(&json, "budget"), "2");
+    assert_eq!(member(&json, "attempts"), "3");
+    assert_eq!(member(&json, "timeout_ms"), "250");
+    assert_eq!(member(&json, "bounded_calls"), "2");
+}
+
+/// An absence is `null` rather than a zero or a missing member, because a rule
+/// that could not tell "no budget" from "a budget of nothing" would be a rule
+/// answering a different question than the one it was written to ask.
+#[test]
+fn what_a_plan_does_not_know_is_null_rather_than_zero() {
+    let plan = plan(&program_with_capability(None), digest());
+    let json = to_json(&plan);
+    assert_eq!(member(&json, "budget"), "null");
+    assert_eq!(member(&json, "timeout_ms"), "null");
+    assert_eq!(member(&json, "tools"), "null");
+    assert_eq!(member(&json, "deadline_ms"), "null");
+    assert_eq!(member(&json, "pin"), "null");
+    // And a site with no bound is counted as a site rather than as a number of
+    // calls, which is the plan refusing to invent one.
+    assert_eq!(member(&json, "bounded_calls"), "0");
+    assert_eq!(member(&json, "unbounded_sites"), "1");
+}
+
+/// Both renderings come from one `Plan`, and this is what holds them to it.
+///
+/// The failure this guards against is not a formatting difference. It is a rule
+/// passing against a plan a person reading the prose would have refused - which
+/// is what a second walk of the bytecode would eventually produce, and why
+/// there is not one.
+#[test]
+fn every_step_the_prose_numbers_is_a_step_in_the_data() {
+    let p = program_with_capability(Some(PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 0,
+        budget_group: 0,
+        conversation: 0,
+        tools: 0,
+        deadline_ms: 0,
+        validates: 0,
+    }));
+    let plan = plan(&p, digest());
+    let prose = render(&plan, "main.sic");
+    let json = to_json(&plan);
+
+    let numbered = prose
+        .lines()
+        .filter(|l| l.trim_start().starts_with("1. ") || l.trim_start().starts_with("2. "))
+        .count();
+    let in_data = json.matches("\"pc\":").count();
+    assert_eq!(numbered, in_data, "prose:\n{prose}\ndata:\n{json}");
+    assert!(numbered > 0);
+
+    // And the verb a person reads is the verb a rule reads.
+    assert!(prose.contains("READ"), "{prose}");
+    assert_eq!(member(&json, "verb"), "READ");
+}
+
+/// A constraint is a string from the source and can hold anything. The prose
+/// has the same problem and solves it for Mermaid; this is the other renderer's
+/// version, and the answer is that the escaping is `sic-json`'s rather than
+/// this file's.
+#[test]
+fn a_constraint_that_would_break_the_shape_is_escaped() {
+    let mut p = program_with_capability(None);
+    p.caps[0].constraints = "a \"quoted\" \\ path\nwith a newline".into();
+    let json = to_json(&plan(&p, digest()));
+    assert!(
+        json.contains(r#""a \"quoted\" \\ path\nwith a newline""#),
+        "{json}"
+    );
+}

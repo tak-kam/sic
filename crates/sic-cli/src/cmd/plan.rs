@@ -8,8 +8,11 @@
 //! program nobody has decided to trust yet.
 //!
 //! `--graph` writes the same plan as Mermaid, which says the one thing a list
-//! of functions cannot: which of them reach which. See
-//! `docs/design/plan.md`.
+//! of functions cannot: which of them reach which. `--json` writes it as data,
+//! for the readers that are not people - a rule about a repository, a diff of
+//! what a branch may now do, anything that wants to sort or filter. All three
+//! render one `Plan`, so none of them can say a program may do something
+//! another of them does not. See `docs/design/plan.md`.
 
 use crate::out::say;
 
@@ -17,7 +20,16 @@ use std::process::ExitCode;
 
 use super::{EXIT_FAILURE, compile_source, load_bytecode};
 
-pub fn run(path: &str, graph: bool) -> ExitCode {
+/// Which of the three renderings was asked for. A plan is one thing; these are
+/// ways of reading it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum As {
+    Prose,
+    Graph,
+    Json,
+}
+
+pub fn run(path: &str, shape: As) -> ExitCode {
     let program = if path.ends_with(".sicb") {
         match load_bytecode(path) {
             Ok(program) => program,
@@ -46,9 +58,10 @@ pub fn run(path: &str, graph: bool) -> ExitCode {
 
     let digest = sic_bytecode::digest(&program);
     let plan = sic_plan::plan(&program, digest);
-    match graph {
-        true => say!("{}", sic_plan::graph(&plan, path)),
-        false => say!("{}", sic_plan::render(&plan, path)),
+    match shape {
+        As::Graph => say!("{}", sic_plan::graph(&plan, path)),
+        As::Json => say!("{}", sic_plan::to_json(&plan)),
+        As::Prose => say!("{}", sic_plan::render(&plan, path)),
     }
     ExitCode::SUCCESS
 }

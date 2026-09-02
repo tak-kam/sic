@@ -225,6 +225,72 @@ needs, that is the next issue to write, and it has this rendering to build on.
 
 ---
 
+## 3b. `--json`: a plan something other than a person can read
+
+A plan exists so that a program can be approved before it is run. Until #87 the
+only thing that could perform that approval was a person reading prose, and
+three readers that should have been able to could not.
+
+**A rule about a repository.** "Nothing writes outside `./out`", "every model
+call is bounded", "no `process.exec` outside `./build`" - each is a sentence
+about a manifest and each is checkable. Against prose the check is a grep, and a
+grep is broken by a constraint getting longer. This project already decided it
+does not trust prose to stay in step with what it describes: `docs/diagnostics.md`
+has a test behind it for that, and a plan is a stronger claim than an index of
+error codes.
+
+**A diff of a plan.** What a reviewer needs is rarely the plan; it is what
+changed - this branch may now write a file it could not write before. `diff`
+over rendered text answers that badly. A column shifts when a constraint gets
+longer, a site moves when a line is added above it, a reordering that changes
+nothing looks like a change, and a widened grant hides in a line that looks
+untouched.
+
+**Anything that sorts or filters.** A plan of forty sites is read by scrolling,
+because nothing can rank it.
+
+### The shape is an interface
+
+Prose can be reworded. Data cannot, because something will be checking a field
+name against a rule somebody wrote. So `version` is the first member, and a
+reader that does not recognise it should stop rather than guess. It moves when a
+reader that assumed the old shape would be *wrong* rather than merely
+incomplete - a member removed, renamed, or given a new meaning. Adding one does
+not move it: a reader that ignores what it does not know is still right about
+everything else.
+
+An absence is `null`, never a zero and never a missing member. A rule that could
+not tell "no budget" from "a budget of nothing" would be answering a different
+question than the one it was written to ask, and the difference matters exactly
+where it is dangerous - `"budget": null` is a model call nothing bounds.
+
+### It is not a second reader of the bytecode
+
+`render`, `graph` and `to_json` are three renderings of one `Plan`. Nothing in
+the JSON path opens the module again.
+
+That is not tidiness. A second walk would eventually disagree with the first,
+and the shape of the failure is specific: **a rule passing against a plan a
+person reading the prose would have refused.** A plan that can be checked is
+worth less than nothing if the thing checked is not the thing approved. A test
+holds the two to the same step count, and both print the same digest - which is
+what ties an approved plan to the bytes that run.
+
+### What is deliberately not in this
+
+- **A policy language.** Expressing and enforcing a rule about a manifest has
+  its own vocabulary and its own argument, and it was unbuildable while a plan
+  was prose. This is the half that had to come first, and it earns its place
+  even if the other half is never built: a shell script and a JSON reader is a
+  real answer for a repository with one rule.
+- **Diffing two plans.** A small program once this exists, and not one before.
+- **Changing what the prose says.** The rendered plan is what a person approves
+  and it was never the problem.
+- **The journal or the disassembly as data.** Different artifacts, different
+  readers, and each would need this section written again for itself.
+
+---
+
 ## 4. Not here
 
 - **No cost or token estimate.** The broker does not report either yet, so any

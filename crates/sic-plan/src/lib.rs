@@ -16,6 +16,10 @@
 //! useful thing than this. Claiming a certainty this cannot establish would be
 //! worse than claiming none.
 
+mod json;
+
+pub use json::{VERSION as JSON_VERSION, to_json};
+
 use sic_bytecode::inst::Op;
 use std::collections::HashMap;
 

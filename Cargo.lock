@@ -86,6 +86,7 @@ version = "0.6.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
+ "sic-json",
 ]
 
 [[package]]

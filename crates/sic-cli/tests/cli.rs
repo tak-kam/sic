@@ -4522,6 +4522,78 @@ mod retrying {
     }
 }
 
+/// a plan something other than a person can read.
+mod plan_as_data {
+    use super::*;
+
+    const HARNESS: &str = "type Fix { change: String, confidence: Int }\n\
+                           allow {\n\
+                           \x20   fs.write \"./out/fix.txt\";\n\
+                           \x20   human.approve \"writing the fix\";\n\
+                           \x20   llm.invoke \"a-model\" repeatable;\n\
+                           }\n\
+                           agent propose { input: String, output: Fix, budget: 2, retry: 2 }\n\
+                           fn main() -> Int {\n\
+                           \x20   let f = propose(\"why?\");\n\
+                           \x20   let signed = approve(\"writing the fix\", f);\n\
+                           \x20   fs.write(\"./out/fix.txt\", signed.change);\n\
+                           \x20   return 0;\n\
+                           }\n";
+
+    /// The rule a repository would want to write, written.
+    ///
+    /// Not a demonstration of a serialiser: this is the thing `sic plan` was
+    /// for and could not do, because the only exit it had was prose and a rule
+    /// against prose is a grep that a longer constraint breaks.
+    #[test]
+    fn a_rule_can_be_checked_against_a_plan() {
+        let src = write_temp("plan-json.sic", HARNESS);
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap(), "--json"]);
+        assert_eq!(code, 0, "{stderr}");
+
+        // "Every model call is bounded" - true here.
+        assert!(!stdout.contains("\"capability\":\"llm.invoke\",\"effect\":\"invoke\",\"constraint\":\"a-model\",\"budget\":null"), "{stdout}");
+        // "Nothing writes outside ./out" - the constraint is in the data, so a
+        // reader checks a string rather than a column.
+        assert!(
+            stdout.contains("\"constraint\":\"./out/fix.txt\""),
+            "{stdout}"
+        );
+        // The digest, so a rule that passed can be tied to the bytes that run.
+        let (prose, _, _) = sic(&["plan", src.to_str().unwrap()]);
+        let printed = prose
+            .lines()
+            .find(|l| l.starts_with("bytecode "))
+            .unwrap()
+            .trim_start_matches("bytecode ");
+        assert!(stdout.contains(printed), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+    }
+
+    /// The version leads, so a reader that does not know this shape can stop
+    /// before it has assumed anything about the rest.
+    #[test]
+    fn the_shape_says_which_shape_it_is() {
+        let src = write_temp("plan-json-version.sic", "fn main() -> Int { return 1; }\n");
+        let (stdout, _, code) = sic(&["plan", src.to_str().unwrap(), "--json"]);
+        assert_eq!(code, 0);
+        assert!(stdout.starts_with("{\"version\":1,"), "{stdout}");
+        std::fs::remove_file(src).ok();
+    }
+
+    /// Each flag is a whole rendering of the plan, so asking for two asks for
+    /// two files down one pipe.
+    #[test]
+    fn the_renderings_are_exclusive() {
+        let src = write_temp("plan-json-both.sic", "fn main() -> Int { return 1; }\n");
+        let (_, stderr, code) = sic(&["plan", src.to_str().unwrap(), "--graph", "--json"]);
+        assert_eq!(code, 2, "{stderr}");
+        assert!(stderr.contains("not both"), "{stderr}");
+        std::fs::remove_file(src).ok();
+    }
+}
+
 /// exporting.
 mod exporting {
     use super::*;

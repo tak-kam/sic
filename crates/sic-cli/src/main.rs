@@ -58,10 +58,13 @@ Usage:
   sic compile <FILE.sic> [-o OUT] write bytecode to OUT (default: FILE.sicb)
   sic export <JOURNAL> [--traces PATH] [--metrics PATH]
                                   convert an execution journal to OpenTelemetry
-  sic plan <FILE.sic|FILE.sicb> [--graph]
+  sic plan <FILE.sic|FILE.sicb> [--graph | --json]
                                   show what a program may do, without running
                                   it; --graph writes it as a Mermaid diagram,
-                                  which says which functions reach which
+                                  which says which functions reach which, and
+                                  --json writes it as data, for a rule that
+                                  checks a plan rather than a person who reads
+                                  one
   sic verify <FILE.sicb>          check that bytecode is safe to run
   sic disasm <FILE.sicb>          print bytecode as instructions
   sic parse <FILE.sic>            print the AST
@@ -219,10 +222,11 @@ fn main() -> ExitCode {
             ),
             Err(msg) => usage_error(msg),
         },
-        "plan" => match without_flag(rest, "--graph") {
-            (files, graph) if files.len() == 1 => cmd::plan::run(&files[0], graph),
-            _ => usage_error("`plan` takes one file"),
+        "plan" => match planning(rest) {
+            Ok((file, shape)) => cmd::plan::run(&file, shape),
+            Err(msg) => usage_error(msg),
         },
+
         "verify" => with_one_file(rest, "verify", cmd::verify::run),
         "disasm" => with_one_file(rest, "disasm", cmd::disasm::run),
         "upgrade" => match parse_upgrade(rest) {
@@ -284,6 +288,27 @@ struct Run {
 ///
 /// `parse_flags` pairs each flag with one value, so a flag with none does not
 /// fit it. Three commands take `--interactive` on those terms.
+/// `sic plan <FILE> [--graph | --json]`.
+///
+/// The two flags are exclusive rather than combined, because each is a whole
+/// rendering of the plan and asking for both asks for two files down one pipe.
+fn planning(args: &[String]) -> Result<(String, cmd::plan::As), &'static str> {
+    let (rest, graph) = without_flag(args, "--graph");
+    let (rest, json) = without_flag(&rest, "--json");
+    if graph && json {
+        return Err("`plan` takes `--graph` or `--json`, not both");
+    }
+    if rest.len() != 1 {
+        return Err("`plan` takes one file");
+    }
+    let shape = match (graph, json) {
+        (true, _) => cmd::plan::As::Graph,
+        (_, true) => cmd::plan::As::Json,
+        _ => cmd::plan::As::Prose,
+    };
+    Ok((rest[0].clone(), shape))
+}
+
 fn without_flag(args: &[String], flag: &str) -> (Vec<String>, bool) {
     let mut found = false;
     let rest = args
