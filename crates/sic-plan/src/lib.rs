@@ -16,11 +16,13 @@
 //! useful thing than this. Claiming a certainty this cannot establish would be
 //! worse than claiming none.
 
-mod flow;
 mod json;
 
-pub use flow::{Flow, Taint, flows};
+// The analysis is the verifier's, because deciding what is safe to run is what
+// that crate is for. A plan is one of its two readers: this one reports, and
+// the other refuses.
 pub use json::{VERSION as JSON_VERSION, to_json};
+pub use sic_verify::{Flow, Taint, flows};
 
 use sic_bytecode::inst::Op;
 use std::collections::HashMap;
@@ -479,7 +481,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         unbounded_sites,
         unused,
         multi_file: program.debug.sources.len() > 1,
-        flows: flow::flows(program),
+        flows: sic_verify::flows(program),
         reaches,
     }
 }

@@ -9,5 +9,13 @@ repository.workspace = true
 [dependencies]
 sic-core = { path = "../sic-core" }
 sic-bytecode = { path = "../sic-bytecode" }
+
+# Not a dependency, and it must not become one: the verifier decides whether
+# bytecode is safe to run without trusting whoever produced it, so it may not
+# need a compiler present. This is here for one test, which holds the list of
+# untrusted capabilities in `flow.rs` to what `sic-types` declares.
+[dev-dependencies]
+sic-types = { path = "../sic-types" }
+
 [lints]
 workspace = true

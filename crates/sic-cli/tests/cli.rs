@@ -4522,6 +4522,117 @@ mod retrying {
     }
 }
 
+/// the guarantee as a property of the file rather than of the compiler.
+mod unapproved_flows {
+    use super::*;
+
+    const APPROVED: &str = "type Fix { change: String, confidence: Int }\n\
+                            allow {\n\
+                            \x20   fs.write \"./out/fix.txt\";\n\
+                            \x20   human.approve \"writing the fix\";\n\
+                            \x20   llm.invoke \"a-model\";\n\
+                            }\n\
+                            agent propose { input: String, output: Fix }\n\
+                            fn main() -> Int {\n\
+                            \x20   let f = propose(\"why?\");\n\
+                            \x20   let signed = approve(\"writing the fix\", f);\n\
+                            \x20   fs.write(\"./out/fix.txt\", signed.change);\n\
+                            \x20   return 0;\n\
+                            }\n";
+
+    /// `APPROVE` and `MOVE` are the same copy and the same run. Turning one
+    /// into the other is what a compiler with three lines removed would emit,
+    /// and it used to produce a file that verified, planned clean and ran.
+    fn without_the_approval(bytecode: &std::path::Path) {
+        let mut bytes = std::fs::read(bytecode).unwrap();
+        // APPROVE is 37 and MOVE is 1, in the low byte of a little-endian word.
+        let at = bytes
+            .iter()
+            .position(|b| *b == 37)
+            .expect("the compiler should have emitted an APPROVE");
+        bytes[at] = 1;
+        std::fs::write(bytecode, bytes).unwrap();
+    }
+
+    #[test]
+    fn a_program_that_approves_verifies_and_one_that_only_looks_like_it_does_not() {
+        let src = write_temp("unapproved.sic", APPROVED);
+        let bytecode = src.with_extension("sicb");
+        let (_, stderr, code) = sic(&[
+            "compile",
+            src.to_str().unwrap(),
+            "-o",
+            bytecode.to_str().unwrap(),
+        ]);
+        assert_eq!(code, 0, "{stderr}");
+
+        // As the compiler wrote it.
+        let (_, stderr, code) = sic(&["verify", bytecode.to_str().unwrap()]);
+        assert_eq!(code, 0, "{stderr}");
+
+        // With the one instruction that says a person agreed taken out.
+        without_the_approval(&bytecode);
+        let (_, stderr, code) = sic(&["verify", bytecode.to_str().unwrap()]);
+        assert_eq!(code, 1, "the file was accepted: {stderr}");
+        assert!(
+            stderr.contains("`fs.write` is given a value nobody signed off"),
+            "{stderr}"
+        );
+
+        // And a plan is not printed for a file that will not run, so there is
+        // no window where a reader is shown an approved-looking summary of
+        // bytecode the verifier has already refused.
+        let (stdout, _, code) = sic(&["plan", bytecode.to_str().unwrap()]);
+        assert_eq!(code, 1);
+        assert!(!stdout.contains("Nobody signed off"), "{stdout}");
+
+        for path in [src, bytecode] {
+            std::fs::remove_file(path).ok();
+        }
+    }
+
+    /// A recorded run keeps the bytecode it ran, on a disk anybody could have
+    /// written to since. `attach` checks it again for that reason, and now
+    /// checks this too.
+    #[test]
+    fn a_recorded_run_whose_bytecode_was_edited_will_not_continue() {
+        let store = temp_store("unapproved-attach");
+        let src = write_temp("unapproved-attach.sic", APPROVED);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let dir = std::fs::read_dir(&store)
+            .unwrap()
+            .flatten()
+            .next()
+            .unwrap()
+            .path();
+        without_the_approval(&dir.join("program.sicb"));
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "attach",
+                &id,
+                "--value",
+                r#"{"change": "a cast", "confidence": 90}"#,
+            ],
+        );
+        assert_eq!(code, 1, "the run continued: {stderr}");
+        assert!(stderr.contains("nobody signed off"), "{stderr}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+}
+
 /// a plan something other than a person can read.
 mod plan_as_data {
     use super::*;

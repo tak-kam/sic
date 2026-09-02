@@ -1052,3 +1052,124 @@ fn sites_that_share_an_allowance_must_agree_about_its_size() {
         errors(&p)
     );
 }
+
+// ---- nothing a person did not agree to reaches an effect ----
+
+/// A model call, a laundering step, and a write.
+///
+/// `launder` is `Op::Approve` for bytecode this compiler produced and `Op::Move`
+/// for what one with three lines removed would produce. The two are the same
+/// copy and the same run; the only difference is whether the file says a person
+/// agreed, which is what E0372 knew and the file did not.
+fn a_model_and_a_write(launder: Op) -> Program {
+    let mut p = program(
+        &[],
+        TypeDesc::Int,
+        6,
+        vec![Const::Str("./out.txt".into())],
+        vec![
+            Inst::abx(Op::LoadConst, 1, 0),
+            Inst::abc(Op::CallCap, 2, 0, 1),
+            Inst::abc(launder, 3, 2, 0),
+            Inst::abc(Op::Move, 4, 1, 0),
+            Inst::abc(Op::Move, 5, 3, 0),
+            Inst::abc(Op::CallCap, 0, 1, 4),
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+    );
+    p.caps.push(CapDecl {
+        name: "llm.invoke".into(),
+        kind: CapKind::Invoke,
+        constraints: "a-model".into(),
+        pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
+        repeatable: false,
+        delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
+        args: Vec::new(),
+        params: vec![4],
+        ret_type: 4,
+    });
+    p.caps.push(CapDecl {
+        name: "fs.write".into(),
+        kind: CapKind::Write,
+        constraints: "./out.txt".into(),
+        pin: String::new(),
+        answers: sic_core::Answers::Unsaid,
+        repeatable: false,
+        delegable: false,
+        dir: String::new(),
+        env: Vec::new(),
+        args: Vec::new(),
+        params: vec![4, 4],
+        ret_type: 2,
+    });
+    p
+}
+
+/// The point of the whole exercise: the guarantee is a property of the file.
+///
+/// E0372 refuses the source that would need this. The artifact everything
+/// downstream trusts is the `.sicb`, and until now a compiler with three lines
+/// removed produced one that verified, planned clean and ran.
+#[test]
+fn bytecode_that_hands_a_model_answer_to_a_write_is_refused() {
+    let refused = errors(&a_model_and_a_write(Op::Move));
+    assert!(
+        refused
+            .iter()
+            .any(|e| e.contains("`fs.write` is given a value nobody signed off")),
+        "{refused:?}"
+    );
+    // And it names where, because a person told only that a program is unsafe
+    // has nowhere to look. The function and the pc are fields of the finding
+    // rather than part of its text, which is how every other error here does
+    // it and is what lets the debug section turn them into a line.
+    let report = verify(&a_model_and_a_write(Op::Move));
+    let found = report
+        .errors
+        .iter()
+        .find(|f| f.message.contains("nobody signed off"))
+        .expect("the flow should be reported");
+    assert_eq!(found.func.as_deref(), Some("f"));
+    assert_eq!(found.pc, Some(5));
+}
+
+/// And the same program with the approval in it is fine, which is the half that
+/// has to hold: a verifier that refused a program the type checker accepted
+/// would be a release-stopping bug.
+#[test]
+fn the_same_program_with_an_approval_verifies() {
+    assert_ok(&a_model_and_a_write(Op::Approve));
+}
+
+/// Reading is not changing. `fs.read` given a model's answer is a program
+/// asking a model which file to read, which `trust.md` §2 allows and argues
+/// for: what is refused is deciding what gets *changed*.
+#[test]
+fn a_model_answer_reaching_something_that_only_reads_is_not_refused() {
+    let mut p = a_model_and_a_write(Op::Move);
+    p.caps[1].name = "fs.read".into();
+    p.caps[1].kind = CapKind::Read;
+    p.caps[1].params = vec![4, 4];
+    assert_ok(&p);
+}
+
+/// A structural failure is reported on its own. The flow analysis reads
+/// register windows and jump targets as facts, and on a file whose structure
+/// has already been refused they are not facts - so a second report about a
+/// program that is not a program would be noise on top of the finding that
+/// matters.
+#[test]
+fn a_malformed_file_is_not_also_reported_as_a_flow() {
+    let mut p = a_model_and_a_write(Op::Move);
+    // A jump target outside the function: structure fails first.
+    p.code[3] = Inst::asbx(Op::Jump, 0, 9000);
+    let found = errors(&p);
+    assert!(!found.is_empty());
+    assert!(
+        !found.iter().any(|e| e.contains("nobody signed off")),
+        "{found:?}"
+    );
+}

@@ -33,7 +33,7 @@
 //! has to be able to believe it.
 
 use sic_bytecode::inst::Op;
-use sic_bytecode::program::Program;
+use sic_bytecode::program::{FuncDef, Program};
 use sic_core::CapKind;
 
 /// How much a value is to be worried about.
@@ -56,6 +56,8 @@ pub enum Taint {
 pub struct Flow {
     /// The function the call is written in, and where.
     pub func: String,
+    /// The instruction, for a reader that has no debug section to go on.
+    pub pc: u32,
     pub position: Option<(u32, u32)>,
     pub file: Option<String>,
     /// The capability being given the value.
@@ -133,6 +135,7 @@ pub fn flows(program: &Program) -> Vec<Flow> {
             }
             found.push(Flow {
                 func: func.name.clone(),
+                pc,
                 position: program.debug.position(pc),
                 file: program.debug.file(pc).map(str::to_string),
                 cap: cap.name.clone(),
@@ -351,7 +354,7 @@ fn writes(op: Op) -> bool {
 
 /// Where control can go next, as offsets within the function.
 fn successors(
-    func: &sic_bytecode::program::FuncDef,
+    func: &FuncDef,
     pc: u32,
     offset: usize,
     op: Op,

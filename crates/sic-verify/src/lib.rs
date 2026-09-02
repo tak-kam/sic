@@ -10,6 +10,10 @@
 //! worklist, intersecting at merge points, which converges because the lattice
 //! only ever widens towards `Top`.
 
+mod flow;
+
+pub use flow::{Flow, Taint, flows};
+
 use std::collections::HashMap;
 
 use sic_bytecode::inst::{Inst, Op};
@@ -59,6 +63,13 @@ pub fn verify(program: &Program) -> VerifyReport {
     v.check_module();
     for func in &program.funcs {
         v.check_function(func);
+    }
+    // Last, and only if everything else held. The flow analysis reads register
+    // windows and jump targets as facts; on a file whose structure has already
+    // been refused they are not facts, and a second report about a program that
+    // is not a program is noise on top of the finding that matters.
+    if v.report.ok() {
+        v.check_nothing_unapproved_reaches_an_effect();
     }
     v.report
 }
@@ -254,6 +265,61 @@ impl<'a> Verifier<'a> {
                     ),
                 );
             }
+        }
+    }
+
+    /// Nothing a person did not agree to may reach a capability that changes
+    /// something.
+    ///
+    /// This is `E0372`, asked of the file instead of the source. The checker
+    /// refuses the program that writes it; until now nothing refused the
+    /// bytecode, so the guarantee was a property of *this compiler* rather than
+    /// of the artifact everything downstream trusts - and the verifier's whole
+    /// job is to decide that bytecode is safe to run without trusting whoever
+    /// produced it.
+    ///
+    /// # Why refusing here cannot refuse a good program
+    ///
+    /// The two analyses could disagree, and it is worth saying exactly why they
+    /// do not, because a verifier that refused a program the checker accepted
+    /// would be a release-stopping bug.
+    ///
+    /// **Provenance crosses a function boundary only through a declared
+    /// signature.** There is no coercion either way: `LLM<String>` is not
+    /// `String`, and neither is `HumanApproved<String>` - both are `E0301` at
+    /// the call. So a parameter receives one provenance from every site that
+    /// can call it, and this analysis being context-insensitive - joining the
+    /// taint of every call site - costs nothing, because the set it joins over
+    /// has one member.
+    ///
+    /// **A value this calls untrusted is a value the checker labelled.** The
+    /// taint has one source, a capability whose declared return carries a
+    /// label, and one way to lose it, `APPROVE`. Every other instruction passes
+    /// it on. So an untrusted register at a changing call is a labelled value
+    /// at a changing call, which is the sentence `E0372` refuses.
+    ///
+    /// **Where this is stricter, the difference cannot reach a sink.** It is
+    /// field-insensitive, so `process.run`'s whole `Exit` is untrusted where
+    /// the checker labels only its `output` field. The extra is `r.code`, an
+    /// `Int` - and every capability that writes or runs takes a `String` or a
+    /// `List<String>`. The verifier has already established that. So the one
+    /// place these disagree is a place no argument can be.
+    fn check_nothing_unapproved_reaches_an_effect(&mut self) {
+        for flow in flow::flows(self.program) {
+            if flow.approved {
+                continue;
+            }
+            // Not "these bytes are malformed", which is what every other error
+            // here says. This program is well formed and does something the
+            // language forbids, so the message says which thing.
+            self.error(
+                Some(&flow.func),
+                Some(flow.pc),
+                format!(
+                    "`{}` is given a value nobody signed off, and no `approve` stands between them",
+                    flow.cap
+                ),
+            );
         }
     }
 

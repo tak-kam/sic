@@ -850,7 +850,7 @@ one without ever seeing a `.sic`:
 |---|---|---|
 | `sic plan` | `.sicb` | no |
 | `sic verify` | `.sicb` | no |
-| `sic run` on a `.sicb` | `.sicb` | no |
+| `sic attach`, `sic replay` | the `.sicb` a recorded run kept | no |
 
 So "this program cannot pass a model's answer to something that changes state"
 was true of every program **this compiler** compiled, and was not a property of
@@ -960,16 +960,65 @@ compiler reuses one register window for every call's arguments, so a register
 that held a prompt later holds a path. A taint per register per function
 reported every program as carrying its answer into everything.
 
-### What is still not a property of the file
+### And now the verifier refuses it
 
-The verifier does not refuse an unapproved flow; it reports one through the
-plan. Refusing is the strong version and is where this belongs, and it is a
-second decision rather than a smaller one: a verifier that refused a program the
-type checker accepted would be a release-stopping bug, and the two analyses
-would have to agree exactly. Doing the plan first and the refusal second is a
-sequencing, not a hedge - the analysis exists now, and whether it is exact
-enough to refuse with is a question that can be asked of code rather than of an
-argument.
+#92 asked whether the analysis is exact enough to refuse with, and said it was a
+question to ask of code rather than of an argument. Asked:
+
+```console
+$ sic verify patched.sicb
+error: main+0021: `fs.write` is given a value nobody signed off, and no `approve` stands between them
+verification failed with 1 error
+```
+
+That file is `flow.sic` compiled by this compiler, with one byte changed -
+`APPROVE` (37) to `MOVE` (1). Same copy, same run, and until this it verified,
+planned clean and was picked up by `sic attach` without a word.
+
+**Why refusing here cannot refuse a good program.** Three facts, and the first
+is the one that decides.
+
+*Provenance crosses a function boundary only through a declared signature.*
+There is no coercion in either direction - `LLM<String>` is not `String`, and
+neither is `HumanApproved<String>`; both are `E0301` at the call. Measured, not
+assumed. So a parameter receives one provenance from every site that can call
+it, and this analysis being context-insensitive costs nothing: the set it joins
+over has one member. That was the approximation #92 worried about most, and the
+type system had already removed it.
+
+*A value this calls untrusted is a value the checker labelled.* The taint has
+one source - a capability whose declared return carries a label - and one way to
+lose it, `APPROVE`. So an untrusted register at a changing call is a labelled
+value at a changing call, which is the sentence E0372 refuses.
+
+*Where this is stricter, the difference cannot reach a sink.* It is
+field-insensitive, so `process.run`'s whole `Exit` is untrusted where the
+checker labels only its `output`. The extra is `r.code`, an `Int` - and every
+capability that writes or runs takes a `String` or a `List<String>`. The
+verifier has already established that. The one place these disagree is a place
+no argument can be.
+
+Every program in `workflows/` and `examples/` still verifies, which is the
+measurement rather than the argument.
+
+**It is an error rather than a new kind of report.** #92 asked whether a
+refusal deserves its own channel, since every other error the verifier gives
+says "these bytes are not a well-formed program" and this one says "this program
+is well formed and does something the language forbids". The consequence is the
+same - do not run it - and a second channel that also stopped the run would be a
+distinction without a difference. What the distinction earns is a *message* that
+does not read like a corrupt file, and it gets one.
+
+The check runs last and only when everything else held. The analysis reads
+register windows and jump targets as facts; on a file whose structure has
+already been refused they are not facts, and a second report about a program
+that is not a program would be noise on top of the finding that matters.
+
+### What it still does not name
+
+Which capability the value came from. The lattice has three values and no room
+for a provenance, so the error names the sink and the instruction and leaves the
+reader to look. That is enough to act on and less than a person would want.
 
 ---
 
@@ -985,4 +1034,5 @@ argument.
 | 6 | Erasure | the bytecode's type section never mentions trust |
 | 7 | §2a: what a trusted value may decide | `len` stripping the label is a test rather than a sentence in a checker |
 | 8 | §3: the person is shown the value | a run where they were shown it and one where they were not do not read the same |
-| 9 | §5a: the flow is in the file | `sic plan` says where a model's answer goes, and whether anybody agreed |
+| 9 | §5a: the flow is in the file | `sic plan` says where a value nobody signed off goes, and whether anybody agreed |
+| 10 | §5a: and the file is refused without it | one byte changed from `APPROVE` to `MOVE` fails `sic verify` |

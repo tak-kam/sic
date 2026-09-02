@@ -10,15 +10,11 @@ repository.workspace = true
 sic-core = { path = "../sic-core" }
 sic-bytecode = { path = "../sic-bytecode" }
 sic-json = { path = "../sic-json" }
-
-# Not a dependency, and it must not become one: the analysis reads bytecode,
-# where trust is erased, and has to keep working on a `.sicb` that arrived with
-# no source and no compiler. This is here for one test, which holds the list of
-# untrusted capabilities in `flow.rs` to what `sic-types` declares - because
-# that list is a second copy of a fact, and a second copy without a test is how
-# the next capability somebody adds becomes a flow nobody is told about.
-[dev-dependencies]
-sic-types = { path = "../sic-types" }
+# The flow analysis lives in the verifier, which is the crate whose job is
+# deciding what is safe to run. A plan reports what it finds; the verifier
+# refuses it. Two readers of one analysis, and this is the direction the
+# dependency has to point.
+sic-verify = { path = "../sic-verify" }
 
 [lints]
 workspace = true

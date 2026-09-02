@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 837 tests.
+Last updated at 843 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -40,6 +40,7 @@ in the source, so it is the same on every platform - four of them are
 | - | Output a reader is allowed to stop reading: a closed pipe - `\| head`, a pager somebody quits - ends the delivery and not the command, so `sic explain \| head` no longer panics out of the standard library with exit 101 next to three exit codes this project gives meanings to. Every other write error still panics, because a full disk is a lost result rather than a reader who left | `crates/sic-cli/src/out.rs` |
 | 29 | The CLI | `run`, `resume`, `plan`, `runs`, `attach`, `explain`, `inspect-run`, `replay`, `recheck`, `export`, `upgrade`, `compile`, `verify`, `disasm`, `parse`, `hir` |
 | - | `sic plan --json`: the plan as data, so a rule can check one - "nothing writes outside `./out`", "every model call is bounded" - and a reviewer can diff what a branch may now do. The same `Plan` the prose renders, because a second reader of the bytecode would eventually let a rule pass against a plan a person would have refused | `docs/design/plan.md` §3b |
+| - | The verifier refuses bytecode that hands a value nobody signed off to a capability that writes or runs, so E0372 is a property of the `.sicb` rather than of the compiler that wrote it: one byte changed from `APPROVE` to `MOVE` and the file no longer verifies, is no longer planned, and is not picked up by `sic attach`. Provenance crosses a function boundary only through a declared signature, which is what makes the analysis and the checker agree | `docs/design/trust.md` §5a |
 | - | `sic plan` says where a value nobody signed off goes: every capability that writes or runs and is handed one - a model's answer, a program's output, what `git` reported - and whether a person agreed on every path there. Trust is still erased, so this is read out of the instructions - which needed `approve` to stop lowering to a `MOVE`, because recognising the shape instead would be a reader trusting the compiler's habits rather than reading a fact | `docs/design/trust.md` §5a |
 | 30 | `sic plan`, and `--graph`: the same plan as a Mermaid flowchart, which says which functions reach which - the one thing a list of blocks side by side cannot, and the caption says "may, not will" so an arrow does not claim more than the sentence it replaces | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |

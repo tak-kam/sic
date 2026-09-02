@@ -303,9 +303,15 @@ Nobody signed off on what reaches:
 ```
 
 `docs/design/trust.md` §5a is the argument - why the answer was thrown away
-(trust is erased before bytecode), what it cost (E0372 refuses source, and three
-commands read only the file), and why `approve` now leaves a mark in the
-instructions instead of being a shape somebody could pattern-match.
+(trust is erased before bytecode), what it cost (E0372 refuses source, and the
+commands that read a `.sicb` never see one), and why `approve` now leaves a mark
+in the instructions instead of being a shape somebody could pattern-match.
+
+The analysis is the verifier's, and so is the decision: a flow nobody agreed to
+is refused before a plan is printed. So in practice this section reports the
+approved ones - a plan is only made of bytecode that passed - and the marked
+rendering below is what the `Plan` API says for a caller that did not verify
+first.
 
 What belongs here is what it means for a plan. Two things.
 

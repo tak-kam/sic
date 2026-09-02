@@ -87,7 +87,7 @@ dependencies = [
  "sic-bytecode",
  "sic-core",
  "sic-json",
- "sic-types",
+ "sic-verify",
 ]
 
 [[package]]
@@ -111,6 +111,7 @@ version = "0.7.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
+ "sic-types",
 ]
 
 [[package]]

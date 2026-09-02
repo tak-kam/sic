@@ -283,7 +283,10 @@ agreed)` - read out of the instructions, because trust types are the checker's
 and no section of the bytecode holds them. That needed `approve` to
 leave a mark in the file rather than lowering to the `MOVE` every assignment
 lowers to: recognising the shape instead would be a reader trusting the
-compiler's habits rather than reading a fact.
+compiler's habits rather than reading a fact. And the verifier refuses a flow
+nobody agreed to, so this is a property of the file rather than of the compiler
+that wrote it: change one byte from `APPROVE` to `MOVE` and `sic verify` says
+no.
 → [trust.md](docs/design/trust.md)
 
 **And checked.** `sic plan --json` writes the same plan as data, so the reader
