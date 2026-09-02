@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "sic-broker"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
  "sic-json",
@@ -12,14 +12,14 @@ dependencies = [
 
 [[package]]
 name = "sic-bytecode"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
 ]
 
 [[package]]
 name = "sic-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-broker",
  "sic-bytecode",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "sic-compile"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
@@ -48,11 +48,11 @@ dependencies = [
 
 [[package]]
 name = "sic-core"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "sic-ir"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
  "sic-syntax",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "sic-journal"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
  "sic-json",
@@ -69,11 +69,11 @@ dependencies = [
 
 [[package]]
 name = "sic-json"
-version = "0.6.0"
+version = "0.7.0"
 
 [[package]]
 name = "sic-otel"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
  "sic-journal",
@@ -82,7 +82,7 @@ dependencies = [
 
 [[package]]
 name = "sic-plan"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
@@ -92,14 +92,14 @@ dependencies = [
 
 [[package]]
 name = "sic-syntax"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
 ]
 
 [[package]]
 name = "sic-types"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-core",
  "sic-syntax",
@@ -107,7 +107,7 @@ dependencies = [
 
 [[package]]
 name = "sic-verify"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
@@ -115,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "sic-vm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "sic-bytecode",
  "sic-core",
