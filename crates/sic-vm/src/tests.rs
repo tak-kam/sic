@@ -2094,3 +2094,106 @@ fn a_rejection_survives_a_checkpoint() {
         Status::Finished(Value::I64(7))
     ));
 }
+
+// ---- a code fence around an answer ----
+
+/// The rule is one candidate or none, and the rows that come back `None` are
+/// the load-bearing half: a validator that searched could be steered by
+/// whoever wrote the text.
+#[test]
+fn a_fence_is_taken_off_only_when_it_is_the_whole_answer() {
+    fn inside(s: &str) -> Option<&str> {
+        super::without_a_code_fence(s)
+    }
+
+    // The case this is for, with and without an info string, and with the
+    // whitespace a terminal or a pane adds around it.
+    assert_eq!(inside("```json\n{\"x\":1}\n```"), Some("{\"x\":1}\n"));
+    assert_eq!(inside("```\n{\"x\":1}\n```"), Some("{\"x\":1}\n"));
+    assert_eq!(
+        inside("\n  ```json\n{\"x\":1}\n```  \n"),
+        Some("{\"x\":1}\n")
+    );
+    assert_eq!(inside("```JSON\n1\n```"), Some("1\n"));
+
+    // A document that is not fenced is not touched.
+    assert_eq!(inside("{\"x\":1}"), None);
+    // Prose around it is an answer to a different question. `retry` is what
+    // that is for.
+    assert_eq!(inside("Here you go:\n```json\n{\"x\":1}\n```"), None);
+    assert_eq!(inside("```json\n{\"x\":1}\n```\nHope that helps"), None);
+    // Two fences: the answer had structure this cannot read.
+    assert_eq!(inside("```\n1\n```\n```\n2\n```"), None);
+    // Cut off at either end.
+    assert_eq!(inside("```json\n{\"x\":1}"), None);
+    assert_eq!(inside("{\"x\":1}\n```"), None);
+    // An opening line that says more than a word was not written by something
+    // answering the question.
+    assert_eq!(inside("```json title=\"answer\"\n1\n```"), None);
+    // Degenerate fences with no document in them.
+    assert_eq!(inside("```"), None);
+    assert_eq!(inside("``````"), None);
+    assert_eq!(inside(""), None);
+}
+
+#[test]
+fn only_an_answer_with_a_declared_shape_is_unwrapped() {
+    // The agent's call validates, so its answer is unwrapped and fits.
+    let p = agent_program(1, 0);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::Str(
+            "```json\n{\"value\":7}\n```".into()
+        )),
+        Status::Finished(Value::I64(7))
+    ));
+
+    // The same call with nothing declared about its answer is left alone: a
+    // program that printed three backticks printed three backticks.
+    let mut p = agent_program(1, 0);
+    p.policies[0].validates = 0;
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    match vm.resume(sic_core::CapValue::Str(
+        "```json\n{\"value\":7}\n```".into(),
+    )) {
+        Status::Failed(info) => assert_eq!(info.kind, FailKind::Schema),
+        other => panic!("expected a schema failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_fenced_answer_costs_no_attempt() {
+    // The point of doing this at the boundary rather than leaving it to
+    // `retry`: a budget is the number a person approved for the work, and a
+    // formatting convention is not the work.
+    let p = agent_program(3, 3);
+    let sink = SharedSink::default();
+    let mut vm = Vm::with_journal(&p, DEFAULT_FUEL, journal_for(&sink));
+    let Status::Suspended(_) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert!(matches!(
+        vm.resume(sic_core::CapValue::Str(
+            "```json\n{\"value\":7}\n```".into()
+        )),
+        Status::Finished(Value::I64(7))
+    ));
+    let events = names(&sink);
+    assert_eq!(
+        events.iter().filter(|n| **n == "answer_rejected").count(),
+        0
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|n| **n == "capability_requested")
+            .count(),
+        1
+    );
+}

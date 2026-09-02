@@ -436,7 +436,14 @@ impl<'a> FnLower<'a> {
                                     // while the call is still outstanding, that
                                     // it is about to.
                                     attempts: info.retry,
-                                    validates: info.retry.filter(|n| *n > 1).map(|_| info.output),
+                                    // Every agent, not only one that may ask
+                                    // again. The field says what the answer to
+                                    // this call has to be - a document of that
+                                    // shape - and that is true of an agent with
+                                    // one attempt too. What `retry` decides is
+                                    // whether not fitting is worth another
+                                    // question, which is a separate number.
+                                    validates: Some(info.output),
                                     tools: info.tools,
                                     deadline_ms: info.deadline_ms,
                                     ..Default::default()

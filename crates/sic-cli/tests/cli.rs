@@ -4428,6 +4428,83 @@ mod retrying {
         std::fs::remove_dir_all(store).ok();
     }
 
+    /// An answer in a code fence is the answer, and costs no attempt.
+    ///
+    /// This is the case `retry` would otherwise pay for: a model asked for JSON
+    /// answers with JSON presented the way it presents code, and spending a
+    /// model call and a budget charge to ask again for the same document
+    /// without the backticks is an approval spent on a formatting convention.
+    #[test]
+    fn an_answer_in_a_code_fence_is_the_answer() {
+        let store = temp_store("fenced");
+        let src = write_temp("fenced.sic", RETRIES);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "attach",
+                &id,
+                "--value",
+                "```json\n{\"change\": \"a cast\", \"confidence\": 90}\n```",
+            ],
+        );
+        assert_eq!(code, 0, "stderr: {stderr}");
+
+        // One call, nothing rejected: the budget paid for the answer and not
+        // for the backticks.
+        let (stdout, _, code) = sic_with_store(repo_root(), Some(&store), &["explain", &id]);
+        assert_eq!(code, 0);
+        assert!(
+            stdout.contains("call llm.invoke  (budget: 2 left)"),
+            "{stdout}"
+        );
+        assert!(!stdout.contains("did not fit"), "{stdout}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
+    /// Prose around the fence is an answer to a different question, and stays
+    /// refused - which is what `retry` is for.
+    #[test]
+    fn an_answer_with_prose_around_it_is_still_asked_again() {
+        let store = temp_store("fenced-prose");
+        let src = write_temp("fenced-prose.sic", RETRIES);
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &["run", src.to_str().unwrap(), "--record"],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        let (stdout, _, _) = sic_with_store(repo_root(), Some(&store), &["runs"]);
+        let id = stdout.split_whitespace().next().unwrap().to_string();
+
+        let (_, stderr, code) = sic_with_store(
+            repo_root(),
+            Some(&store),
+            &[
+                "attach",
+                &id,
+                "--value",
+                "Here is the fix:\n```json\n{\"change\": \"a cast\", \"confidence\": 90}\n```",
+            ],
+        );
+        assert_eq!(code, 3, "stderr: {stderr}");
+        assert!(stderr.contains("The last answer did not fit"), "{stderr}");
+
+        std::fs::remove_file(src).ok();
+        std::fs::remove_dir_all(store).ok();
+    }
+
     /// And the plan says it before anything runs, in words that do not invite
     /// a reader to multiply the retry by the budget: every attempt comes out of
     /// the allowance printed on the same line.

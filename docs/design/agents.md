@@ -218,6 +218,88 @@ FROM_JSON   a, b, c   ; R[a] = the value of type T[b] parsed from the string R[c
 
 ---
 
+## 4a. A code fence is not part of the document
+
+A model asked for JSON answers with JSON, and often presents it the way it
+presents code:
+
+````text
+```json
+{"change": "cast the index", "confidence": 90}
+```
+````
+
+The document is right. Three characters in front of it and three behind are not
+part of it, and until #90 the run ended at the boundary this design put a
+validator at - or, with `retry`, recovered by spending a model call and a budget
+charge on a formatting convention, which is an approval spent on the wrong
+thing.
+
+So when an answer has a declared shape, and the *whole* answer is one fence, the
+document is what lies between the fences.
+
+### One candidate, or none
+
+The rule does not search, and that is the whole of why it is allowable here.
+
+| the answer | what happens |
+|---|---|
+| a document | used as it is |
+| a fence, a document, a fence | the document is used |
+| the same with an info string (` ```json `) | the document is used |
+| prose, then a fence | **refused** |
+| a fence, then prose | **refused** |
+| two fences | **refused** |
+| an unterminated fence | **refused** |
+| an opening line that says more than a word | **refused** |
+
+Every act of leniency at a trust boundary is a place where two readers can
+disagree about what a document is, and this project refuses things for that
+reason routinely - a type is closed unless it says `..`, an extra field is an
+error, `answers json` exists so that output which stopped being what the grant
+said fails here rather than three steps later.
+
+What survives that argument is that this is not a guess. It is a total function
+with one candidate: look at both ends, or leave the answer alone. Nothing scans
+for a brace, nothing picks the longest match, nothing tries a second fence when
+the first does not parse. **A rule that cannot search cannot be steered by
+whoever wrote the text**, which is the difference between this and a repair.
+
+### Where it happens, and why there
+
+In `Vm::resume`, immediately before the shape is checked - the same place #83
+put the validation, for the same reason. Every driver's answer arrives there:
+`--llm`, `sic attach`, a replay, a resumed checkpoint, the isolated process.
+Unwrapping anywhere else would mean the string this validates and the string
+`FROM_JSON` parses could be two different strings.
+
+It applies only to a call whose policy declares what its answer has to fit,
+which is an agent's. A `process.run` that printed three backticks printed three
+backticks, and nothing here may decide otherwise. That is why `validates` is now
+set for every agent rather than only one that may retry: the field says what the
+answer to this call has to be, which is true whether or not not fitting is worth
+another question.
+
+A recorded run's `responses.jsonl` keeps what was actually answered, fence and
+all. What the journal digests, and what the program receives, is the document.
+
+### What is deliberately not repaired
+
+- **Malformed JSON.** Trailing commas, single quotes, unquoted keys, a missing
+  brace. Each is a guess about what somebody meant, and the place to be wrong
+  about that is not the boundary the whole design puts a validator at.
+- **A document inside prose.** "Here is the fix I would apply:" followed by JSON
+  is an answer to a different question, and a validator that accepts it has
+  stopped checking the thing it was put there to check. `retry` is the answer,
+  and it is the right one - it asks again.
+- **Other fence characters.** CommonMark allows `~~~`. Nothing answering a
+  question uses it.
+- **`answers json` on a `process` grant.** A program that fenced its stdout is
+  doing something different from a model that did, and a grant about a
+  program's output should not acquire a model's conventions.
+
+---
+
 ## 5. The `llm.invoke` capability
 
 ```text

@@ -481,6 +481,12 @@ impl<'a> Vm<'a> {
         // the agent declared? Here rather than at the `FROM_JSON` that will
         // check it again, because this is the last moment the call that would
         // be asked again still exists. Two lines further on it is gone.
+        // A model asked for JSON answers with JSON in a code fence, because
+        // that is how it has been trained to present code. Unwrapping it is
+        // here, with the shape the answer has to fit, so that the document this
+        // validates and the document `FROM_JSON` parses cannot be two different
+        // strings.
+        let value = self.answer_without_its_fence(&pending, value);
         if let Some(detail) = self.answer_that_does_not_fit(&pending, &value) {
             return self.reject_answer(index, pending, &value, detail);
         }
@@ -523,6 +529,13 @@ impl<'a> Vm<'a> {
         pending: &PendingCap,
         value: &CapValue,
     ) -> Option<String> {
+        // Only where asking again is possible. With one attempt there is
+        // nothing this could decide that `FROM_JSON` does not decide two
+        // instructions later, and the run that ends is the same run - so the
+        // document is parsed once.
+        if pending.attempts < 2 {
+            return None;
+        }
         let ty = self
             .program
             .policy_at(pending.pc)?
@@ -536,6 +549,28 @@ impl<'a> Vm<'a> {
         };
         let text = text.clone();
         self.value_from_json(&text, ty).err()
+    }
+
+    /// The answer, with a code fence taken off it if it was wrapped in one.
+    ///
+    /// Only for a call whose answer has a declared shape - an agent's. A
+    /// `process.run` that prints three backticks printed three backticks, and
+    /// nothing here may decide otherwise.
+    fn answer_without_its_fence(&self, pending: &PendingCap, value: CapValue) -> CapValue {
+        let validates = self
+            .program
+            .policy_at(pending.pc)
+            .is_some_and(|p| p.validates > 0);
+        if !validates {
+            return value;
+        }
+        let CapValue::Str(text) = &value else {
+            return value;
+        };
+        match without_a_code_fence(text) {
+            Some(inner) => CapValue::Str(inner.to_string()),
+            None => value,
+        }
     }
 
     /// Records an answer that did not fit, and asks again if an attempt is left.
@@ -2034,6 +2069,49 @@ fn at(path: &str, message: &str) -> String {
     } else {
         format!("{path}: {message}")
     }
+}
+
+/// The document inside a code fence, when the whole answer is one fence.
+///
+/// A model asked for JSON answers with JSON, and often presents it the way it
+/// presents code. The document is right; three characters in front of it and
+/// three behind are not part of it. Without this the run ends at the boundary
+/// the language put a validator at, or - with `retry` - recovers by spending a
+/// model call and a budget charge on a formatting convention, which is an
+/// approval spent on the wrong thing.
+///
+/// **This does not search.** It is a total function with one candidate: the
+/// whole answer is a fence, or there is nothing here. Nothing scans for a
+/// brace, nothing picks the longest match, nothing tries a second fence when
+/// the first does not parse. A rule that cannot search cannot be steered by
+/// whoever wrote the text, which is the difference between this and a repair -
+/// and repair is what `docs/design/agents.md` §4a refuses.
+///
+/// So prose around a fence, two fences, an unterminated fence and an info
+/// string that is not a plain word all come back `None`, and the answer is
+/// used as it arrived. An answer to a different question is a thing `retry`
+/// exists for; it is not a thing to be parsed out of.
+fn without_a_code_fence(text: &str) -> Option<&str> {
+    let trimmed = text.trim();
+    // Both ends, before anything else. An answer that only opens a fence has
+    // no closing one to find, and an answer that only closes one was cut off.
+    let inner = trimmed.strip_prefix("```")?.strip_suffix("```")?;
+    // ```json, ```JSON, ``` - an info string is a word or it is nothing. A
+    // fence whose opening line says more than that was not written by
+    // something answering the question.
+    let (info, body) = inner.split_once('\n')?;
+    let info = info.trim();
+    if !info
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    // A second fence inside means the answer had structure this cannot read.
+    if body.contains("```") {
+        return None;
+    }
+    Some(body)
 }
 
 /// Converting between a live task and its saved form.

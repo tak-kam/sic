@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 812 tests.
+Last updated at 817 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -47,6 +47,7 @@ in the source, so it is the same on every platform - four of them are
 | - | This repository's own development loop, written in sic: it plans, runs, checkpoints at the model call, and reads back with `sic explain`. Seven things bent it on the way, each now an issue | `workflows/ci.sic`, `docs/design/self-hosting.md` |
 | - | The scaffold around a model call - retry, budget, validation, tool list, the person who approves, the record - named as one thing, and argued as a declaration a plan can print rather than an object graph a program assembles at run time. A real one is written and run, and what could not be written is reported - and then written: a retry could not be about a validation (#83 gave the declaration a `retry`), a `Float` had no operators (#85 gave it four), and `budget` bounded a call site rather than an agent (#84 settled it the other way) | `workflows/harness.sic`, `docs/design/harness.md` |
 | - | `retry: N` on an agent: the answer that does not fit `output` is asked again, up to N times, with what was wrong with the last one appended to the prompt by the runtime - which the program could not write, because a rejected `LLM<String>` and a reason from the type section are two provenances. Every attempt is charged to the budget, so a bound that counted only successes is not what a person approved | `docs/design/agents.md` §6a |
+| - | An answer in a code fence is the answer: a model asked for JSON presents it the way it presents code, and the run no longer ends at the boundary - or pays a model call and a budget charge to ask again for the same document without the backticks. The rule does not search, so prose around a fence, two fences and an unterminated one are all still refused | `docs/design/agents.md` §4a |
 | 26 | `log <level> <expr>;` - the journal keeps the level and the digest, the run's values file keeps the text, and stderr shows it as it happens | `docs/design/logging.md` |
 | - | `--interactive`: a run that stops for an answer asks the terminal instead of leaving it for whoever comes along later, and keeps asking for as long as it keeps stopping - the checkpoint is written first either way, so the worst case of an interactive run is a non-interactive one | `docs/design/interactive.md` |
 | - | `for x in xs { ... }`: the only loop, over a list and nothing else - no assignment, so no induction variable and no way to write one that does not end, and no frame per element, which is what a list longer than the 1024-frame call stack needed. It lowers to a counter, `GET_INDEX` and the backward `JUMP` the bytecode already encoded, so no instruction was added and the verifier's fixed point already handled the edge | `docs/design/v0.1.md` §2 |
