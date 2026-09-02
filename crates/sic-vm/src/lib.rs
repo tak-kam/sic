@@ -161,9 +161,10 @@ pub(crate) struct PendingCap {
     /// travels in the pending call because a retry re-issues the request, and
     /// a retry that started a new conversation would not be one.
     pub conversation: u32,
-    /// The site's tool allowance and answer deadline, from the policy table.
-    /// They travel in the pending call because a retry re-issues the request.
-    pub tools: u32,
+    /// The site's tool allowance - `None` for no limit, `Some(0)` for an agent
+    /// that may not act - and its answer deadline, from the policy table. They
+    /// travel in the pending call because a retry re-issues the request.
+    pub tools: Option<u32>,
     pub deadline_ms: u32,
     /// Why the answer to the previous attempt was rejected, or empty when this
     /// is the first attempt. Travels to whoever answers, which is the only way
@@ -399,7 +400,7 @@ impl<'a> Vm<'a> {
         // allowance. Every action counts, refused ones included: a refusal is
         // an attempt, and a loop of refused attempts is the runaway a tool
         // allowance is for.
-        if pending.tools > 0 {
+        if pending.tools.is_some() {
             *self.used_tools.entry(pending.pc).or_insert(0) += actions.len() as u32;
         }
         for action in actions {
@@ -1932,7 +1933,7 @@ impl<'a> Vm<'a> {
             rejected: String::new(),
             timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
             conversation: policy.map(|p| p.conversation).unwrap_or(0),
-            tools: policy.map(|p| p.tools).unwrap_or(0),
+            tools: policy.and_then(|p| p.tool_allowance()),
             deadline_ms: policy.map(|p| p.deadline_ms).unwrap_or(0),
             pc,
             span,
@@ -2133,7 +2134,7 @@ fn snapshot_task(task: &Task) -> checkpoint::TaskSnapshot {
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
                     conversation: pending.conversation,
-                    tools: pending.tools,
+                    tools: sic_bytecode::PolicyEntry::encode_tools(pending.tools),
                     deadline_ms: pending.deadline_ms,
                     rejected: pending.rejected.clone(),
                     pc: pending.pc,
@@ -2196,7 +2197,7 @@ fn restore_task(saved: &checkpoint::TaskSnapshot) -> Task {
                     attempts: pending.attempts,
                     timeout_ms: pending.timeout_ms,
                     conversation: pending.conversation,
-                    tools: pending.tools,
+                    tools: pending.tools.checked_sub(1),
                     deadline_ms: pending.deadline_ms,
                     rejected: pending.rejected.clone(),
                     pc: pending.pc,
@@ -2231,10 +2232,14 @@ mod tests;
 /// Zero means no limit, here as everywhere else in the policy table, so a site
 /// that has used its whole allowance is sent 1 rather than 0 - and the broker
 /// refusing the next one is what the bound does.
-fn tools_left(used: &std::collections::HashMap<u32, u32>, pending: &PendingCap) -> u32 {
-    if pending.tools == 0 {
-        return 0;
-    }
+/// How many of its own tools the agent may still use, or `None` for no limit.
+///
+/// This used to end in `.max(1)`, so a site that had spent its whole allowance
+/// still reported one left. It had to: the number went out as a `u32` where
+/// zero meant "no limit", so "none left" was a value the VM could not send.
+/// #86 gave zero back its meaning, and the floor went with it.
+fn tools_left(used: &std::collections::HashMap<u32, u32>, pending: &PendingCap) -> Option<u32> {
+    let allowance = pending.tools?;
     let spent = used.get(&pending.pc).copied().unwrap_or(0);
-    pending.tools.saturating_sub(spent).max(1)
+    Some(allowance.saturating_sub(spent))
 }

@@ -2197,3 +2197,61 @@ fn a_fenced_answer_costs_no_attempt() {
         1
     );
 }
+
+// ---- an agent that answers a question and does not act ----
+
+#[test]
+fn a_site_that_allows_no_tools_says_so_rather_than_saying_nothing() {
+    // Zero used to mean "no limit" on the way to the broker, so the strongest
+    // claim a declaration can make was the one it could not send. #86.
+    let mut p = agent_program(1, 0);
+    p.policies[0].tools = sic_bytecode::PolicyEntry::encode_tools(Some(0));
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert_eq!(request.tools_left, Some(0));
+
+    // And an absent allowance is still no limit, which is a different thing
+    // and now a different value.
+    let mut p = agent_program(1, 0);
+    p.policies[0].tools = sic_bytecode::PolicyEntry::encode_tools(None);
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert_eq!(request.tools_left, None);
+}
+
+#[test]
+fn an_allowance_that_has_been_spent_reports_none_left() {
+    // `tools_left` used to end in `.max(1)`, so a site with nothing left still
+    // said one. It had to: zero was taken. Both halves of that are #86.
+    let mut p = agent_program(2, 0);
+    p.policies[0].tools = sic_bytecode::PolicyEntry::encode_tools(Some(2));
+    let mut vm = Vm::new(&p, DEFAULT_FUEL);
+    let Status::Suspended(request) = vm.run(0, &[]) else {
+        panic!("expected a model call");
+    };
+    assert_eq!(request.tools_left, Some(2));
+
+    // Two used, and the next request says none rather than one.
+    vm.record_tool_uses(&[
+        sic_core::AgentAction::Tool {
+            tool: "Bash".into(),
+            input: program_digest(),
+            allowed: true,
+            reason: String::new(),
+        },
+        sic_core::AgentAction::Tool {
+            tool: "Bash".into(),
+            input: program_digest(),
+            allowed: true,
+            reason: String::new(),
+        },
+    ]);
+    let Status::Suspended(request) = vm.resume_failed(&sic_core::CapError::new("again")) else {
+        panic!("expected a second attempt");
+    };
+    assert_eq!(request.tools_left, Some(0));
+}

@@ -323,7 +323,7 @@ mod tests {
                 attempt: 1,
                 timeout_ms: 0,
                 conversation: 3,
-                tools_left: 20,
+                tools_left: Some(20),
                 answer_ms: 300_000,
                 rejected: String::new(),
             }),
@@ -395,7 +395,7 @@ mod tests {
             attempt: 1,
             timeout_ms: 0,
             conversation: 0,
-            tools_left: 0,
+            tools_left: None,
             answer_ms: 0,
             rejected: String::new(),
         });

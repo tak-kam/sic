@@ -421,6 +421,43 @@ fn a_withheld_grant_is_a_line_rather_than_an_absence() {
     }
 }
 
+/// The strongest claim a harness site can make, printed as a sentence rather
+/// than as `at most 0` - a reader scanning a column of numbers would read past
+/// it, and this is the line they are scanning for.
+#[test]
+fn an_agent_that_may_not_act_says_so() {
+    let entry = |tools: Option<u32>| PolicyEntry {
+        pc: 1,
+        attempts: 1,
+        timeout_ms: 0,
+        budget: 0,
+        budget_group: 0,
+        conversation: 0,
+        tools: PolicyEntry::encode_tools(tools),
+        deadline_ms: 0,
+        validates: 0,
+    };
+    let mut p = program_with_capability(Some(entry(Some(0))));
+    p.caps[0].name = "llm.invoke".into();
+    p.caps[0].kind = CapKind::Invoke;
+    let text = render(&plan(&p, digest()), "main.sic");
+    assert!(text.contains("  no tools"), "{text}");
+
+    // Which is a different claim from saying nothing, and now a different
+    // value rather than the same zero.
+    let mut p = program_with_capability(Some(entry(None)));
+    p.caps[0].name = "llm.invoke".into();
+    p.caps[0].kind = CapKind::Invoke;
+    let text = render(&plan(&p, digest()), "main.sic");
+    assert!(text.contains("any number of tool uses"), "{text}");
+
+    let mut p = program_with_capability(Some(entry(Some(8))));
+    p.caps[0].name = "llm.invoke".into();
+    p.caps[0].kind = CapKind::Invoke;
+    let text = render(&plan(&p, digest()), "main.sic");
+    assert!(text.contains("at most 8 tool use(s)"), "{text}");
+}
+
 // ---- the plan as data ----
 
 /// Reads one member out of a flat object. Enough for a test, and deliberately

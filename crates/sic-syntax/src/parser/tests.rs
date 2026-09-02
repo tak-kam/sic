@@ -683,12 +683,29 @@ fn an_agent_may_bound_its_tools_and_its_time() {
     assert!(dump.contains("(deadline 600000)"), "{dump}");
 
     for bad in [
-        "agent r { tools: 0 }\nfn main() { }",
         "agent r { tools: -1 }\nfn main() { }",
+        "agent r { budget: 0 }\nfn main() { }",
+        "agent r { deadline: 0 }\nfn main() { }",
         "agent r { deadline: task }\nfn main() { }",
     ] {
         assert!(codes(bad).contains(&"E0208"), "{bad}");
     }
+}
+
+/// `tools: 0` is the one count that may be zero, because zero is not a
+/// degenerate allowance here - it is the strongest claim an agent declaration
+/// can make: this one answers a question and does not act.
+///
+/// An agent that may make no model calls is not an agent, and an answer that
+/// must arrive in no milliseconds cannot arrive, so `budget` and `deadline`
+/// keep their floor. That asymmetry is the whole of #86.
+#[test]
+fn an_agent_may_declare_that_it_uses_no_tools() {
+    let dump = ok(concat!(
+        "agent r { input: String, output: P, tools: 0 }\n",
+        "fn main() { }",
+    ));
+    assert!(dump.contains("(tools 0)"), "{dump}");
 }
 
 /// `retry` reads the same in an agent body as it does after a call.

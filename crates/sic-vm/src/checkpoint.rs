@@ -31,7 +31,7 @@ pub const VERSION_MAJOR: u16 = 0;
 /// to, and a reader that stopped after the timeout would take that for a span.
 /// Bumped from 4 for an agent's tool allowance and answer deadline, and for the
 /// call site they belong to.
-pub const VERSION_MINOR: u16 = 6;
+pub const VERSION_MINOR: u16 = 7;
 
 pub type CheckpointError = sic_core::BinError;
 
@@ -137,6 +137,9 @@ pub struct Pending {
     /// The site's tool allowance, its answer deadline, and which site it is -
     /// so that what the agent used is charged to the site that allowed it after
     /// a resume as well as before one.
+    /// The site's tool allowance plus one, or 0 for no limit - the same
+    /// encoding the policy table uses, and for the same reason: `tools: 0` is a
+    /// declaration a program may make.
     pub tools: u32,
     pub deadline_ms: u32,
     /// Why the previous attempt's answer was rejected, or empty. A run that

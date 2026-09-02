@@ -55,7 +55,7 @@ pub const VERSION_MAJOR: u16 = 0;
 /// the one before. The same case as 9 and 11, in the policy table this time -
 /// and the reason for the field is in `agents.md` §6: a budget is written on an
 /// agent, so the sites it lowers to have to share one count.
-pub const VERSION_MINOR: u16 = 13;
+pub const VERSION_MINOR: u16 = 14;
 
 pub mod section {
     pub const CONSTANTS: u32 = 1;

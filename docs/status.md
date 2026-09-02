@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 833 tests.
+Last updated at 837 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -44,6 +44,7 @@ in the source, so it is the same on every platform - four of them are
 | 30 | `sic plan`, and `--graph`: the same plan as a Mermaid flowchart, which says which functions reach which - the one thing a list of blocks side by side cannot, and the caption says "may, not will" so an arrow does not claim more than the sentence it replaces | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
 | - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take, and `memory: task` keeps one conversation for as long as a task | `docs/design/driving.md` |
+| - | `tools: 0`: an agent that answers a question and does not act, which is the strongest claim a harness site can make and the one value the declaration could not carry while zero meant "no limit". The allowance is stored plus one, which also gave back "none left" - a site that had spent its whole allowance used to report one use still in hand | `docs/design/authority.md` §8 |
 | - | The agent's authority is the program's manifest, and for the `process` family deliberately less: translated into its own permissions where those can hold a constraint, routed back through the broker where they cannot but only when the grant says `delegable`, and a hook that fails closed refuses every tool the manifest does not account for, which is what denies the agent the network, and puts every tool use in the journal; `budget`, `tools` and `deadline` bound it, each where it can be enforced; `sic plan` prints all of it, naming where each line is enforced | `docs/design/authority.md` |
 | - | `git.status` and `git.rev_parse`: a repository read through the broker, with hooks, pagers, aliases, credential helpers and every config file it did not put there turned off - which is what a `process.run "/usr/bin/git"` grant cannot say and is the whole test a capability has to pass to exist | `docs/design/git.md` |
 | - | This repository's own development loop, written in sic: it plans, runs, checkpoints at the model call, and reads back with `sic explain`. Seven things bent it on the way, each now an issue | `workflows/ci.sic`, `docs/design/self-hosting.md` |

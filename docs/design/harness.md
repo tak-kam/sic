@@ -490,7 +490,13 @@ filing rather than mentioning: `tools: 0` should print as `no tools`, and the
 hook already refuses everything the manifest does not account for, so the
 enforcement is there and only the declaration is missing.
 
-→ separable, and small. **Filed as #86.**
+→ separable, and small. **Filed as #86 and done**: `tools: 0` compiles and
+`sic plan` prints `no tools`. `budget` and `deadline` keep their floor, because
+zero is meaningful for one of the three and not for the other two. It cost an
+encoding - the allowance is stored plus one, with 0 for no limit - and that
+turned out to fix a second thing that was the same missing value from the other
+end: `tools_left` used to report one use in hand for a site that had spent its
+whole allowance, because zero already meant something else.
 
 ### 5.6 `sic replay` fails on any run that logs
 

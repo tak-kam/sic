@@ -135,11 +135,12 @@ impl Route {
     }
 
     /// Sets what this answer is allowed, before it starts.
-    pub fn allow(&mut self, tools: u32) {
-        self.allowance = match tools {
-            0 => None,
-            n => Some(n),
-        };
+    ///
+    /// `None` is no limit; `Some(0)` is an agent that may not use a tool at
+    /// all, which `serve_tool` already refuses and which no declaration could
+    /// ask for until #86.
+    pub fn allow(&mut self, tools: Option<u32>) {
+        self.allowance = tools;
     }
 
     /// Answers whatever is waiting, and returns.

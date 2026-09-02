@@ -57,9 +57,16 @@ pub struct PolicyEntry {
     /// time. The broker keeps one per conversation and task, which is what
     /// `memory: task` on an agent declaration asks for.
     pub conversation: u32,
-    /// How many of the agent's own tools this site allows in a whole run, or 0
-    /// for no limit. Enforced by the broker, which is the only side that sees
-    /// them.
+    /// How many of the agent's own tools this site allows in a whole run, plus
+    /// one, or 0 for no limit. Enforced by the broker, which is the only side
+    /// that sees them.
+    ///
+    /// Plus one because zero is a number a program may declare, and the
+    /// strongest one it has: `tools: 0` says this agent answers a question and
+    /// does not act. Before #86 zero meant "no limit", so the range a
+    /// declaration could express was one to four billion plus unbounded, and
+    /// the one value missing was the claim most harness sites want to make.
+    /// Read it with `tool_allowance`.
     pub tools: u32,
     /// How long one answer may take, in milliseconds, or 0 for no deadline.
     /// Enforced by the broker, which is the only side with a clock.
@@ -74,6 +81,18 @@ pub struct PolicyEntry {
     /// the `FROM_JSON` that does the checking, because by the time that runs
     /// the call it would ask again is gone.
     pub validates: u32,
+}
+
+impl PolicyEntry {
+    /// How many tool uses this site allows, or `None` for no limit.
+    pub fn tool_allowance(&self) -> Option<u32> {
+        self.tools.checked_sub(1)
+    }
+
+    /// The stored form of an allowance.
+    pub fn encode_tools(allowance: Option<u32>) -> u32 {
+        allowance.map(|n| n.saturating_add(1)).unwrap_or(0)
+    }
 }
 
 impl Program {

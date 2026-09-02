@@ -387,7 +387,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
                         until_it_fits,
                         timeout_ms: policy.map(|p| p.timeout_ms).unwrap_or(0),
                         remembers: policy.map(|p| p.conversation != 0).unwrap_or(false),
-                        tools: policy.map(|p| p.tools).filter(|t| *t > 0),
+                        tools: policy.and_then(|p| p.tool_allowance()),
                         deadline_ms: policy.map(|p| p.deadline_ms).filter(|d| *d > 0),
                     }
                 }
@@ -554,6 +554,13 @@ pub fn render(plan: &Plan, source: &str) -> String {
                     // `process` grant prints its directory either way.
                     if name == "llm.invoke" {
                         match tools {
+                            // The strongest claim a harness site can make, and
+                            // the one the declaration could not carry until
+                            // #86: this agent answers a question and does not
+                            // act. It gets a sentence rather than `at most 0`,
+                            // because a reader scanning a column of numbers
+                            // would read past it.
+                            Some(0) => out.push_str("  no tools"),
                             Some(tools) => out.push_str(&format!("  at most {tools} tool use(s)")),
                             None => out.push_str("  any number of tool uses"),
                         }

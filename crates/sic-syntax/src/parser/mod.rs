@@ -521,14 +521,35 @@ impl Parser {
         set: impl Fn(&mut AgentDecl, u32),
         decl: &mut AgentDecl,
     ) {
+        self.parse_agent_number(name, 1, set, decl)
+    }
+
+    /// The same, and `least` is the smallest the setting may be.
+    ///
+    /// One for every count but `tools`, where zero is not a degenerate case of
+    /// an allowance but the strongest claim an agent declaration can make:
+    /// **this one answers a question and does not act.** An agent that may make
+    /// no model calls is not an agent and an answer that must arrive in no
+    /// milliseconds cannot arrive, so `budget` and `deadline` keep the old
+    /// floor. See `docs/design/authority.md` §8.
+    fn parse_agent_number(
+        &mut self,
+        name: &str,
+        least: u32,
+        set: impl Fn(&mut AgentDecl, u32),
+        decl: &mut AgentDecl,
+    ) {
         match self.peek().clone() {
             TokenKind::Int(value) => {
                 let span = self.bump().span;
                 match u32::try_from(value) {
-                    Ok(v) if v > 0 => set(decl, v),
+                    Ok(v) if v >= least => set(decl, v),
                     _ => self.error(
                         "E0208",
-                        format!("`{name}` needs a positive number"),
+                        match least {
+                            0 => format!("`{name}` needs a number that is not negative"),
+                            _ => format!("`{name}` needs a positive number"),
+                        },
                         span,
                         "must fit in a 32-bit count",
                     ),
@@ -569,7 +590,7 @@ impl Parser {
             // that were compiled into the driver before this: see
             // `docs/design/authority.md` §8.
             "tools" => {
-                self.parse_agent_count(key.name.as_str(), |decl, v| decl.tools = Some(v), decl)
+                self.parse_agent_number(key.name.as_str(), 0, |decl, v| decl.tools = Some(v), decl)
             }
             "deadline" => self.parse_agent_count(
                 key.name.as_str(),

@@ -108,7 +108,7 @@ pub fn compile(hir: &Hir, sources: &SourceMap) -> Result<Program, Vec<CompileErr
                         budget: policy.budget.map(|b| b.calls).unwrap_or(0),
                         budget_group: policy.budget.map(|b| b.group).unwrap_or(0),
                         conversation: policy.conversation.unwrap_or(0),
-                        tools: policy.tools.unwrap_or(0),
+                        tools: PolicyEntry::encode_tools(policy.tools),
                         deadline_ms: policy.deadline_ms.unwrap_or(0),
                         validates: policy
                             .validates

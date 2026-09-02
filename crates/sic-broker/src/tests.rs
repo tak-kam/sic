@@ -57,7 +57,7 @@ fn request(index: u32, name: &str, args: &[&str]) -> CapRequest {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         rejected: String::new(),
     }
@@ -146,7 +146,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         rejected: String::new(),
     };
@@ -166,7 +166,7 @@ fn refuses_arguments_of_the_wrong_shape() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         rejected: String::new(),
     };
@@ -1237,7 +1237,7 @@ fn a_routed_call_is_the_same_call() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         rejected: String::new(),
     };
@@ -1298,7 +1298,7 @@ fn a_routed_call_is_checked_against_the_pin() {
         attempt: 1,
         timeout_ms: 0,
         conversation: 0,
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         rejected: String::new(),
     };
@@ -1432,7 +1432,7 @@ fn an_answer_that_used_its_allowance_gets_no_more_tools() {
     let manifest = vec![grant("fs.read", CapKind::Read, "./docs")];
     let mut route = crate::route::Route::open(socket.clone(), manifest).expect("a socket");
     route.names(vec!["Read".to_string()]);
-    route.allow(2);
+    route.allow(Some(2));
 
     let mut reasons = Vec::new();
     for _ in 0..3 {

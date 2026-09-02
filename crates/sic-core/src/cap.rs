@@ -267,7 +267,7 @@ pub struct CapRequest {
     /// How many of the agent's own tools may still be used at this call site,
     /// or 0 for no limit. The count lives on the VM's side because it has to
     /// survive a checkpoint; what is sent is what is left.
-    pub tools_left: u32,
+    pub tools_left: Option<u32>,
     /// How long the broker may take to produce this answer, in milliseconds, or
     /// 0 for no deadline.
     ///
@@ -456,7 +456,10 @@ impl CapRequest {
         w.u32(self.attempt);
         w.u32(self.timeout_ms);
         w.u32(self.conversation);
-        w.u32(self.tools_left);
+        // Plus one, so that "none left" and "no limit" are different values.
+        // They were the same number until #86, which is why a site that had
+        // spent its allowance used to report one use still in hand.
+        w.u32(self.tools_left.map(|n| n.saturating_add(1)).unwrap_or(0));
         w.u32(self.answer_ms);
         w.str(&self.rejected);
     }
@@ -477,7 +480,7 @@ impl CapRequest {
             attempt: r.u32()?,
             timeout_ms: r.u32()?,
             conversation: r.u32()?,
-            tools_left: r.u32()?,
+            tools_left: r.u32()?.checked_sub(1),
             answer_ms: r.u32()?,
             rejected: r.str()?,
         })
@@ -569,7 +572,7 @@ mod tests {
             attempt: 1,
             timeout_ms: 500,
             conversation: 7,
-            tools_left: 12,
+            tools_left: Some(12),
             answer_ms: 900,
             rejected: "confidence: expected Int, found a string".into(),
         }

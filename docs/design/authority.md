@@ -425,9 +425,33 @@ agent refactorer {
     output: Patch,
     budget: 20,             // model calls  - the VM, against an allowance
     tools: 200,             // tool uses    - the broker, through the hook
+                            //                and `tools: 0` is a claim: this
+                            //                one answers and does not act
     deadline: 1800000,      // wall clock   - the broker, which has the clock
 }
 ```
+
+`tools: 0` is the one of the three that may be zero, and #86 is why. Zero is
+not a degenerate allowance here - it is the strongest claim an agent
+declaration can make: **this one answers a question and does not act.** That is
+what most harness sites want to say. A classifier, a triage step, a summariser,
+a validator: none of them needs a tool, and until #86 none of them could say so.
+An absent `tools` means no limit at all, so the range a declaration could
+express was one to four billion plus unbounded, and the one value missing was
+the useful one.
+
+`budget: 0` and `deadline: 0` keep their floor and should. An agent that may
+make no model calls is a function, and an answer that must arrive in no
+milliseconds cannot arrive.
+
+Getting zero back cost an encoding: a policy entry stores the allowance plus
+one, with 0 for no limit, and the same number travels that way to the broker.
+It also fixed a second thing that was the same missing value from the other
+end - `tools_left` used to end in `.max(1)`, so a site that had spent its whole
+allowance still reported one use in hand. It had to, because zero was taken.
+`VERSION_MINOR` moves: the layout is unchanged, and an old reader would read
+`tools: 1` where the new writer meant zero, which is a number that parses and is
+wrong.
 
 A fourth number arrived later and is not a fourth enforcement point: `retry: N`
 (#83) says how many times a *rejected* answer may be asked for again, and the VM

@@ -250,7 +250,7 @@ fn tools_call(id: &sic_json::Json, message: &sic_json::Json, socket: &std::path:
         // Neither applies to a call the agent makes: the allowance is what let
         // this tool exist at all, and the deadline bounds the answer this call
         // is part of rather than the call.
-        tools_left: 0,
+        tools_left: None,
         answer_ms: 0,
         // A tool call is not an answer being validated, so there is never a
         // previous one to explain.
