@@ -45,10 +45,10 @@ use sic_core::CapKind;
 pub enum Taint {
     #[default]
     Clean,
-    /// From a model, and a person said yes to it.
+    /// Nobody signed off, and then a person said yes.
     Approved,
-    /// From a model, and nobody was asked.
-    FromModel,
+    /// Nobody signed off, and nobody was asked.
+    Untrusted,
 }
 
 /// A model's answer arriving at a capability that changes something.
@@ -65,7 +65,46 @@ pub struct Flow {
     pub approved: bool,
 }
 
-/// Every place a model's answer reaches a capability that changes something.
+/// Which capabilities answer with a value the type checker labels.
+///
+/// A list of names, and it has to be one: this crate reads bytecode, where
+/// trust is erased, so the fact cannot be computed here. It is therefore a
+/// second copy of something `sic-types` declares, which in this repository is
+/// the shape of a bug rather than a design - `recorded_message` exists because
+/// a writer and a reader disagreed about one thing, and `docs/diagnostics.md`
+/// has a test behind it for the same reason.
+///
+/// So `crates/sic-plan/tests/sources.rs` fails when this drifts from what
+/// `cap.rs` declares. It is a dev-dependency on `sic-types` and deliberately
+/// not a real one: the analysis has to keep working on a `.sicb` that arrived
+/// with no source and no compiler.
+///
+/// | capability | answers with |
+/// |---|---|
+/// | `llm.invoke` | `LLM<String>` - a model |
+/// | `process.capture` | `Observed<String>` - what a program printed |
+/// | `process.run` | `Exit`, whose `output` is `Observed<String>` |
+/// | `git.status` | `Observed<List<String>>` |
+/// | `git.rev_parse` | `Observed<String>` |
+///
+/// `human.choose` is not here and should not be: it answers with an `Int`
+/// naming one of the program's *own* alternatives, whose text was written by
+/// whoever wrote the program. `trust.md` §5 argues that. `human.approve`
+/// answers with a yes.
+///
+/// `process.run` is the one worth pausing on. Its `Exit` is not labelled; the
+/// label is on a field. This analysis is field-insensitive - `GET_FIELD` passes
+/// on whatever the record holds - so the whole value is treated as untrusted.
+/// That over-reports `r.code`, which is the direction to be wrong in.
+fn answers_with_something_nobody_signed_off(cap: &str) -> bool {
+    matches!(
+        cap,
+        "llm.invoke" | "process.capture" | "process.run" | "git.status" | "git.rev_parse"
+    )
+}
+
+/// Every place a value nobody signed off reaches a capability that changes
+/// something.
 pub fn flows(program: &Program) -> Vec<Flow> {
     let state = solve(program);
     let mut found = Vec::new();
@@ -154,12 +193,10 @@ fn solve(program: &Program) -> Solved {
         .map(|f| vec![Taint::Clean; f.param_count()])
         .collect();
     let mut returns: Vec<Taint> = vec![Taint::Clean; program.funcs.len()];
-    // The model is a name in the manifest rather than a kind: `human.approve`
-    // is an `invoke` too, and what it answers with is a yes.
-    let model: Vec<bool> = program
+    let untrusted: Vec<bool> = program
         .caps
         .iter()
-        .map(|c| c.name == "llm.invoke")
+        .map(|c| answers_with_something_nobody_signed_off(&c.name))
         .collect();
 
     // Two nested fixed points. The inner one settles one function's registers
@@ -203,8 +240,8 @@ fn solve(program: &Program) -> Solved {
 
                 match op {
                     Op::CallCap => {
-                        if model.get(b as usize).copied().unwrap_or(false) {
-                            set(&mut after, a, Taint::FromModel);
+                        if untrusted.get(b as usize).copied().unwrap_or(false) {
+                            set(&mut after, a, Taint::Untrusted);
                         } else {
                             // Anything else answers with its own value, and
                             // where that came from is not this question.

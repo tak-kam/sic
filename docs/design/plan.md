@@ -298,7 +298,7 @@ there, and that is the question a person approving a plan actually has: is there
 a path in this program from a model's answer to a file being written.
 
 ```text
-A model's answer reaches:
+Nobody signed off on what reaches:
   fs.write in main at 14:5  (a person agreed)
 ```
 

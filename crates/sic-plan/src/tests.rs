@@ -550,6 +550,11 @@ fn a_constraint_that_would_break_the_shape_is_escaped() {
 /// the same copy and the same run; the difference is only whether the file says
 /// a person agreed, which is the whole of what this analysis reads.
 fn program_with_a_model_and_a_write(launder: Op) -> Program {
+    program_with_a_source_and_a_write(launder, "llm.invoke", CapKind::Invoke)
+}
+
+/// The same, with the capability whose answer is carried named by the caller.
+fn program_with_a_source_and_a_write(launder: Op, source: &str, kind: CapKind) -> Program {
     Program {
         consts: vec![Const::Str("./out.txt".into())],
         types: TypeDesc::primitives(),
@@ -563,8 +568,8 @@ fn program_with_a_model_and_a_write(launder: Op) -> Program {
         }],
         caps: vec![
             CapDecl {
-                name: "llm.invoke".into(),
-                kind: CapKind::Invoke,
+                name: source.into(),
+                kind,
                 constraints: "a-model".into(),
                 pin: String::new(),
                 answers: sic_core::Answers::Unsaid,
@@ -622,7 +627,10 @@ fn a_plan_says_where_a_models_answer_goes() {
     assert!(flow.approved);
 
     let text = render(&plan, "main.sic");
-    assert!(text.contains("A model's answer reaches:"), "{text}");
+    assert!(
+        text.contains("Nobody signed off on what reaches:"),
+        "{text}"
+    );
     assert!(text.contains("fs.write in main at 9:5"), "{text}");
     assert!(text.contains("(a person agreed)"), "{text}");
 }
@@ -662,7 +670,7 @@ fn a_model_call_on_its_own_is_not_a_flow() {
     // Write the path twice instead of the answer.
     p.code[4] = Inst::abc(Op::Move, 5, 1, 0);
     assert!(plan(&p, digest()).flows.is_empty());
-    assert!(!render(&plan(&p, digest()), "main.sic").contains("A model's answer reaches"));
+    assert!(!render(&plan(&p, digest()), "main.sic").contains("Nobody signed off on what reaches"));
 }
 
 /// The compiler reuses one register window for every call's arguments, so a
@@ -692,5 +700,38 @@ fn only_a_capability_that_changes_something_is_a_sink() {
     let mut p = program_with_a_model_and_a_write(Op::Move);
     p.caps[1].kind = CapKind::Read;
     p.caps[1].name = "fs.read".into();
+    assert!(plan(&p, digest()).flows.is_empty());
+}
+
+/// Every capability whose answer the type checker labels is a source here.
+///
+/// #93: the analysis keyed on one name and four others answer with values
+/// nobody signed off. The one that mattered most is `process.run`, because it
+/// is the most used and because its `Exit` is not itself labelled - the label
+/// is on a field, and a reader that stopped at the outside would have agreed
+/// with the old list and disagreed with the compiler.
+#[test]
+fn a_program_that_read_a_log_is_a_source_too() {
+    for (name, kind) in [
+        ("llm.invoke", CapKind::Invoke),
+        ("process.capture", CapKind::Exec),
+        ("process.run", CapKind::Exec),
+        ("git.status", CapKind::Read),
+        ("git.rev_parse", CapKind::Read),
+    ] {
+        let p = program_with_a_source_and_a_write(Op::Move, name, kind);
+        let flows = plan(&p, digest()).flows;
+        assert_eq!(flows.len(), 1, "{name} was not seen: {flows:?}");
+        assert!(!flows[0].approved, "{name}");
+        assert_eq!(flows[0].cap, "fs.write");
+    }
+}
+
+/// And asking a person which of the program's own alternatives is not one.
+/// The text was written by whoever wrote the program, which is the whole of
+/// why `choose` carries no restriction.
+#[test]
+fn asking_a_person_to_choose_is_not_a_source() {
+    let p = program_with_a_source_and_a_write(Op::Move, "human.choose", CapKind::Invoke);
     assert!(plan(&p, digest()).flows.is_empty());
 }

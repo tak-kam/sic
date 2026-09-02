@@ -892,14 +892,14 @@ Every place a model's answer reaches a capability that writes or runs, and
 whether a person agreed on every path that gets there:
 
 ```text
-A model's answer reaches:
+Nobody signed off on what reaches:
   fs.write in main at 14:5  (a person agreed)
 ```
 
 and, for bytecode this compiler would not have produced:
 
 ```text
-A model's answer reaches:
+Nobody signed off on what reaches:
   fs.write in main at 14:5  ** nobody was asked **
 ```
 
@@ -910,6 +910,38 @@ scanning the list must not have to notice a missing word.
 
 Since #87 the same fact is in `sic plan --json`, so this is a property a rule
 can check rather than a sentence a person can read.
+
+### What counts as a value nobody signed off
+
+Five capabilities, and the first version of this saw one. `llm.invoke` is the
+obvious risk; the others are the risk `output.md` §5 was written about, and the
+one a reader is less likely to have in their head.
+
+| capability | answers with |
+|---|---|
+| `llm.invoke` | `LLM<String>` - a model |
+| `process.capture` | `Observed<String>` - what a program printed |
+| `process.run` | `Exit`, whose `output` field is `Observed<String>` |
+| `git.status` | `Observed<List<String>>` |
+| `git.rev_parse` | `Observed<String>` |
+
+`human.choose` is not among them and should not be: it answers with an `Int`
+naming one of the program's *own* alternatives, whose text was written by
+whoever wrote the program. §5 argues that, and the signature agrees.
+
+`process.run` is the one that shows what the analysis has to be able to do. Its
+`Exit` is not labelled - the label is on a field - so a reader that stopped at
+the outside of a type would have agreed with the first list and disagreed with
+the compiler. The analysis is field-insensitive, so the whole `Exit` is treated
+as untrusted; that over-reports `r.code`, which is the direction to be wrong in.
+
+**The list is a second copy of a fact**, and it has to be, because this reader
+sees bytecode and trust is erased. A second copy without a test is how the next
+capability somebody adds becomes a flow the plan does not mention, so
+`crates/sic-plan/tests/sources.rs` holds the list to what `cap.rs` declares -
+walking into fields, which is the case that would otherwise pass. `sic-types` is
+a dev-dependency for it and must not become a real one: the analysis has to keep
+working on a `.sicb` that arrived with no source and no compiler.
 
 ### It over-reports, in one specific way
 

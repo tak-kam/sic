@@ -276,10 +276,11 @@ the diagram says "may, not will" - an arrow is much harder to qualify than a
 sentence, and a plan that over-claims is as useless as one that under-reports.
 
 **And what may be carried there, not just what may be reached.** The manifest
-lists effects; the question a person approving actually has is whether a model's
-answer can end up in one. `sic plan` says so - `fs.write in main at 14:5 (a
-person agreed)` - read out of the instructions, because trust types are the
-checker's and no section of the bytecode holds them. That needed `approve` to
+lists effects; the question a person approving actually has is whether something
+nobody signed off - a model's answer, a program's output, what `git` reported -
+can end up in one. `sic plan` says so - `fs.write in main at 14:5 (a person
+agreed)` - read out of the instructions, because trust types are the checker's
+and no section of the bytecode holds them. That needed `approve` to
 leave a mark in the file rather than lowering to the `MOVE` every assignment
 lowers to: recognising the shape instead would be a reader trusting the
 compiler's habits rather than reading a fact.

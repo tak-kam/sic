@@ -87,6 +87,7 @@ dependencies = [
  "sic-bytecode",
  "sic-core",
  "sic-json",
+ "sic-types",
 ]
 
 [[package]]

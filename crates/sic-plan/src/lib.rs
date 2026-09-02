@@ -726,7 +726,7 @@ pub fn render(plan: &Plan, source: &str) -> String {
     // a section saying "none" under every plan is a section people stop
     // reading - and this is the one that must be read.
     if !plan.flows.is_empty() {
-        out.push_str("\nA model's answer reaches:\n");
+        out.push_str("\nNobody signed off on what reaches:\n");
         for flow in &plan.flows {
             let at = match (flow.position, plan.multi_file, &flow.file) {
                 (Some((line, col)), true, Some(file)) => {
