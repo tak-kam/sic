@@ -1129,7 +1129,11 @@ impl<'a> Vm<'a> {
                     };
                     self.set(index, base + a, value);
                 }
-                Op::Move => {
+                // `APPROVE` moves, and nothing else. The person was asked by
+                // the `CALL_CAP` above it and the branch after it decided what
+                // their answer meant; this is the copy, carrying a fact that
+                // only a reader of the bytecode needs.
+                Op::Move | Op::Approve => {
                     let v = self.get(index, base + b);
                     self.set(index, base + a, v);
                 }

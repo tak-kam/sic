@@ -835,6 +835,112 @@ See `docs/design/output.md` §5.
 
 ---
 
+## 5a. Erasure was right, and it cost the artifact its strongest sentence
+
+Unit 6 below says the bytecode's type section never mentions trust, and that is
+right for the reason it was argued: a discipline the checker enforces does not
+need a label the VM carries on every instruction. Nothing here proposes putting
+one back.
+
+What it cost is a different thing, and #89 is it. **E0372 refuses source.** The
+artifact everything downstream trusts is the `.sicb`, and three commands read
+one without ever seeing a `.sic`:
+
+| command | reads | saw trust |
+|---|---|---|
+| `sic plan` | `.sicb` | no |
+| `sic verify` | `.sicb` | no |
+| `sic run` on a `.sicb` | `.sicb` | no |
+
+So "this program cannot pass a model's answer to something that changes state"
+was true of every program **this compiler** compiled, and was not a property of
+the file. A `.sicb` from a compiler with three lines removed printed a clean
+plan. And a person approving a plan is not, in the end, worried about the
+manifest - they are worried about the *flow*, and the flow was the part thrown
+away.
+
+### `approve` had to leave a mark
+
+The flow is in the instructions and can be read back out of them. The laundering
+point was not. `approve` lowered to:
+
+```text
+TO_JSON     r8, t5, r0
+CALL_CAP    r9, c1, r15      ; human.approve
+MOVE        r7, r0
+JUMP_IF     r9, +2
+```
+
+and a `MOVE` is what every assignment in the language lowers to. A reader could
+have recognised the *shape* - a move guarded by a branch on a `human.approve`
+whose `TO_JSON` named the same register - and that is a reader trusting the
+compiler's habits rather than reading a fact. The habits are not a contract; the
+next person to touch the lowering owes them nothing.
+
+So the compiler writes the fact down. `APPROVE` is a new opcode that does
+exactly what `MOVE` does, and it is always emitted, even where the register
+allocator picked one register and a `MOVE` would have been dropped - the
+instruction is not there to move anything.
+
+`VERSION_MINOR` does not move. A new opcode is not a section-layout change: an
+old reader meets an instruction it does not know and says so, which is the case
+the number is not for.
+
+### What `sic plan` says now
+
+Every place a model's answer reaches a capability that writes or runs, and
+whether a person agreed on every path that gets there:
+
+```text
+A model's answer reaches:
+  fs.write in main at 14:5  (a person agreed)
+```
+
+and, for bytecode this compiler would not have produced:
+
+```text
+A model's answer reaches:
+  fs.write in main at 14:5  ** nobody was asked **
+```
+
+The weaker claim is the one that is marked, which is the other way round from
+`(not pinned)` and from `(declared fields only)` elsewhere in the plan. The
+reason outweighs consistency: an unapproved flow is *the finding*, and a reader
+scanning the list must not have to notice a missing word.
+
+Since #87 the same fact is in `sic plan --json`, so this is a property a rule
+can check rather than a sentence a person can read.
+
+### It over-reports, in one specific way
+
+The analysis is flow-sensitive within a function and context-insensitive across
+them. A function's parameters take the join of every call site, so a helper
+called once with a model's answer and once with a literal is analysed as if both
+were the model's.
+
+That is the safe direction and the only one worth having. A plan that missed a
+flow would be a false assurance about the one question this language exists to
+answer, and a person reading a plan with no such section has to be able to
+believe there is nothing to report.
+
+Flow-*sensitivity* is not a refinement but the thing working at all: the
+compiler reuses one register window for every call's arguments, so a register
+that held a prompt later holds a path. A taint per register per function
+reported every program as carrying its answer into everything.
+
+### What is still not a property of the file
+
+The verifier does not refuse an unapproved flow; it reports one through the
+plan. Refusing is the strong version and is where this belongs, and it is a
+second decision rather than a smaller one: a verifier that refused a program the
+type checker accepted would be a release-stopping bug, and the two analyses
+would have to agree exactly. Doing the plan first and the refusal second is a
+sequencing, not a hedge - the analysis exists now, and whether it is exact
+enough to refuse with is a question that can be asked of code rather than of an
+argument.
+
+---
+
 ## 6. Units of work
 
 | # | Unit | Done when |
@@ -847,3 +953,4 @@ See `docs/design/output.md` §5.
 | 6 | Erasure | the bytecode's type section never mentions trust |
 | 7 | §2a: what a trusted value may decide | `len` stripping the label is a test rather than a sentence in a checker |
 | 8 | §3: the person is shown the value | a run where they were shown it and one where they were not do not read the same |
+| 9 | §5a: the flow is in the file | `sic plan` says where a model's answer goes, and whether anybody agreed |

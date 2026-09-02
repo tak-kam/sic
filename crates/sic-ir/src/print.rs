@@ -45,6 +45,7 @@ fn inst_str(kind: &InstKind) -> String {
     match kind {
         InstKind::Const { dst, k } => format!("%{} = const k{}", dst.0, k.0),
         InstKind::Move { dst, src } => format!("%{} = move %{}", dst.0, src.0),
+        InstKind::Approve { dst, src } => format!("%{} = approve %{}", dst.0, src.0),
         InstKind::Un { dst, op, x } => format!("%{} = {} %{}", dst.0, un_name(*op), x.0),
         InstKind::Bin { dst, op, l, r } => {
             format!("%{} = {} %{} %{}", dst.0, bin_name(*op), l.0, r.0)

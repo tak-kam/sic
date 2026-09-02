@@ -16,8 +16,10 @@
 //! useful thing than this. Claiming a certainty this cannot establish would be
 //! worse than claiming none.
 
+mod flow;
 mod json;
 
+pub use flow::{Flow, Taint, flows};
 pub use json::{VERSION as JSON_VERSION, to_json};
 
 use sic_bytecode::inst::Op;
@@ -54,6 +56,14 @@ pub struct Plan {
     /// Whether the program was built from more than one file. A position is
     /// only worth a file name when there is a choice of file.
     pub multi_file: bool,
+    /// Every place a model's answer reaches a capability that changes
+    /// something, and whether a person agreed to it.
+    ///
+    /// The manifest says what may be reached; this says what may be *carried*
+    /// there, which is the question a person approving a plan actually has. It
+    /// is read out of the instructions rather than from a label, because trust
+    /// is erased before bytecode - see `flow.rs`.
+    pub flows: Vec<Flow>,
     /// Which functions reach which. The steps say what each function does; a
     /// list of functions side by side cannot say that one of them is only
     /// reached from behind an approval, and this is what says it.
@@ -469,6 +479,7 @@ pub fn plan(program: &Program, digest: Digest) -> Plan {
         unbounded_sites,
         unused,
         multi_file: program.debug.sources.len() > 1,
+        flows: flow::flows(program),
         reaches,
     }
 }
@@ -706,6 +717,33 @@ pub fn render(plan: &Plan, source: &str) -> String {
                 budget.cap,
                 sites.join(", ")
             ));
+        }
+    }
+
+    // What a person approving this is actually worried about, and the one
+    // thing the manifest cannot say: not what may be reached, but what may be
+    // *carried* there. Printed only when there is something to print, because
+    // a section saying "none" under every plan is a section people stop
+    // reading - and this is the one that must be read.
+    if !plan.flows.is_empty() {
+        out.push_str("\nA model's answer reaches:\n");
+        for flow in &plan.flows {
+            let at = match (flow.position, plan.multi_file, &flow.file) {
+                (Some((line, col)), true, Some(file)) => {
+                    format!(" in {} at {file}:{line}:{col}", flow.func)
+                }
+                (Some((line, col)), _, _) => format!(" in {} at {line}:{col}", flow.func),
+                (None, _, _) => format!(" in {}", flow.func),
+            };
+            // The weaker claim is the one that is marked, the other way round
+            // from the rest of this plan and for the reason that outweighs
+            // consistency: an unapproved flow is the finding, and a reader
+            // scanning this list must not have to notice a missing word.
+            let who = match flow.approved {
+                true => "  (a person agreed)",
+                false => "  ** nobody was asked **",
+            };
+            out.push_str(&format!("  {}{at}{who}\n", flow.cap));
         }
     }
 

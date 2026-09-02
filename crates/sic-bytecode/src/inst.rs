@@ -151,6 +151,21 @@ opcodes! {
     /// Whether an optional field was in the document. The one instruction that
     /// answers a question about a value nothing else can ask.
     HasOpt = 36, "HAS_OPT", ABC;
+    /// A value a person signed off, moved out of `approve`.
+    ///
+    /// It does exactly what `MOVE` does, and it exists so that the *fact* is in
+    /// the file. Trust is erased before bytecode: `LLM<T>` and `HumanApproved<T>`
+    /// are the checker's and no section holds them, so a reader of a `.sicb` -
+    /// `sic plan`, the verifier, a person deciding whether to run this - could
+    /// see a model's answer reach a capability that changes something and could
+    /// not see whether anybody had agreed to it. `approve` lowered to a `MOVE`,
+    /// and a `MOVE` is what every assignment lowers to.
+    ///
+    /// Recognising the shape instead - a `MOVE` guarded by a branch on a
+    /// `human.approve` whose `TO_JSON` named the same register - would be a
+    /// reader trusting the compiler's habits rather than reading a fact. So the
+    /// compiler writes the fact down. See `docs/design/trust.md` §6.
+    Approve = 37, "APPROVE", ABC;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

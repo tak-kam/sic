@@ -509,6 +509,15 @@ impl<'a> FnCompile<'a> {
                     self.emit(Inst::abc(Op::Move, dst, src, 0), span);
                 }
             }
+            // Always emitted, even where the registers coincide and a `MOVE`
+            // would be dropped. The instruction is not here to move anything;
+            // it is here to say that a person agreed, and eliding it because
+            // the allocator happened to pick one register would delete the
+            // fact rather than the copy.
+            InstKind::Approve { dst, src } => {
+                let (dst, src) = (self.reg(*dst), self.reg(*src));
+                self.emit(Inst::abc(Op::Approve, dst, src, 0), span);
+            }
             InstKind::Un { dst, op, x } => {
                 let (dst, x) = (self.reg(*dst), self.reg(*x));
                 match op {

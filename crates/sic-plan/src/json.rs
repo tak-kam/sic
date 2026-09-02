@@ -50,6 +50,9 @@ pub fn to_json(plan: &Plan) -> String {
     out.push_str(",\"budgets\":");
     list(&mut out, &plan.budgets, budget);
 
+    out.push_str(",\"flows\":");
+    list(&mut out, &plan.flows, flow);
+
     out.push_str(",\"reaches\":");
     list(&mut out, &plan.reaches, reaches);
 
@@ -178,6 +181,21 @@ fn budget_site(out: &mut String, s: &BudgetSite) {
     out.push('{');
     field_str(out, "function", &s.func, true);
     position(out, s.position, &s.file);
+    out.push('}');
+}
+
+/// A model's answer arriving somewhere that changes something.
+///
+/// The member a rule is most likely to be written against, and the reason
+/// `approved` is a boolean rather than an absent member when nobody was asked:
+/// a rule that has to notice something missing is a rule that will not.
+fn flow(out: &mut String, f: &crate::Flow) {
+    out.push('{');
+    field_str(out, "capability", &f.cap, true);
+    field_str(out, "effect", kind_name(f.kind), false);
+    field_str(out, "function", &f.func, false);
+    position(out, f.position, &f.file);
+    field_bool(out, "approved", f.approved, false);
     out.push('}');
 }
 

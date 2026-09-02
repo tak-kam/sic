@@ -369,7 +369,7 @@ impl<'a> Verifier<'a> {
                         ok = false;
                     }
                 }
-                Op::Move | Op::Not => {
+                Op::Move | Op::Approve | Op::Not => {
                     ok &= check_reg(self, inst.a(), "destination");
                     ok &= check_reg(self, inst.b(), "source");
                 }
@@ -626,7 +626,11 @@ impl<'a> Verifier<'a> {
                     next[inst.a() as usize] = Abst::Val(ty);
                     successors.push(index + 1);
                 }
-                Op::Move => {
+                // The same rule as `MOVE`, because it is the same copy. What
+                // it adds is a fact for a reader of the file, not a constraint
+                // on the value: whether a person may agree to a thing is the
+                // checker's question, and the answer is not in the bytecode.
+                Op::Move | Op::Approve => {
                     let src = self.read(&name, pc, &state, inst.b(), None);
                     next[inst.a() as usize] = src;
                     successors.push(index + 1);

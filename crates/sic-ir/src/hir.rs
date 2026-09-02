@@ -70,6 +70,13 @@ pub enum InstKind {
         dst: LocalId,
         src: LocalId,
     },
+    /// A `Move` that also records that a person agreed. Emitted only by
+    /// `approve`, and the only thing in the bytecode that says a value was
+    /// laundered - see `Op::Approve`.
+    Approve {
+        dst: LocalId,
+        src: LocalId,
+    },
     Un {
         dst: LocalId,
         op: UnOp,

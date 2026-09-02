@@ -731,7 +731,7 @@ impl<'a> FnLower<'a> {
             },
             span,
         );
-        self.emit(InstKind::Move { dst, src: value }, span);
+        self.emit(InstKind::Approve { dst, src: value }, span);
 
         let refused = self.new_block();
         let join = self.new_block();

@@ -291,6 +291,40 @@ what ties an approved plan to the bytes that run.
 
 ---
 
+## 3c. Where a model's answer goes
+
+The manifest says what may be reached. It cannot say what may be *carried*
+there, and that is the question a person approving a plan actually has: is there
+a path in this program from a model's answer to a file being written.
+
+```text
+A model's answer reaches:
+  fs.write in main at 14:5  (a person agreed)
+```
+
+`docs/design/trust.md` §5a is the argument - why the answer was thrown away
+(trust is erased before bytecode), what it cost (E0372 refuses source, and three
+commands read only the file), and why `approve` now leaves a mark in the
+instructions instead of being a shape somebody could pattern-match.
+
+What belongs here is what it means for a plan. Two things.
+
+**It is printed only when there is something to print.** A section reading
+"none" under every plan is a section people stop reading, and this is the one
+that has to be read.
+
+**The weaker claim is the marked one.** Everywhere else in this plan the
+qualification goes on the weaker claim in the other direction - `(not pinned)`,
+`(declared fields only)` - because a reader who has never seen the annotation is
+right about the unannotated line. Here an unapproved flow is the finding, and a
+reader scanning the list must not have to notice a *missing* word:
+
+```text
+  fs.write in main at 14:5  ** nobody was asked **
+```
+
+---
+
 ## 4. Not here
 
 - **No cost or token estimate.** The broker does not report either yet, so any

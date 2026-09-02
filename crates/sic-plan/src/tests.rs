@@ -539,3 +539,158 @@ fn a_constraint_that_would_break_the_shape_is_escaped() {
         "{json}"
     );
 }
+
+// ---- where a model's answer goes ----
+
+/// A model call, a laundering step, and a write - the three instructions the
+/// question is about, with the middle one chosen by the caller.
+///
+/// `launder` is `Op::Approve` for a program this compiler produced, and
+/// `Op::Move` for what one with three lines removed would produce. The two are
+/// the same copy and the same run; the difference is only whether the file says
+/// a person agreed, which is the whole of what this analysis reads.
+fn program_with_a_model_and_a_write(launder: Op) -> Program {
+    Program {
+        consts: vec![Const::Str("./out.txt".into())],
+        types: TypeDesc::primitives(),
+        funcs: vec![FuncDef {
+            name: "main".into(),
+            params: Vec::new(),
+            reg_count: 6,
+            ret_type: 4,
+            code_off: 0,
+            code_len: 7,
+        }],
+        caps: vec![
+            CapDecl {
+                name: "llm.invoke".into(),
+                kind: CapKind::Invoke,
+                constraints: "a-model".into(),
+                pin: String::new(),
+                answers: sic_core::Answers::Unsaid,
+                repeatable: false,
+                delegable: false,
+                dir: String::new(),
+                env: Vec::new(),
+                args: Vec::new(),
+                params: vec![4],
+                ret_type: 4,
+            },
+            CapDecl {
+                name: "fs.write".into(),
+                kind: CapKind::Write,
+                constraints: "./out.txt".into(),
+                pin: String::new(),
+                answers: sic_core::Answers::Unsaid,
+                repeatable: false,
+                delegable: false,
+                dir: String::new(),
+                env: Vec::new(),
+                args: vec![],
+                params: vec![4, 4],
+                ret_type: 2,
+            },
+        ],
+        code: vec![
+            Inst::abx(Op::LoadConst, 1, 0),  // r1 = "./out.txt"
+            Inst::abc(Op::CallCap, 2, 0, 1), // r2 = llm.invoke(r1)
+            Inst::abc(launder, 3, 2, 0),     // r3 = <launder> r2
+            Inst::abc(Op::Move, 4, 1, 0),    // r4 = r1   (the path)
+            Inst::abc(Op::Move, 5, 3, 0),    // r5 = r3   (what to write)
+            Inst::abc(Op::CallCap, 0, 1, 4), // fs.write(r4, r5)
+            Inst::abc(Op::Return, 0, 0, 0),
+        ],
+        policies: Vec::new(),
+        debug: DebugInfo {
+            sources: vec!["main.sic".into()],
+            lines: vec![(5, 0, 9, 5)],
+        },
+    }
+}
+
+/// The question a person approving a plan actually has, and the one the
+/// manifest cannot answer: not what may be reached, but what may be carried
+/// there.
+#[test]
+fn a_plan_says_where_a_models_answer_goes() {
+    let plan = plan(&program_with_a_model_and_a_write(Op::Approve), digest());
+    assert_eq!(plan.flows.len(), 1, "{:?}", plan.flows);
+    let flow = &plan.flows[0];
+    assert_eq!(flow.cap, "fs.write");
+    assert_eq!(flow.func, "main");
+    assert_eq!(flow.position, Some((9, 5)));
+    assert!(flow.approved);
+
+    let text = render(&plan, "main.sic");
+    assert!(text.contains("A model's answer reaches:"), "{text}");
+    assert!(text.contains("fs.write in main at 9:5"), "{text}");
+    assert!(text.contains("(a person agreed)"), "{text}");
+}
+
+/// The case the whole issue is about: bytecode this compiler would not have
+/// produced.
+///
+/// `APPROVE` and `MOVE` are the same copy and the same run. E0372 refuses the
+/// source that would need the second, but E0372 is the type checker's and the
+/// artifact everything downstream trusts is the file. With the fact in the
+/// file, a reader of the file can see it is missing.
+#[test]
+fn a_flow_nobody_agreed_to_is_the_one_that_is_marked() {
+    let plan = plan(&program_with_a_model_and_a_write(Op::Move), digest());
+    assert_eq!(plan.flows.len(), 1, "{:?}", plan.flows);
+    assert!(!plan.flows[0].approved);
+
+    // The weaker claim is the one marked, the other way round from the rest of
+    // this plan: a reader scanning the list must not have to notice a missing
+    // word.
+    let text = render(&plan, "main.sic");
+    assert!(text.contains("** nobody was asked **"), "{text}");
+    assert!(!text.contains("(a person agreed)"), "{text}");
+
+    // And a rule can be written against it, which is what makes this a
+    // property somebody can check rather than a sentence somebody can read.
+    let json = to_json(&plan);
+    assert!(json.contains("\"capability\":\"fs.write\""), "{json}");
+    assert!(json.contains("\"approved\":false"), "{json}");
+}
+
+/// A model's answer that goes nowhere is not a flow, and a plan that said
+/// otherwise would train its reader to skip the section.
+#[test]
+fn a_model_call_on_its_own_is_not_a_flow() {
+    let mut p = program_with_a_model_and_a_write(Op::Approve);
+    // Write the path twice instead of the answer.
+    p.code[4] = Inst::abc(Op::Move, 5, 1, 0);
+    assert!(plan(&p, digest()).flows.is_empty());
+    assert!(!render(&plan(&p, digest()), "main.sic").contains("A model's answer reaches"));
+}
+
+/// The compiler reuses one register window for every call's arguments, so a
+/// register that held a prompt later holds a path.
+///
+/// This is why the analysis is flow-sensitive rather than a taint per register
+/// per function. Without it every program that calls a model would be reported
+/// as carrying its answer into everything it does afterwards - and a section
+/// that fires on every program is one nobody reads.
+#[test]
+fn a_register_reused_after_a_model_call_is_not_still_the_model() {
+    let mut p = program_with_a_model_and_a_write(Op::Approve);
+    // r2 held the model's answer; now it holds the path, and the write is
+    // given that.
+    p.code[2] = Inst::abc(Op::Move, 2, 1, 0);
+    p.code[4] = Inst::abc(Op::Move, 5, 2, 0);
+    assert!(
+        plan(&p, digest()).flows.is_empty(),
+        "{:?}",
+        plan(&p, digest()).flows
+    );
+}
+
+/// Reading is not changing, so a model's answer reaching `fs.read` is not this.
+#[test]
+fn only_a_capability_that_changes_something_is_a_sink() {
+    let mut p = program_with_a_model_and_a_write(Op::Move);
+    p.caps[1].kind = CapKind::Read;
+    p.caps[1].name = "fs.read".into();
+    assert!(plan(&p, digest()).flows.is_empty());
+}
