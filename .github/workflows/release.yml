@@ -39,6 +39,36 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      # `v` and a version, or nothing happens. Every later job needs this one,
+      # so a tag of another shape reaches no step that can write to a release.
+      #
+      # This belongs on the tag namespace, and GitHub's rule for that -
+      # `tag_name_pattern` in a ruleset - is not available on this plan; the
+      # API refuses it while accepting the rest of a tag ruleset. So it lives
+      # here instead, which is the better half of the trade anyway: a check in
+      # the repository is visible in a diff, travels with a clone and can be
+      # read by whoever is reviewing the workflow, and a settings page is none
+      # of those. #98 makes the same argument about the token.
+      #
+      # The shell never sees the tag as text - `$TAG` is a value, which is
+      # #96 - and this is the belt to that pair of braces rather than a
+      # replacement for it.
+      - name: The tag is a version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # `=~` matches the whole string: `$` is the end of it and not the end
+          # of a line, so a name with a newline in it cannot pass by having one
+          # good line. Git refuses a newline in a ref anyway - this does not
+          # depend on that being true.
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "refusing to release from the tag: $TAG"
+            exit 1
+          fi
+          echo "releasing $TAG"
+
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
