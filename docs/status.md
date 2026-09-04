@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 843 tests.
+Last updated at 845 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -55,6 +55,7 @@ in the source, so it is the same on every platform - four of them are
 | 26 | `log <level> <expr>;` - the journal keeps the level and the digest, the run's values file keeps the text, and stderr shows it as it happens | `docs/design/logging.md` |
 | - | `--interactive`: a run that stops for an answer asks the terminal instead of leaving it for whoever comes along later, and keeps asking for as long as it keeps stopping - the checkpoint is written first either way, so the worst case of an interactive run is a non-interactive one | `docs/design/interactive.md` |
 | - | `for x in xs { ... }`: the only loop, over a list and nothing else - no assignment, so no induction variable and no way to write one that does not end, and no frame per element, which is what a list longer than the 1024-frame call stack needed. It lowers to a counter, `GET_INDEX` and the backward `JUMP` the bytecode already encoded, so no instruction was added and the verifier's fixed point already handled the edge | `docs/design/v0.1.md` §2 |
+| - | The CI itself reviewed for attack surface: no `${{ }}` reaches a shell (git accepts `$( )`, backticks and `;` in a tag name, and the release workflow can write to a release), `actions/checkout` pinned to a commit rather than to a name somebody else can move, and each job says what its token may do instead of a repository setting deciding | `.github/workflows/` |
 | 31 | Phases 1 to 8 | one commit each |
 | 33 | The security principles | each one has a test |
 | - | A person approving a value is shown it, serialised by an instruction no syntax can reach - and shown only the fields the type declares, so `sic plan` says `(declared fields only)` where a type is open | `docs/design/trust.md` §3, `docs/design/agents.md` §8 |

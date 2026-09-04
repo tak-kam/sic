@@ -4,12 +4,25 @@
 # rule is about the crates the compiler links, not about CI, but the same
 # instinct applies: rustup is already on the runner, so nothing else is pulled
 # in to set up a toolchain.
+#
+# It is pinned to a commit, not to `v4`. A tag is a name somebody else can move,
+# and a crate in `Cargo.lock` is not named that way - there is no argument that
+# the CI supply chain is the less exposed of the two. The version is in the
+# comment so that a reader knows what they have and a bump is a legible diff.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+
+# What the token may do, said here rather than left to a repository setting.
+# The setting is right today and is a checkbox: changeable by anybody with
+# admin access, invisible in a diff, and absent from a clone. This job runs
+# `cargo test`, which runs code from the branch under test, and what that code
+# can reach belongs next to it.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +33,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Toolchain
         run: |
@@ -77,7 +90,7 @@ jobs:
   targets:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Toolchain
         run: |
@@ -107,7 +120,7 @@ jobs:
   msrv:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Toolchain
         # No `rustup update`: the point is to use exactly this one. The version

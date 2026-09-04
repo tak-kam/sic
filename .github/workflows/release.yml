@@ -8,27 +8,45 @@
 # executables by digest, and `sic upgrade` checks one against SHA256SUMS, so a release
 # that does not publish its own digests would be asking for trust it has not
 # earned.
+#
+# **No `${{ }}` appears inside a `run:` block.** An expression is substituted as
+# text before the shell sees the line, and git accepts `$( )`, backticks, `;`
+# and `"` in a tag name - so `${{ github.ref_name }}` in a script would not be an
+# argument to `gh`, it would be part of the program, in the one workflow here
+# that can write to a release. Values reach a script through `env:`, where a
+# value is a value.
+#
+# The rule covers the matrix entries too, though those are literals written in
+# this file and could hold nothing dangerous. A rule with no exceptions can be
+# checked by looking; one with two can be checked by whoever remembers which
+# two. See #96.
 name: Release
 
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+# Nothing is granted at the top, so a job that says nothing gets nothing. Two of
+# the three touch the release and say so; `build` compiles and uploads, which is
+# still a write, and the difference is that a job cannot acquire the authority
+# by being added later.
+permissions: {}
 
 jobs:
   create:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Draft the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          gh release create "${{ github.ref_name }}" \
+          gh release create "$TAG" \
             --draft \
-            --title "${{ github.ref_name }}" \
+            --title "$TAG" \
             --notes "See the commit history for what changed. Binaries and SHA256SUMS are attached below."
 
   build:
@@ -48,31 +66,41 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Toolchain
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           rustup update --no-self-update stable
           rustup default stable
-          rustup target add ${{ matrix.target }}
+          rustup target add "$TARGET"
 
       - name: Build
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET"
 
       - name: Package
         shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
         run: |
-          name="sic-${{ github.ref_name }}-${{ matrix.target }}"
+          name="sic-$TAG-$TARGET"
           mkdir -p "$name"
           cp LICENSE-MIT LICENSE-APACHE README.md "$name/"
           # One directory either way, so that unpacking a release puts the
           # binary at a path SHA256SUMS can name.
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            cp "target/${{ matrix.target }}/release/sic.exe" "$name/"
+          if [ "$OS" = "windows-latest" ]; then
+            cp "target/$TARGET/release/sic.exe" "$name/"
             7z a "$name.zip" "$name"
           else
-            cp "target/${{ matrix.target }}/release/sic" "$name/"
+            cp "target/$TARGET/release/sic" "$name/"
             tar czf "$name.tar.gz" "$name"
           fi
 
@@ -80,27 +108,34 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          TARGET: ${{ matrix.target }}
+          OS: ${{ matrix.os }}
         run: |
-          name="sic-${{ github.ref_name }}-${{ matrix.target }}"
-          if [ "${{ matrix.os }}" = "windows-latest" ]; then
-            gh release upload "${{ github.ref_name }}" "$name.zip"
+          name="sic-$TAG-$TARGET"
+          if [ "$OS" = "windows-latest" ]; then
+            gh release upload "$TAG" "$name.zip"
           else
-            gh release upload "${{ github.ref_name }}" "$name.tar.gz"
+            gh release upload "$TAG" "$name.tar.gz"
           fi
 
   publish:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Checksums
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
         run: |
           shopt -s nullglob
           mkdir -p dist && cd dist
-          gh release download "${{ github.ref_name }}" --repo "${{ github.repository }}"
+          gh release download "$TAG" --repo "$REPO"
 
           # The archives, and the binary inside each one. `sic upgrade` checks a
           # binary against a digest, so publishing only the archives' digests
@@ -117,8 +152,9 @@ jobs:
           fi
           sha256sum "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
-          gh release upload "${{ github.ref_name }}" SHA256SUMS --repo "${{ github.repository }}"
+          gh release upload "$TAG" SHA256SUMS --repo "$REPO"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release edit "${{ github.ref_name }}" --draft=false
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false

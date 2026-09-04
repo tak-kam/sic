@@ -85,6 +85,26 @@ write to `/usr/local/bin` has told you something true about the upgrade.
 
 ## 3. What the digest proves, and what it does not
 
+### What the transport establishes, and what it does not
+
+Every fetch passes `--proto =https` **and** `--proto-redir =https`. The second
+is the half that is easy to leave out and was: `--proto` binds the URL on the
+command line, and curl's own manual says that "by default curl only allows HTTP,
+HTTPS, FTP and FTPS on redirect". So a response that sent this to `http://` used
+to be followed, and a download about to be checked against a digest arrived in
+clear text.
+
+The digest check held throughout - this was never a way to install a modified
+binary. What it cost is the other claim: that nobody on the path read or
+rewrote the bytes. The `https` in the URL looked like it was already making that
+one.
+
+The tag from the release list is checked before it is used, because it becomes
+a URL and a path under the temporary directory. `v` and a version, or the fetch
+stops and says what came back. Nothing here runs a shell, so there was no
+injection to have; what there was is a string that arrived over a network
+deciding where a file is written.
+
 `SHA256SUMS` comes from the release it describes. Checking a download against it
 therefore proves that **the bytes arrived intact**: a truncated transfer, a
 corrupted mirror, a proxy that mangled the file. It does not prove who made

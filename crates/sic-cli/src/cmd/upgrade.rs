@@ -23,6 +23,21 @@ use sic_core::{Digest, Sha256};
 use super::{EXIT_FAILURE, EXIT_USAGE};
 use crate::path::display;
 
+/// The flags every fetch here makes, so that no call site can be missing one.
+///
+/// `--proto =https` binds the URL on the command line. It does **not** bind a
+/// redirect - curl's own manual says "by default curl only allows HTTP, HTTPS,
+/// FTP and FTPS on redirect" - so without `--proto-redir` a response that sends
+/// this to `http://` is followed, and a download this is about to check a digest
+/// against arrives in clear. The digest check still holds; what is lost is that
+/// nobody on the path read or rewrote the bytes, which is a claim the `https` in
+/// the URL looks like it is already making.
+///
+/// One constant rather than three copies of two flags, for the reason
+/// `recorded_message` is one function: two of them would agree until one was
+/// edited.
+const HTTPS: &[&str] = &["-fsSL", "--proto", "=https", "--proto-redir", "=https"];
+
 /// How much of a file is hashed at a time. A binary is large enough that
 /// reading it whole to check it would be a waste of memory for no gain.
 const HASH_CHUNK: usize = 64 * 1024;
@@ -236,13 +251,24 @@ fn fetch_latest() -> Result<Fetched, Failure> {
     let target = target_triple()?;
 
     let api = format!("https://api.github.com/repos/{REPO}/releases/latest");
-    let body = capture(&curl, &["-fsSL", "--proto", "=https", &api])?;
+    let body = capture(&curl, &[HTTPS, &[api.as_str()]].concat())?;
     let json = sic_json::parse(&body)
         .map_err(|e| failed(format!("the release list is not JSON this can read: {e}")))?;
     let Some(sic_json::Json::Str(tag)) = json.member("tag_name") else {
         return Err(failed("the release list has no `tag_name`"));
     };
     let tag = tag.clone();
+    // A release tag is `v` and a version, and this one is about to become a
+    // URL and a path under the temporary directory. Nothing here runs a shell,
+    // so there is no injection to have - what there is, is a string that
+    // arrived over a network deciding where a file is written. `sic-plan`'s
+    // `options_at` has the instinct: read what is there, and refuse rather than
+    // guess when it is not what was expected.
+    if !is_a_release_tag(&tag) {
+        return Err(failed(format!(
+            "the latest release is tagged `{tag}`, which is not `v` and a version"
+        )));
+    }
     if tag == format!("v{}", crate::VERSION) {
         return Ok(Fetched::AlreadyLatest(tag));
     }
@@ -282,12 +308,15 @@ fn fetch_latest() -> Result<Fetched, Failure> {
 
     let sums = capture(
         &curl,
-        &["-fsSL", "--proto", "=https", &format!("{base}/SHA256SUMS")],
+        &[HTTPS, &[format!("{base}/SHA256SUMS").as_str()]].concat(),
     )?;
     let archive_path = dir.path.join(&archive);
     let url = format!("{base}/{archive}");
     let out = display(&archive_path);
-    capture(&curl, &["-fsSL", "--proto", "=https", "-o", &out, &url])?;
+    capture(
+        &curl,
+        &[HTTPS, &["-o", out.as_str(), url.as_str()]].concat(),
+    )?;
 
     // The archive is checked before it is unpacked: handing an unverified one
     // to `tar` would be trusting it with more than a digest comparison needs.
@@ -308,6 +337,21 @@ fn fetch_latest() -> Result<Fetched, Failure> {
         name: inner,
         _dir: dir,
     }))
+}
+
+/// Whether a tag from the release list is one this may build a URL and a path
+/// out of.
+///
+/// `v` and a version, and nothing else. Nothing here runs a shell, so there is
+/// no injection to have; what there is, is a string that arrived over a network
+/// deciding where a file is written. `sic-plan`'s `options_at` has the instinct:
+/// read what is there, and refuse rather than guess when it is not what was
+/// expected.
+fn is_a_release_tag(tag: &str) -> bool {
+    match tag.strip_prefix('v') {
+        Some(rest) => version_of(rest).is_some(),
+        None => false,
+    }
 }
 
 /// `0.1.2` as something that can be compared.
@@ -778,6 +822,34 @@ mod tests {
         assert_eq!(version_of("0.1.2"), Some((0, 1, 2)));
         assert_eq!(version_of("0.1"), None);
         assert_eq!(version_of("0.1.2-dev"), None);
+    }
+
+    /// What the release list says is a tag becomes a URL and a path under the
+    /// temporary directory, so it is checked before it is either.
+    #[test]
+    fn only_a_version_tag_is_followed() {
+        assert!(is_a_release_tag("v0.8.0"));
+        assert!(is_a_release_tag("v10.0.123"));
+
+        assert!(!is_a_release_tag("0.8.0"), "a version is not a tag");
+        assert!(!is_a_release_tag("v0.8"), "three numbers or none");
+        assert!(!is_a_release_tag("v0.8.0-rc1"));
+        assert!(!is_a_release_tag(""));
+        // The shapes that would decide where a file is written. None of them
+        // reaches a shell, and none of them should reach `Path::join` either.
+        assert!(!is_a_release_tag("v../../../../etc/x"));
+        assert!(!is_a_release_tag("v0.8.0/../.."));
+        assert!(!is_a_release_tag("v0.8.0$(id)"));
+    }
+
+    /// Every fetch uses one set of flags, and `--proto-redir` is the half that
+    /// is easy to leave out: `--proto` binds the URL on the command line and
+    /// not the redirect that follows it.
+    #[test]
+    fn a_redirect_may_not_leave_https() {
+        assert!(HTTPS.contains(&"--proto"));
+        assert!(HTTPS.contains(&"--proto-redir"));
+        assert_eq!(HTTPS.iter().filter(|f| **f == "=https").count(), 2);
     }
 
     #[test]
