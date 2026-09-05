@@ -987,9 +987,20 @@ over has one member. That was the approximation #92 worried about most, and the
 type system had already removed it.
 
 *A value this calls untrusted is a value the checker labelled.* The taint has
-one source - a capability whose declared return carries a label - and one way to
-lose it, `APPROVE`. So an untrusted register at a changing call is a labelled
-value at a changing call, which is the sentence E0372 refuses.
+one source - a capability whose declared return carries a label - and the ways
+to lose it are `APPROVE` and the three exits `checking.md` §1 lists: `len(v)`
+answers a plain `Int`, `contains` and `starts_with` a plain `Bool`, and `xs[i]`
+strips the label from the *index*, so an element of a list the program wrote is
+plain however it was chosen.
+
+**That sentence was written without the three exits in it, and the analysis was
+too.** The verifier then refused a program the type checker accepts - a model
+choosing an index into the program's own list, which is what a decision looks
+like when there is to be no human gate. It is the release-stopping shape #92
+argued could not happen, and it happened because the argument rested on a claim
+about the checker that a document written earlier had already contradicted. The
+lesson is not about the lattice: `checking.md` §1 found those exits by compiling
+programs rather than by reading, and nothing pointed the next reader at them.
 
 *Where this is stricter, the difference cannot reach a sink.* It is
 field-insensitive, so `process.run`'s whole `Exit` is untrusted where the

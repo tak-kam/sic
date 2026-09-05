@@ -4591,6 +4591,53 @@ mod unapproved_flows {
         }
     }
 
+    /// A model may decide without anybody being asked, and the verifier has to
+    /// agree with the type checker about that.
+    ///
+    /// `docs/design/checking.md` §1 lists three things that take a label off a
+    /// value, and `xs[i]` is the one that matters here: the index's label is
+    /// stripped, so an element of a list the *program* wrote comes out plain
+    /// however the index was chosen. That is what a decision looks like when
+    /// there is to be no human gate.
+    ///
+    /// The flow analysis did not know it, so the verifier refused a program the
+    /// checker accepts - which is the release-stopping shape #92 argued could
+    /// not happen. It could, because the argument rested on "an untrusted
+    /// register is a value the checker labelled" and three builtins make that
+    /// false. The document listing them was written before the analysis was.
+    #[test]
+    fn a_model_may_choose_from_the_programs_own_list_with_nobody_asked() {
+        let src = write_temp(
+            "no-human.sic",
+            "type Pick { index: Int }\n\
+             allow {\n\
+             \x20   process.run \"/bin/echo\";\n\
+             \x20   llm.invoke \"a-model\";\n\
+             }\n\
+             agent triage { input: String, output: Pick, budget: 1 }\n\
+             fn main() -> Int {\n\
+             \x20   let actions = [\"/bin/echo\", \"/bin/echo\"];\n\
+             \x20   let p = triage(\"restart or roll back?\");\n\
+             \x20   let r = process.run(actions[p.index], []);\n\
+             \x20   return r.code;\n\
+             }\n",
+        );
+        let (stdout, stderr, code) = sic(&["plan", src.to_str().unwrap()]);
+        assert_eq!(code, 0, "the verifier refused it: {stderr}");
+        // And nobody is asked: there is no approval in the plan at all.
+        assert!(!stdout.contains("APPROVE"), "{stdout}");
+        assert!(!stdout.contains("human.approve"), "{stdout}");
+        // The model's answer still reaches a capability that runs something,
+        // and the plan says so - through a list the program wrote, which is
+        // what makes it allowed.
+        assert!(
+            stdout.contains("RUN") && stdout.contains("process.run"),
+            "{stdout}"
+        );
+
+        std::fs::remove_file(src).ok();
+    }
+
     /// A recorded run keeps the bytecode it ran, on a disk anybody could have
     /// written to since. `attach` checks it again for that reason, and now
     /// checks this too.

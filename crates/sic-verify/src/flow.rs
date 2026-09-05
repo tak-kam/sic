@@ -291,11 +291,26 @@ fn solve(program: &Program) -> Solved {
                             Op::Move
                             | Op::Not
                             | Op::Await
-                            | Op::Len
                             | Op::GetField
                             | Op::GetOpt
                             | Op::HasOpt => vec![b],
                             Op::FromJson | Op::ToJson => vec![c],
+                            // The three exits a label already has, and this
+                            // knew none of them - `docs/design/checking.md` §1
+                            // is the list, written before this analysis was.
+                            //
+                            // `GET_INDEX` reads the list and not the index:
+                            // `check_index` strips the label from the index, so
+                            // an element of a list the *program* wrote comes out
+                            // plain however the index was chosen. That is the
+                            // shape a model decides in without anybody being
+                            // asked, and taking `c` here refused it.
+                            Op::GetIndex => vec![b],
+                            // A length, and whether a string contains another,
+                            // are facts about a value rather than the value.
+                            // The checker answers each with a plain `Int` or
+                            // `Bool`; so does this.
+                            Op::Len | Op::Contains | Op::StartsWith => Vec::new(),
                             Op::MakeList => (0..c).map(|i| b.saturating_add(i)).collect(),
                             Op::MakeObject => program
                                 .types
