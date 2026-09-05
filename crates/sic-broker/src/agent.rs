@@ -269,24 +269,55 @@ fn fold(text: &str) -> String {
 
 /// Strips what the interface drew from what the agent said.
 ///
-/// Leading whitespace goes with the decoration, so indentation inside an answer
-/// is not preserved. What an `agent` declaration reads back is JSON, where that
-/// does not matter, and a driver that guessed at which spaces were the frame's
-/// and which were the answer's would be worse than one that says so.
+/// The frame is a *width*, not "as much whitespace as there is". An interface
+/// draws every row of a region with the same indent, so the narrowest leading
+/// run of frame characters in the region is the frame, and everything past it
+/// on any row is the answer.
+///
+/// This used to trim each row greedily, and that deleted data. When a row is
+/// wrapped at a space, the space arrives at the *start* of the next row, and a
+/// greedy trim cannot tell it from the indent - so `fold`, joining with
+/// nothing, produced `usizeannotation` where the agent had written `usize
+/// annotation`. Measured in a pane rather than reasoned about: a 200-column
+/// wrap fell on a space and the continuation row came back with `indent=1`.
+///
+/// The value that reached the program, and the value a person was shown to
+/// approve, was then not the one the agent gave. `trust.md` §3 is that a person
+/// is shown what they are signing; a driver that quietly edits it on the way is
+/// the one thing that must not happen there.
+///
+/// The other half of a wrap is not recoverable and is not attempted. A space
+/// that lands at the *end* of a row is indistinguishable from the padding a
+/// terminal writes to fill one, so `trim_end` keeps taking it. What is fixed
+/// here is the half the screen can still answer.
 fn clean(region: &str) -> String {
+    // Rows that are nothing but frame are the input box, not blank lines in
+    // the answer, and they carry no indent to measure.
+    let rows: Vec<&str> = region
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !(line.is_empty() || is_all_frame(line)))
+        .collect();
+    let frame = rows.iter().map(|r| frame_width(r)).min().unwrap_or(0);
     let mut out = String::new();
-    for line in region.lines() {
-        let line = line.trim_end();
-        let stripped = line.trim_start_matches(|c: char| c.is_whitespace() || is_decoration(c));
-        // A line that is nothing but frame is the input box, not a blank line
-        // in the answer.
-        if stripped.is_empty() && !line.is_empty() {
-            continue;
-        }
-        out.push_str(stripped);
+    for row in rows {
+        // By characters, because the frame is drawn in them and a byte slice
+        // would cut one in half.
+        out.extend(row.chars().skip(frame));
         out.push('\n');
     }
     out.trim_matches('\n').to_string()
+}
+
+/// How many characters at the front of a row could be the interface's.
+fn frame_width(row: &str) -> usize {
+    row.chars()
+        .take_while(|c| c.is_whitespace() || is_decoration(*c))
+        .count()
+}
+
+fn is_all_frame(row: &str) -> bool {
+    !row.is_empty() && frame_width(row) == row.chars().count()
 }
 
 fn is_decoration(c: char) -> bool {

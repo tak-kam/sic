@@ -129,6 +129,39 @@ not logged in fails to start, and that is the correct failure.
 
 ---
 
+### What the screen can and cannot give back
+
+Reading an answer off a pane is reading it at the width the interface drew it,
+and a row that was too long comes back broken. `capture-pane -J` rejoins what
+the *terminal* wrapped; it cannot rejoin what the interface wrapped itself,
+because that break is one the application meant.
+
+`fold` closes those up, and the rule that makes it safe is JSON's: whitespace
+between tokens is insignificant and a newline inside a string is invalid, so
+joining with nothing repairs a wrap exactly.
+
+That held for the join and not for what ran before it. The frame used to come
+off with a greedy trim of every leading whitespace character, and **a wrap that
+falls on a space puts that space at the start of the next row** - where a greedy
+trim cannot tell it from the indent. Measured in a pane: a 200-column wrap fell
+on a space and the continuation row came back with one leading space where the
+frame has none. Joined with nothing, `usize annotation` became
+`usizeannotation`.
+
+The value the program then acted on, and the value a person was shown to
+approve, was not the one the agent gave. That is the failure this path must not
+have: `trust.md` §3 is that a person is shown what they are signing.
+
+So the frame is a **width** rather than a quantity of whitespace. An interface
+draws every row of a region with the same indent, so the narrowest leading run
+of frame characters in the region is the frame, and everything past it on any
+row is the answer. An agent's own indentation now survives too, which is the
+same rule read the other way.
+
+**The other half is not recoverable and is not attempted.** A space that lands
+at the *end* of a row cannot be told from the padding a terminal writes to fill
+one. A driver that guessed there would be inventing data rather than reading it.
+
 ## 4. Knowing when the answer is finished
 
 A pane is whatever was on screen when it was looked at, so waiting for it to

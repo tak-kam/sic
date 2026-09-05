@@ -3,7 +3,7 @@
 The specification this project follows has 34 sections. This says where each one
 stands, so that picking up the work does not start with reading everything.
 
-Last updated at 845 tests.
+Last updated at 847 tests.
 
 That number is checked (`crates/sic-core/tests/workspace.rs`), which is the
 point of it: a commit that adds a test has to come here to update the line, and
@@ -44,6 +44,7 @@ in the source, so it is the same on every platform - four of them are
 | - | `sic plan` says where a value nobody signed off goes: every capability that writes or runs and is handed one - a model's answer, a program's output, what `git` reported - and whether a person agreed on every path there. Trust is still erased, so this is read out of the instructions - which needed `approve` to stop lowering to a `MOVE`, because recognising the shape instead would be a reader trusting the compiler's habits rather than reading a fact | `docs/design/trust.md` §5a |
 | 30 | `sic plan`, and `--graph`: the same plan as a Mermaid flowchart, which says which functions reach which - the one thing a list of blocks side by side cannot, and the caption says "may, not will" so an arrow does not claim more than the sentence it replaces | `docs/design/plan.md` |
 | - | `sic upgrade`: fetch a release, check it against the digests it publishes, swap it in | `docs/design/upgrade.md` |
+| - | An answer read off a pane keeps the spaces it was written with: the frame an interface draws is a width, not a quantity of whitespace, and a wrap that falls on a space puts that space at the start of the next row - where a greedy trim used to eat it, so the value a person approved was not the value the agent gave | `docs/design/driving.md` §3 |
 | - | `--llm tmux:claude`: a model call answered by an agent CLI in a pane, instead of deferring; an `agent` tells it the shape its answer must take, and `memory: task` keeps one conversation for as long as a task | `docs/design/driving.md` |
 | - | `tools: 0`: an agent that answers a question and does not act, which is the strongest claim a harness site can make and the one value the declaration could not carry while zero meant "no limit". The allowance is stored plus one, which also gave back "none left" - a site that had spent its whole allowance used to report one use still in hand | `docs/design/authority.md` §8 |
 | - | The agent's authority is the program's manifest, and for the `process` family deliberately less: translated into its own permissions where those can hold a constraint, routed back through the broker where they cannot but only when the grant says `delegable`, and a hook that fails closed refuses every tool the manifest does not account for, which is what denies the agent the network, and puts every tool use in the journal; `budget`, `tools` and `deadline` bound it, each where it can be enforced; `sic plan` prints all of it, naming where each line is enforced | `docs/design/authority.md` |

@@ -860,9 +860,60 @@ fn the_interface_is_stripped_from_the_answer() {
         b = begin_marker(id),
         e = end_marker(id)
     );
+    // The frame is two columns, so two columns come off every row - and the
+    // agent's own indentation, which is past the frame, stays. That is the
+    // same rule the wrap fix rests on: what is beyond the frame is the answer.
     assert_eq!(
         answer_from(&screen, id, false).as_deref(),
-        Some("{\n\"cause\": \"disk full\"\n}")
+        Some("{\n  \"cause\": \"disk full\"\n}")
+    );
+}
+
+/// A wrap that falls on a space used to eat it.
+///
+/// The interface draws a row at the width it has. When the break lands on a
+/// space, the space arrives at the *start* of the next row, where a greedy trim
+/// cannot tell it from the indent - and `fold`, joining with nothing, then
+/// closed the gap. `usize annotation` came back as `usizeannotation`.
+///
+/// Measured in a pane rather than reasoned about: a 200-column wrap fell on a
+/// space and `capture-pane` gave the continuation row back with one leading
+/// space where the frame is none.
+#[test]
+fn a_wrap_that_falls_on_a_space_keeps_the_space() {
+    let id = "abc123";
+    // Two columns of frame on every row, and a continuation row whose content
+    // begins with the space the wrap moved.
+    let screen = format!(
+        "⏺ {b}\n\
+         \x20 {{\"change\": \"the cast is what creates the mismatch with the usize\n\
+         \x20  annotation.\"}}\n\
+         \x20 {e}\n",
+        b = begin_marker(id),
+        e = end_marker(id)
+    );
+    assert_eq!(
+        answer_from(&screen, id, true).as_deref(),
+        Some("{\"change\": \"the cast is what creates the mismatch with the usize annotation.\"}")
+    );
+}
+
+/// And a wrap that falls inside a word still closes up, which is the case
+/// `fold` was written for and must not regress.
+#[test]
+fn a_wrap_inside_a_word_still_closes_up() {
+    let id = "abc123";
+    let screen = format!(
+        "⏺ {b}\n\
+         \x20 {{\"change\": \"a line long enough that the interface broke it in\n\
+         \x20 half\"}}\n\
+         \x20 {e}\n",
+        b = begin_marker(id),
+        e = end_marker(id)
+    );
+    assert_eq!(
+        answer_from(&screen, id, true).as_deref(),
+        Some("{\"change\": \"a line long enough that the interface broke it inhalf\"}")
     );
 }
 
